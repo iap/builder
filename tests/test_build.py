@@ -1,6 +1,6 @@
 """Tests for the build plugin — headless SSO-OIDC device flow.
 
-Set BID_LIVE=1 to also exercise the real OIDC registration + start_device_
+Set BUILD_LIVE=1 to also exercise the real OIDC registration + start_device_
 authorization against oidc.us-east-1.amazonaws.com (no credentials needed).
 """
 
@@ -20,7 +20,7 @@ import tempfile  # noqa: E402
 import types  # noqa: E402
 
 sys.path.insert(0, str(_HA))
-os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="bid-test-")
+os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="build-test-")
 
 
 def _load():  # noqa: ANN
@@ -73,7 +73,7 @@ def test_no_secrets_in_output(mod):  # noqa: ANN
         assert "client_secret" not in blob
 
 
-@pytest.mark.skipif(os.environ.get("BID_LIVE") != "1", reason="set BID_LIVE=1 for live OIDC")
+@pytest.mark.skipif(os.environ.get("BUILD_LIVE") != "1", reason="set BUILD_LIVE=1 for live OIDC")
 def test_live_device_start(mod):  # noqa: ANN
     res = json.loads(mod._handle_bid_login({}))
     assert res["success"] is True

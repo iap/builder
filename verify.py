@@ -14,7 +14,7 @@ _HA = Path(__file__).resolve().parent.parent.parent / "hermes-agent"
 
 def _load() -> types.ModuleType:
     sys.path.insert(0, str(_HA))
-    os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="bid-verify-")
+    os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="build-verify-")
     ns = "hermes_plugins"
     if ns not in sys.modules:
         m = types.ModuleType(ns)
