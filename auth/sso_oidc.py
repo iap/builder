@@ -411,7 +411,9 @@ def get_status() -> dict:
 
     Never includes the raw token.
     """
-    tok = _load_pool_token() or _load_token()
+    tok = _load_pool_token()
+    if not tok or tok.get("expires_at", 0) <= time.time():
+        tok = _load_token()
     authenticated = bool(tok) and tok.get("expires_at", 0) > time.time()
     if authenticated:
         return {
