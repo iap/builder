@@ -1,0 +1,16 @@
+name: aws-build
+version: 1.0.0
+description: "Self-contained Amazon Builder ID auth for Hermes Agent."
+author: iap
+kind: standalone
+provides_tools:
+  - name: bid_login
+    description: "Self-contained Amazon Builder ID auth for Hermes Agent."
+  - name: bid_status
+    description: "Self-contained Amazon Builder ID auth for Hermes Agent."
+  - name: bid_show_identity
+    description: "Self-contained Amazon Builder ID auth for Hermes Agent."
+  - name: bid_logout
+    description: "Self-contained Amazon Builder ID auth for Hermes Agent."
+  - name: models
+    description: "Self-contained Amazon Builder ID auth for Hermes Agent."
