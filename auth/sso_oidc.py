@@ -48,17 +48,17 @@ _stop = threading.Event()
 _poll_thread: Optional[threading.Thread] = None
 
 # The Hermes credential pool is the canonical store for the authenticated
-# token. hermes auth add aws-bid writes it there; this module reads it first
+# token. hermes auth add aws-build writes it there; this module reads it first
 # and falls back to the legacy .bid_* mirror only for transient flow state.
-POOL_PROVIDER = "aws-bid"
+POOL_PROVIDER = "aws-build"
 
 
 def _load_pool_token() -> Optional[dict]:
-    """Read the canonical aws-bid credential from the Hermes credential pool.
+    """Read the canonical aws-build credential from the Hermes credential pool.
 
     Returns a token-shaped dict compatible with _load_token(), or None.
     Defensive: any failure yields None so the caller falls back to the
-    legacy .bid_token.json mirror.
+    legacy .bid_* mirror.
     """
     try:
         from agent.credential_pool import load_pool
@@ -83,7 +83,7 @@ def _load_pool_token() -> Optional[dict]:
 
 
 def _clear_pool() -> None:
-    """Remove all aws-bid credentials from the canonical pool store."""
+    """Remove all aws-build credentials from the canonical pool store."""
     try:
         from agent.credential_pool import load_pool
     except Exception:  # noqa: BLE001
@@ -355,7 +355,7 @@ def _save_pool_token(out: dict, reg: dict) -> None:
             updated = PooledCredential(
                 provider=POOL_PROVIDER,
                 id=None,
-                label="Amazon BID",
+                label="Amazon BID (Build ID)",
                 auth_type="oauth",
                 priority=0,
                 source="plugin",
@@ -494,7 +494,7 @@ def logout() -> None:
     """Stop polling and delete all stored secrets.
 
     Clears both the canonical Hermes credential pool entry and the legacy
-    .bid_* mirror files so all read paths agree the user is logged out.
+    .bid_* mirror files
     """
     _stop.set()
     global _poll_thread

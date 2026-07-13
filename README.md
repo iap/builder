@@ -61,17 +61,17 @@ the canonical Hermes credential pool (under `HERMES_HOME`, chmod 600):
 
 ```bash
 # Start a device flow; approve the user_code in Brave (signed into Google)
-hermes auth add aws-bid
+hermes auth add aws-build
 
 # Show stored credential / logged-in state
-hermes auth status aws-bid
-hermes auth list aws-bid
+hermes auth status aws-build
+hermes auth list aws-build
 
 # Clear the stored credential (also wipes plugin mirror files)
-hermes auth logout aws-bid
+hermes auth logout aws-build
 ```
 
-The credential is written to the Hermes credential pool; `bid_status`,
+`bid_status`,
 `bid_show_identity`, and `bid_logout` read and clear that same pool entry, so
 there is a single source of truth. Naming in docs and code uses "Amazon BID" /
 "Amazon Build ID" only.
@@ -80,4 +80,4 @@ there is a single source of truth. Naming in docs and code uses "Amazon BID" /
 
 The plugin also exposes agent tools (`bid_login`, `bid_status`,
 `bid_show_identity`, `bid_logout`) for in-conversation use. `bid_status` reads
-the same pool credential as `hermes auth status aws-bid`.
+the same pool credential as `hermes auth status aws-build`.
