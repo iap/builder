@@ -1,0 +1,6 @@
+# Secrets + transient auth state — never commit
+.bid_token.json
+.bid_registration.json
+__pycache__/
+*.pyc
+.pytest_cache/
