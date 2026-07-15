@@ -16,7 +16,7 @@ anonymously.
 ## Architecture
 
 ```
-__init__.py              wires 4 tools via ctx.register_tool
+__init__.py              wires 5 tools via ctx.register_tool
   │
   └── auth/__init__.py   re-exports public API from sso_oidc.py
         │
@@ -48,9 +48,9 @@ write `from .auth import start_login, get_status, ...`.
 
 ### `__init__.py`
 
-Defines four tool handlers (`_handle_bid_*`) and a `register(ctx)` function that
-calls `ctx.register_tool` for each tool in the `build` toolset. Each tool has a
-`check_fn` that verifies `boto3` is importable.
+Defines five tool handlers (`_handle_bid_*` plus `models`) and a `register(ctx)`
+function that calls `ctx.register_tool` for each tool in the `aws-build` toolset.
+Each tool has a `check_fn` that verifies `boto3` is importable.
 
 ---
 

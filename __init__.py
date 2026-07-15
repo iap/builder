@@ -15,15 +15,15 @@ from typing import Any
 
 try:
     from .auth import get_status, logout, show_identity, start_login
+    from .chat import chat as _chat, valid_models, DEFAULT_MODEL
 except ImportError:
     from auth import get_status, logout, show_identity, start_login
+    from chat import chat as _chat, valid_models, DEFAULT_MODEL
 
-# Available models for AWS Builder ID / Amazon Q Developer
-AVAILABLE_MODELS = [
-    "claude-sonnet-4",
-    "claude-sonnet-4.5",
-    "claude-haiku-4.5",
-]
+# Models are discovered live from `q chat --model help` (server-driven catalog
+# that drifts) — expose the current set for the `models` tool and the
+# aws_chat schema enum.
+AVAILABLE_MODELS = list(valid_models())
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +102,25 @@ def _handle_bid_models(args: dict[str, Any], **kwargs: Any) -> str:
     return _success({"models": AVAILABLE_MODELS})
 
 
+def _handle_aws_chat(args: dict[str, Any], **kwargs: Any) -> str:
+    """Chat with AWS Build (Amazon Q Developer) directly via the `q chat` CLI.
+
+    Drives `q chat --no-interactive --model <m> <prompt>` natively and returns
+    the cleaned answer. Optional `trust_tools` maps to `q chat --trust-tools`
+    so the model may run allowed tools (e.g. fs_read,fs_write) during the turn.
+    """
+    prompt = (args or {}).get("prompt")
+    if not prompt or not str(prompt).strip():
+        return _error("`prompt` is required", code="missing_prompt")
+    model = (args or {}).get("model") or DEFAULT_MODEL
+    trust_tools = (args or {}).get("trust_tools") or None
+    try:
+        return _chat(prompt, model=model, trust_tools=trust_tools)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("aws_chat failed")
+        return _error(str(exc), code="chat_failed")
+
+
 _TOOLS = (
     (
         "bid_login",
@@ -157,6 +176,45 @@ _TOOLS = (
         _handle_bid_logout,
         _check_available,
         "🚪",
+    ),
+    (
+        "aws_chat",
+        {
+            "name": "aws_chat",
+            "description": (
+                "Chat with AWS Build (Amazon Q Developer) using the public "
+                "`q chat` CLI directly. Returns the cleaned model answer. "
+                "Supports `model` (claude-sonnet-4.5, claude-sonnet-4, "
+                "claude-haiku-4.5) and optional `trust_tools` (comma-separated "
+                "q tool names, e.g. fs_read,fs_write) to let the model run "
+                "allowed tools during the turn."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "The question or instruction for AWS Build.",
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Model id (default claude-sonnet-4.5).",
+                        "enum": list(AVAILABLE_MODELS),
+                    },
+                    "trust_tools": {
+                        "type": "string",
+                        "description": (
+                            "Optional comma-separated q chat tool names to "
+                            "trust for this turn (e.g. 'fs_read,fs_write')."
+                        ),
+                    },
+                },
+                "required": ["prompt"],
+            },
+        },
+        _handle_aws_chat,
+        lambda: True,
+        "💬",
     ),
     (
         "models",
