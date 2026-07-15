@@ -21,6 +21,7 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
 
@@ -213,6 +214,66 @@ def _subscription_blocked(output: str) -> bool:
     return any(s in output for s in SUBSCRIPTION_GATE_STRINGS)
 
 
+# Anthropic Messages API version header value. The `anthropic` SDK inspects
+# this; we mirror Bedrock's Claude version string.
+ANTHROPIC_VERSION = "bedrock-2023-05-31"
+
+
+def _extract_anthropic_prompt(data: dict) -> str:
+    """Build a `q chat` prompt from Anthropic-native request fields.
+
+    Concatenates `system` (str or list of {type,text} blocks) then each
+    message's text content (both user and assistant turns, so multi-turn
+    context is preserved — `q chat` is invoked stateless per call). Returns ""
+    if no user message is found (caller validates).
+    """
+    parts: list[str] = []
+
+    def _text_of(content) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):  # [{type,text}, ...]
+            return " ".join(
+                c.get("text", "") for c in content if isinstance(c, dict)
+            )
+        return ""
+
+    system = data.get("system")
+    if isinstance(system, str) and system.strip():
+        parts.append(system.strip())
+    elif isinstance(system, list):  # structured system (prompt caching form)
+        sys_text = _text_of(system)
+        if sys_text.strip():
+            parts.append(sys_text.strip())
+
+    messages = data.get("messages") or []
+    for m in messages:
+        if not isinstance(m, dict):
+            continue
+        role = m.get("role")
+        text = _text_of(m.get("content")).strip()
+        if role in ("user", "assistant") and text:
+            parts.append(text)
+    return "\n\n".join(parts).strip()
+
+
+def _anthropic_response(answer: str, model: str, prompt: str) -> dict:
+    """Shape a `q chat` answer into the Anthropic Messages API response."""
+    return {
+        "content": [{"type": "text", "text": answer}],
+        "id": f"msg_qbridge-{uuid.uuid4().hex[:16]}",
+        "model": model,
+        "role": "assistant",
+        "stop_reason": "end_turn",
+        "stop_sequence": None,
+        "type": "message",
+        "usage": {
+            "input_tokens": len(prompt.split()),
+            "output_tokens": len(answer.split()),
+        },
+    }
+
+
 # --------------------------------------------------------------------------- #
 # HTTP handler
 # --------------------------------------------------------------------------- #
@@ -233,11 +294,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
             self.send_header("Vary", "Origin")
 
-    def _send(self, payload: dict, status: int = 200):
+    def _send(self, payload: dict, status: int = 200, extra_headers: dict | None = None):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        if extra_headers:
+            for k, v in extra_headers.items():
+                self.send_header(k, v)
         self._cors_headers()
         self.end_headers()
         self.wfile.write(body)
@@ -276,7 +340,11 @@ class Handler(BaseHTTPRequestHandler):
         self._send({"object": "list", "data": data})
 
     def do_POST(self):
-        if urlparse(self.path).path != "/v1/chat/completions":
+        path = urlparse(self.path).path
+        if path == "/v1/anthropic/messages":
+            self._post_anthropic()
+            return
+        if path != "/v1/chat/completions":
             self._send(_error("not_found", f"path {self.path} not found", 404), 404)
             return
 
@@ -365,6 +433,90 @@ class Handler(BaseHTTPRequestHandler):
                     "total_tokens": len(prompt.split()) + len(answer.split()),
                 },
             }
+        )
+
+    def _post_anthropic(self):
+        """Anthropic Messages API (`/v1/anthropic/messages`) -> `q chat`."""
+        hdr = {"anthropic-version": ANTHROPIC_VERSION}
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(self.rfile.read(length) or b"{}")
+        except Exception as exc:  # noqa: BLE001
+            self._send(_error("invalid_request_error", f"bad JSON: {exc}", 400), 400, hdr)
+            return
+
+        if data.get("stream"):
+            self._send(
+                _error(
+                    "invalid_request_error",
+                    "streaming is not supported by this bridge yet",
+                    400,
+                ),
+                400,
+                hdr,
+            )
+            return
+
+        messages = data.get("messages")
+        if not isinstance(messages, list) or not messages:
+            self._send(
+                _error("invalid_request_error", "`messages` must be a non-empty list", 400),
+                400,
+                hdr,
+            )
+            return
+
+        prompt = _extract_anthropic_prompt(data)
+        if not prompt:
+            self._send(_error("invalid_request_error", "no user message found", 400), 400, hdr)
+            return
+
+        model = _normalize_model(data.get("model", DEFAULT_MODEL))
+        if model not in valid_models():
+            self._send(
+                _error("invalid_request_error", f"invalid model name: {model}", 400),
+                400,
+                hdr,
+            )
+            return
+
+        output, status, ok = _run_q_chat_pty(prompt, model)
+
+        if _subscription_blocked(output):
+            self._send(
+                _error(
+                    "upstream_subscription_required",
+                    "Amazon Q requires an active subscription to answer this request.",
+                    403,
+                ),
+                403,
+                hdr,
+            )
+            return
+
+        if not ok:
+            if status is None:
+                self._send(
+                    _error(
+                        "upstream_timeout",
+                        f"q chat did not respond within {REQUEST_TIMEOUT}s",
+                        504,
+                    ),
+                    504,
+                    hdr,
+                )
+                return
+            self._send(
+                _error("upstream_error", f"q chat exited with status {status}", 502),
+                502,
+                hdr,
+            )
+            return
+
+        answer = extract_answer(output)
+        self._send(
+            _anthropic_response(answer, model, prompt),
+            extra_headers=hdr,
         )
 
     def log_message(self, fmt, *args):  # silence default access log
