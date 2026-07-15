@@ -2,6 +2,7 @@
 .bid_token.json
 .bid_registration.json
 .bid_flow.json
+.q_token.json
 __pycache__/
 *.pyc
 .pytest_cache/

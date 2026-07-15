@@ -124,9 +124,27 @@ def _error(err_type: str, message: str, http_status: int = 500) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# Substrate: invoke `q chat` via subprocess (no PTY)
+# Substrate: invoke `q chat` via subprocess (no PTY) OR call Q's API directly.
 # --------------------------------------------------------------------------- #
+# BACKEND selects how the bridge reaches Amazon Q:
+#   "subprocess" (default) -> shells out to the `q chat` CLI binary.
+#   "direct"               -> pure-HTTP via q_direct.py (no CLI binary needed).
+BACKEND = os.environ.get("AMAZON_Q_BACKEND", "subprocess").lower()
+
+
 def _run_q_chat_pty(prompt: str, model: str, timeout: int = REQUEST_TIMEOUT):
+    """Run a Q chat turn; return (output_text, exit_code_or_None, ok).
+
+    Dispatches on BACKEND:
+      * subprocess -> `q chat` CLI (original path).
+      * direct     -> q_direct.chat (HTTPS, no binary).
+    """
+    if BACKEND == "direct":
+        return _run_q_direct(prompt, model, timeout)
+    return _run_q_chat_subprocess(prompt, model, timeout)
+
+
+def _run_q_chat_subprocess(prompt: str, model: str, timeout: int = REQUEST_TIMEOUT):
     """Run `q chat` via subprocess; return (output_text, exit_code_or_None, ok).
 
     Avoids the prior PTY implementation that raised
@@ -159,6 +177,18 @@ def _run_q_chat_pty(prompt: str, model: str, timeout: int = REQUEST_TIMEOUT):
         # -1 (distinct from None=timeout) so the handler can report a 502
         # upstream error instead of mislabeling it as a timeout.
         return "", -1, False
+
+
+def _run_q_direct(prompt: str, model: str, timeout: int = REQUEST_TIMEOUT):
+    """Run a Q chat turn via the direct HTTPS backend (q_direct)."""
+    try:
+        import q_direct
+
+        answer = q_direct.chat(prompt, model=model)
+        return answer, 0, True
+    except Exception as exc:  # noqa: BLE001
+        # Surface the error text so subscription-gating / upstream parsing still works.
+        return f"{type(exc).__name__}: {exc}", -1, False
 
 
 def _dump(model, status, text, note=""):
