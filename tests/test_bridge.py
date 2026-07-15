@@ -97,11 +97,14 @@ def test_openai_sse_stream(bridge):
         raw=True,
     )
     assert status == 200
-    assert headers.get("content-type", "").startswith("text/event-stream")
-    assert "data: " in raw
-    assert "data: [DONE]" in raw
+    # http.client preserves original header case -> look up case-insensitively
+    ct = next((v for k, v in headers.items() if k.lower() == "content-type"), "")
+    assert ct.startswith("text/event-stream")
+    body = raw.decode() if isinstance(raw, (bytes, bytearray)) else raw
+    assert "data: " in body
+    assert "data: [DONE]" in body
     # the content chunk carries the answer
-    assert "SSE_OK" in raw
+    assert "SSE_OK" in body
 
 
 def test_openai_native_shape(bridge):
