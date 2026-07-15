@@ -414,6 +414,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         answer = extract_answer(output)
+        if data.get("stream"):
+            self._send_openai_sse(answer, model)
+            return
         self._send(
             {
                 "id": f"chatcmpl-qbridge-{os.getpid()}",
@@ -434,6 +437,45 @@ class Handler(BaseHTTPRequestHandler):
                 },
             }
         )
+
+    def _send_openai_sse(self, answer: str, model: str):
+        """Emit a valid OpenAI SSE stream.
+
+        `q chat` returns the full answer at once, so we send one content chunk
+        (with the complete text) followed by the [DONE] event. This satisfies
+        SSE-expecting clients (e.g. Hermes' openai_chat transport) that fail on
+        a plain JSON body.
+        """
+        chunks = [
+            {
+                "id": f"chatcmpl-qbridge-{os.getpid()}",
+                "object": "chat.completion.chunk",
+                "created": int(time.time()),
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "content": answer},
+                        "finish_reason": None,
+                    }
+                ],
+            },
+            {
+                "id": f"chatcmpl-qbridge-{os.getpid()}",
+                "object": "chat.completion.chunk",
+                "created": int(time.time()),
+                "model": model,
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            },
+        ]
+        body = "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("Content-Length", str(len(body.encode("utf-8"))))
+        self.end_headers()
+        self.wfile.write(body.encode("utf-8"))
 
     def _post_anthropic(self):
         """Anthropic Messages API (`/v1/anthropic/messages`) -> `q chat`."""

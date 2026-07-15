@@ -23,7 +23,7 @@ LIVE = os.environ.get("BRIDGE_LIVE") == "1"
 MODEL = "claude-sonnet-4"
 
 
-def _post(port, path, payload):
+def _post(port, path, payload, raw=False):
     url = f"http://127.0.0.1:{port}{path}"
     req = urllib.request.Request(
         url,
@@ -33,9 +33,11 @@ def _post(port, path, payload):
     )
     try:
         with urllib.request.urlopen(req, timeout=120) as r:
-            return r.status, dict(r.headers), json.loads(r.read())
+            body = r.read()
+            return r.status, dict(r.headers), body if raw else json.loads(body)
     except urllib.error.HTTPError as e:  # noqa: BLE001
-        return e.code, dict(e.headers), json.loads(e.read())
+        body = e.read()
+        return e.code, dict(e.headers), body if raw else json.loads(body)
 
 
 @pytest.fixture(scope="module")
@@ -84,7 +86,25 @@ def test_openai_no_regression(bridge):
     assert "OAI_OK" in body["choices"][0]["message"]["content"]
 
 
-def test_anthropic_native_shape(bridge):
+def test_openai_sse_stream(bridge):
+    # Hermes' openai_chat transport REQUIRES SSE; a plain JSON body fails with
+    # "empty stream, no finish_reason". The bridge must emit text/event-stream.
+    status, headers, raw = _post(
+        bridge,
+        "/v1/chat/completions",
+        {"model": MODEL, "stream": True,
+         "messages": [{"role": "user", "content": "reply with exactly: SSE_OK"}]},
+        raw=True,
+    )
+    assert status == 200
+    assert headers.get("content-type", "").startswith("text/event-stream")
+    assert "data: " in raw
+    assert "data: [DONE]" in raw
+    # the content chunk carries the answer
+    assert "SSE_OK" in raw
+
+
+def test_openai_native_shape(bridge):
     status, headers, body = _post(
         bridge,
         "/v1/anthropic/messages",
