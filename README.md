@@ -81,3 +81,29 @@ there is a single source of truth. Naming in docs and code uses "Amazon BID" /
 The plugin also exposes agent tools (`bid_login`, `bid_status`,
 `bid_show_identity`, `bid_logout`) for in-conversation use. `bid_status` reads
 the same pool credential as `hermes auth status aws-build`.
+
+---
+
+## Runtime — `q` CLI binary
+
+The `aws_chat` tool and the OpenAI-compatible bridge shell out to the public
+Amazon Q Developer CLI (`q chat`). The `q` symlink must point at a **working**
+build:
+
+- **Use `target/debug/chat_cli`** (the active `q` →
+  `/Users/iap/amazon-q-developer-cli/target/debug/chat_cli`). Verified working:
+  ~13–19s/chat, tool-use passthrough (`--trust-tools`) works, bridge serves
+  live models.
+- **Do NOT use `target/release/chat_cli` on this machine.** The release profile
+  (even at `opt-level=2`) fails the chat send with `hyper dispatch failure`
+  to `q.us-east-1.amazonaws.com` while the identical-source debug build
+  succeeds. Root cause is a release-build transport/runtime miscompile on this
+  macOS / rustc 1.87 / AWS-SDK toolchain — NOT , NOT the macOS
+  firewall, NOT keychain/login (all ruled out: both binaries log in fine,
+  traffic goes direct via en0). Rebuilding release with different opt/LTO flags
+  is unverified and not worth the ~80-min cycle since debug already meets the
+  latency need.
+
+If you must rebuild: `cd /Users/iap/amazon-q-developer-cli && cargo build --bin
+chat_cli` (debug) or `--release` (known-broken here). Bypass the `mise` cargo
+shim with `export PATH="/Users/iap/.cargo/bin:$PATH"` first.
