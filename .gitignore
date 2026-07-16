@@ -6,3 +6,6 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# OIDC public client secret (AWS published, not private)
+auth/oidc_client_secret.json
