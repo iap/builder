@@ -96,3 +96,33 @@ backend is `direct` (pure-HTTP via `q_direct.py`, Bearer Builder ID token):
 
 Launch: `python3 amazon_q_bridge.py --host 127.0.0.1 --port 8088`
 (omit `AMAZON_Q_BACKEND` — defaults to `direct`).
+
+### Tool use & file/context access — IMPORTANT
+
+AWS Build is **chat/reasoning only on the `direct` backend**. This is a hard
+constraint of Q's API, not a missing feature:
+
+- Q's `GenerateAssistantResponse` is a chat-completion stream. It **rejects a
+  `tools` field in the request** (`ValidationException` / `REQUEST_BODY_INVALID`),
+  and the `direct` bridge forwards only `messages` — it has no tool-execution
+  layer. So when Hermes sends a tool-enabled request, the tool spec is dropped,
+  Q cannot emit a `tool_call`, and the model **narrates the action instead of
+  executing it** (`tool_turns=0`, no file written).
+- Hermes's own tools (write_file, read_file, bash, delegation, skills) are NOT
+  reachable through the `direct` backend. Answers that depend on reading your
+  local files or running commands will be guesses — the model has no context.
+- Verified behavior: easy chat and format-following replies work; tool-driven
+  tasks (e.g. "create index.html") and context-aware answers about local code do
+  not execute through `direct`.
+
+**To get tool/context use through AWS Build**, switch to the `subprocess`
+backend, which calls `q chat` — that binary has native tool use (its stream
+emits `toolUse` events it executes locally):
+
+```bash
+AMAZON_Q_BACKEND=subprocess python3 amazon_q_bridge.py --host 127.0.0.1 --port 8088
+```
+
+Cost: requires the `amazon-q-developer-cli` binary (the thing `direct` exists
+to avoid). Choose `direct` for binary-free chat; choose `subprocess` when a task
+needs tools or local file/context access.
