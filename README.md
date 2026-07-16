@@ -84,26 +84,15 @@ the same pool credential as `hermes auth status aws-build`.
 
 ---
 
-## Runtime — `q` CLI binary
+## Runtime — backend
 
-The `aws_chat` tool and the OpenAI-compatible bridge shell out to the public
-Amazon Q Developer CLI (`q chat`). The `q` symlink must point at a **working**
-build:
+The bridge connects to Amazon Q with **no `q` CLI build required**. Default
+backend is `direct` (pure-HTTP via `q_direct.py`, Bearer Builder ID token):
 
-- **Use `target/debug/chat_cli`** (the active `q` →
-  `/Users/iap/amazon-q-developer-cli/target/debug/chat_cli`). Verified working:
-  ~13–19s/chat, tool-use passthrough (`--trust-tools`) works, bridge serves
-  live models.
-- **Do NOT use `target/release/chat_cli` on this machine.** The release profile
-  (even at `opt-level=2`) fails the chat send with `hyper dispatch failure`
-  to `q.us-east-1.amazonaws.com` while the identical-source debug build
-  succeeds. Root cause is a release-build transport/runtime miscompile on this
-  macOS / rustc 1.87 / AWS-SDK toolchain — NOT , NOT the macOS
-  firewall, NOT keychain/login (all ruled out: both binaries log in fine,
-  traffic goes direct via en0). Rebuilding release with different opt/LTO flags
-  is unverified and not worth the ~80-min cycle since debug already meets the
-  latency need.
+- `direct` (default) — no `amazon-q-developer-cli` binary; satisfies "AWS Build
+  connects to Q's server models without building q_cli".
+- `subprocess` (opt-in) — set `AMAZON_Q_BACKEND=subprocess` to shell out to a
+  local `q chat` build (only if you want Q's agentic/tool mode).
 
-If you must rebuild: `cd /Users/iap/amazon-q-developer-cli && cargo build --bin
-chat_cli` (debug) or `--release` (known-broken here). Bypass the `mise` cargo
-shim with `export PATH="/Users/iap/.cargo/bin:$PATH"` first.
+Launch: `python3 amazon_q_bridge.py --host 127.0.0.1 --port 8088`
+(omit `AMAZON_Q_BACKEND` — defaults to `direct`).
