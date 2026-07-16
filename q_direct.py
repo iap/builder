@@ -286,61 +286,17 @@ def get_token() -> dict:
         "credentials, which this script does not have."
     )
 
-
-# --- request signing (bearer + SigV4) -------------------------------------
-# Q's API requires BOTH a Bearer token (user identity) AND SigV4 request
-# integrity. botocore's SigV4Auth.add_auth() OVERWRITES the Authorization
-# header with "AWS4-HMAC-SHA256 Credential=/...", silently dropping the
-# bearer (verified: the bearer is gone after add_auth). So we sign manually
-# and KEEP the bearer in Authorization, placing the SigV4 signature in
-# X-Amz-Signature / X-Amz-Content-Sha256 (the signed-headers list
-# excludes Authorization). This is the dual-auth format Q expects.
+# --- request auth (Bearer only) ---
+# Verified live via mitmproxy capture of `q chat`: the CodeWhisperer
+# GenerateAssistantResponse call sends `Authorization: Bearer <OIDC accessToken>`
+# with x-amz-target + Content-Type, and NO SigV4 signed-headers. The OIDC
+# access_token from device_login() IS the chat bearer. (Earlier dual-auth
+# SigV4 attempt was wrong — Q rejected the extra X-Amz-* signed headers.)
 def _sign_request(method: str, url: str, body: str, bearer: str) -> dict:
-    from urllib.parse import urlparse
-
-    u = urlparse(url)
-    host = u.netloc
-    amzdate = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    payload_hash = hashlib.sha256(body.encode()).hexdigest()
-    signed = [
-        "content-type",
-        "host",
-        "x-amz-date",
-        "x-amz-region-set",
-        "x-amz-target",
-    ]
-    hv = {
-        "content-type": "application/x-amz-json-1.0",
-        "host": host,
-        "x-amz-date": amzdate,
-        "x-amz-region-set": REGION,
-        "x-amz-target": X_AMZ_TARGET,
-    }
-    canon_headers = "".join(f"{k}:{hv[k]}\n" for k in signed)
-    signed_str = ";".join(signed)
-    canon_req = f"{method}\n{u.path}\n\n{canon_headers}\n{signed_str}\n{payload_hash}"
-    d = amzdate[:8]
-
-    def _h(s: bytes) -> bytes:
-        return hashlib.sha256(s).digest()
-
-    k = hmac.new(b"AWS4", d.encode(), hashlib.sha256).digest()
-    k = hmac.new(k, REGION.encode(), hashlib.sha256).digest()
-    k = hmac.new(k, b"execute-api", hashlib.sha256).digest()
-    k = hmac.new(k, b"aws4_request", hashlib.sha256).digest()
-    sts = (
-        f"AWS4-HMAC-SHA256\n{amzdate}\n{d}/{REGION}/execute-api/aws4_request\n"
-        + hashlib.sha256(canon_req.encode()).hexdigest()
-    )
-    sig = hmac.new(k, sts.encode(), hashlib.sha256).hexdigest()
     return {
         "Content-Type": "application/x-amz-json-1.0",
         "Authorization": f"Bearer {bearer}",
-        "x-amz-date": amzdate,
-        "x-amz-region-set": REGION,
         "x-amz-target": X_AMZ_TARGET,
-        "X-Amz-Signature": sig,
-        "X-Amz-Content-Sha256": payload_hash,
     }
 
 
@@ -352,11 +308,11 @@ def chat(prompt: str, model: str = "claude-sonnet-4", conversation_id: Optional[
     not sent to Q's chat API (Q selects the model server-side); it is ignored
     here to avoid sending an unknown field.
 
-    NOTE: a from-scratch pure-Python Builder ID device login is impossible —
-    AWS SSO OIDC requires SigV4 signed with real AWS credentials for all token
-    endpoints (verified: 403 AccessDenied without signing). This call therefore
-    reuses Q's existing authenticated session. If no valid token is available,
-    get_token() raises a clear RuntimeError (see module docstring).
+    NOTE: the OIDC access_token from device_login() is the chat bearer (verified
+    live via mitmproxy capture of `q chat` — no SigV4, no token-exchange). This
+    call reuses Q's existing authenticated session if present, or a fresh token
+    from device_login(). If no valid token is available, get_token() raises a
+    clear RuntimeError.
     """
     tok = get_token()
     access = tok["access_token"]
@@ -365,9 +321,8 @@ def chat(prompt: str, model: str = "claude-sonnet-4", conversation_id: Optional[
         "conversationState": {
             "currentMessage": {
                 "userInputMessage": {"content": prompt},
-                "messageId": f"hermes-{int(time.time() * 1000)}",
             },
-            "chatTriggerType": "CHAT",
+            "chatTriggerType": "MANUAL",
         }
     }
     if conversation_id:
@@ -397,44 +352,50 @@ def chat(prompt: str, model: str = "claude-sonnet-4", conversation_id: Optional[
 
 
 def _extract_answer(response: requests.Response) -> str:
-    """Pull assistant text out of Q's streamed Coral JSON event stream.
+    """Decode Q's AWS event-stream response and return the assistant text.
 
-    The response is a sequence of JSON objects (one per line / event) carrying
-    `generateAssistantResponseResponse.event.assistantResponseMessage.content`.
-    We accumulate `content` snippets and join them.
+    The streaming service returns binary-framed events (`:event-type`,
+    `:content-type`, `:message-type` headers, then a JSON payload), not
+    newline-delimited Coral JSON. Each `assistantResponseEvent` payload is
+    `{"content": "...", "modelId": "..."}`. We accumulate `content` snippets.
     """
+    raw = b""
+    for chunk in response.iter_content(chunk_size=4096):
+        raw += chunk
+    text = raw.decode("utf-8", "replace")
     parts: list[str] = []
-    buffer = b""
-    for chunk in response.iter_content(chunk_size=1024):
-        buffer += chunk
-        # Coral emits newline-separated JSON events; split on newlines.
-        while b"\n" in buffer:
-            line, buffer = buffer.split(b"\n", 1)
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except Exception:
-                continue
-            ev = (
-                obj.get("generateAssistantResponseResponse", {})
-                .get("event", {})
-            )
-            msg = ev.get("assistantResponseMessage", {})
-            content = msg.get("content")
-            if content:
-                parts.append(content)
-    # flush any remainder
-    if buffer.strip():
+    # Each event payload is a JSON object; the assistant text lives in the
+    # assistantResponseEvent frames. Parse every {...} object defensively.
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i] != "{":
+            i += 1
+            continue
+        # find the matching closing brace (no nested objects in these payloads)
+        depth = 0
+        j = i
+        while j < n:
+            c = text[j]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        if j >= n:
+            break
+        frag = text[i : j + 1]
         try:
-            obj = json.loads(buffer)
-            ev = obj.get("generateAssistantResponseResponse", {}).get("event", {})
-            c = ev.get("assistantResponseMessage", {}).get("content")
-            if c:
-                parts.append(c)
+            obj = json.loads(frag)
         except Exception:
-            pass
+            i = j + 1
+            continue
+        # The event payload is the object that carries `content` (assistant text).
+        if isinstance(obj, dict) and "content" in obj and "modelId" in obj:
+            parts.append(obj["content"])
+        i = j + 1
     return "".join(parts).strip() or "(no response)"
 
 
