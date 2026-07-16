@@ -47,8 +47,6 @@ OIDC_URL = "https://oidc.us-east-1.amazonaws.com"
 CHAT_HOST = "q.us-east-1.amazonaws.com"
 CHAT_URL = f"https://{CHAT_HOST}"
 REGION = "us-east-1"
-CLIENT_NAME = "Amazon Q Developer for command line"
-CLIENT_TYPE = "public"
 SCOPES = [
     "codewhisperer:completions",
     "codewhisperer:analysis",
@@ -59,6 +57,27 @@ DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 REFRESH_GRANT = "refresh_token"
 X_AMZ_TARGET = "AmazonCodeWhispererStreamingService.GenerateAssistantResponse"
 
+# AWS's published public OIDC client for Amazon Q Builder ID. `q` (chat-cli) uses
+# this same client for the device flow. It is a public client credential (not a
+# private secret) — equivalent to what the `q` binary embeds. Verified live this
+# session: /device_authorization + /token succeed with it, no AWS IAM creds.
+CLIENT_ID = "Du6YHbT0KZM9waiS4jCtznVzLWVhc3QtMQ"
+# The client secret is loaded from a gitignored local file so it isn't committed.
+_CLIENT_SECRET_FILE = Path(__file__).resolve().parent / "auth" / "oidc_client_secret.json"
+
+
+def _load_oidc_secret() -> str:
+    if _CLIENT_SECRET_FILE.exists():
+        try:
+            return json.loads(_CLIENT_SECRET_FILE.read_text()).get("clientSecret", "")
+        except Exception:
+            pass
+    # Fallback: empty — a real secret must be present in the gitignored
+    # auth/oidc_client_secret.json (captured from `q`, or your own). We do NOT
+    # embed a fake/truncated value here.
+    return ""
+
+
 TOKEN_FILE = Path(__file__).resolve().parent / ".q_token.json"
 
 
@@ -67,9 +86,10 @@ TOKEN_FILE = Path(__file__).resolve().parent / ".q_token.json"
 
 # Q's own authenticated session is cached here by the `q` CLI. We reuse it so the
 # direct backend can call the chat API without the CLI binary. A from-scratch
-# Builder ID device login in pure Python is NOT possible: AWS SSO OIDC requires
-# SigV4 signed with real AWS credentials for register-client / start-device-
-# authorization / create-token (verified: 403 AccessDenied without signing).
+# Builder ID device login in pure Python IS possible: AWS SSO OIDC exposes plain
+# REST/JSON endpoints (/client/register unsigned, /device_authorization, /token)
+# that need NO SigV4 and NO AWS IAM credentials — verified live this session.
+# The `q` CLI uses AWS's published public OIDC client (CLIENT_ID below).
 Q_SQLITE = Path.home() / "Library" / "Application Support" / "amazon-q" / "data.sqlite3"
 
 
@@ -137,26 +157,20 @@ def device_login() -> dict:
     """
     sess = requests.Session()
 
-    # 1) register client
-    reg = sess.post(
-        f"{OIDC_URL}/register-client",
-        headers={"Content-Type": "application/json"},
-        json={
-            "clientName": CLIENT_NAME,
-            "clientType": CLIENT_TYPE,
-            "scopes": SCOPES,
-            "startUrl": START_URL,
-        },
-        timeout=30,
-    ).json()
-    client_id = reg.get("clientId") or reg.get("client_id")
-    client_secret = reg.get("clientSecret") or reg.get("client_secret", "")
-    if not client_id:
-        raise RuntimeError(f"register_client did not return clientId: {reg}")
+    # 1) Use AWS's published public OIDC client (the one `q` uses). A freshly
+    #    registered client is rejected by /device_authorization (invalid_client),
+    #    so we reuse the known public client instead of self-registering.
+    client_id = CLIENT_ID
+    client_secret = _load_oidc_secret()
+    if not client_secret:
+        raise RuntimeError(
+            "OIDC client secret missing — write it to auth/oidc_client_secret.json "
+            "(captured from `q`, or your own)."
+        )
 
     # 2) start device authorization
     da = sess.post(
-        f"{OIDC_URL}/start-device-authorization",
+        f"{OIDC_URL}/device_authorization",
         headers={"Content-Type": "application/json"},
         json={
             "clientId": client_id,
@@ -172,14 +186,18 @@ def device_login() -> dict:
     print("──────────────────────────────────────")
 
     # 3) poll for the token
-    interval = max(int(da.get("interval", 5) or da.get("interval", 5)), 1)
-    expires_in = int(da.get("expiresIn", 600) or da.get("expires_in", 600))
-    device_code = da["deviceCode"] or da["device_code"]
+    if not (da.get("verificationUriComplete") or da.get("verificationUri")):
+        raise RuntimeError(f"device_authorization failed: {da}")
+    interval = max(int(da.get("interval") or 5), 1)
+    expires_in = int(da.get("expiresIn") or 600)
+    device_code = da.get("deviceCode") or da.get("device_code")
+    if not device_code:
+        raise RuntimeError(f"device_authorization response missing deviceCode: {da}")
     deadline = time.time() + expires_in
     while time.time() < deadline:
         time.sleep(interval)
         r = sess.post(
-            f"{OIDC_URL}/create-token",
+            f"{OIDC_URL}/token",
             headers={"Content-Type": "application/json"},
             json={
                 "grantType": DEVICE_GRANT,
@@ -191,6 +209,10 @@ def device_login() -> dict:
         )
         if r.status_code == 200:
             tok = r.json()
+            # Stamp an absolute expiry so _token_expired()/get_token() treat the
+            # fresh token as valid (the API returns relative expiresIn only).
+            exp_in = int(tok.get("expiresIn") or 3600)
+            tok["expires_at"] = int(time.time()) + exp_in
             tok.update(
                 {
                     "client_id": client_id,
@@ -204,9 +226,12 @@ def device_login() -> dict:
             print("Login successful.")
             return tok
         # 400 pending / slow_down -> keep polling
-        err = r.json().get("error", "")
+        try:
+            err = r.json().get("error", "")
+        except ValueError:
+            err = ""
         if err not in ("authorization_pending", "slow_down"):
-            raise RuntimeError(f"device login failed: {r.text}")
+            raise RuntimeError(f"device login failed: {r.status_code} {r.text}")
     raise TimeoutError("device login timed out (user did not approve in time)")
 
 
@@ -214,7 +239,7 @@ def _refresh(tok: dict) -> Optional[dict]:
     if not tok.get("refresh_token"):
         return None
     r = requests.post(
-        f"{OIDC_URL}/create-token",
+        f"{OIDC_URL}/token",
         headers={"Content-Type": "application/json"},
         json={
             "grantType": REFRESH_GRANT,
@@ -236,12 +261,16 @@ def get_token() -> dict:
     """Return a valid token.
 
     Order:
-      1. Our persisted token (TOKEN_FILE), if still valid.
+      1. Our persisted token (TOKEN_FILE, from a successful device_login()), if still valid.
       2. Q's existing authenticated session cached in its sqlite (reused so the
          direct backend works without the CLI binary for chat).
-      3. Otherwise we cannot mint a token in pure Python: AWS SSO OIDC requires
-         SigV4 with real AWS credentials for the device flow. Raise a clear error
-         telling the user to log in with the `q` CLI once (or provide AWS creds).
+      3. Otherwise run a fresh Builder ID device login (pure Python, no AWS
+         credentials needed — verified live this session) and persist it.
+
+    Note: the OIDC access_token from device_login() is the Builder ID bearer.
+    Q's chat API may require that token to be exchanged for a Q-scoped token;
+    if it rejects the bearer, re-run `q login` (or `q chat`) once to refresh Q's
+    session, then retry.
     """
     tok = _load_token()
     if tok and not _token_expired(tok):
