@@ -268,6 +268,27 @@ def _refresh(tok: dict) -> Optional[dict]:
     return tok
 
 
+def _load_sso_token() -> Optional[dict]:
+    """Consult the plugin's BID login store (auth.sso_oidc) for a token.
+
+    `bid_login` (the plugin's login tool) writes here, not to .q_token.json.
+    Without this, a user who authenticates via the tool cannot chat because
+    get_token() only looked at .q_token.json / Q's sqlite. Lazy-import to
+    avoid pulling botocore at module load and to dodge circular imports.
+    """
+    try:
+        from auth import sso_oidc
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        tok = sso_oidc._load_pool_token()
+        if tok:
+            return tok
+        return sso_oidc._load_token()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def get_token() -> dict:
     """Return a valid token.
 
@@ -275,23 +296,29 @@ def get_token() -> dict:
       1. Our persisted token (TOKEN_FILE, from a successful device_login()), if still valid.
       2. Q's existing authenticated session cached in its sqlite (reused so the
          direct backend works without the CLI binary for chat).
-      3. If a stored token is present but expired, attempt a silent OIDC
+      3. The plugin's BID login store (auth.sso_oidc: Hermes credential pool or
+         .bid_token.json), written by the `bid_login` tool — so that login
+         actually enables chat.
+      4. If a stored token is present but expired, attempt a silent OIDC
          refresh_token exchange (no browser/interaction) before giving up.
-      4. Otherwise raise with an actionable message.
-
-    Note: the OIDC access_token from device_login() is the Builder ID bearer.
-    Q's chat API may require that token to be exchanged for a Q-scoped token;
-    if it rejects the bearer, re-run `q login` (or `q chat`) once to refresh Q's
-    session, then retry.
+      5. Otherwise raise with an actionable message.
     """
+    candidates = []
     tok = _load_token()
-    if tok and not _token_expired(tok):
-        return tok
+    if tok:
+        candidates.append(tok)
     q_tok = _load_q_sqlite_token()
-    if q_tok and not _token_expired(q_tok):
-        return q_tok
+    if q_tok:
+        candidates.append(q_tok)
+    sso_tok = _load_sso_token()
+    if sso_tok:
+        candidates.append(sso_tok)
+
+    for c in candidates:
+        if c and not _token_expired(c):
+            return c
     # Expired but refreshable -> silent refresh (no interactive device flow).
-    for candidate in (tok, q_tok):
+    for candidate in candidates:
         if candidate and (candidate.get("refresh_token") or candidate.get("refreshToken")):
             refreshed = _refresh(candidate)
             if refreshed:
