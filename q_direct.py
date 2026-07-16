@@ -35,6 +35,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 import datetime
 from pathlib import Path
@@ -398,51 +399,78 @@ def chat(prompt: str, model: str = "claude-sonnet-4", conversation_id: Optional[
     return _extract_answer(r)
 
 
+# Matches the JSON *string* value of a `"content"` key. The value is a properly
+# quoted JSON string, so the escape-aware pattern captures it intact — braces,
+# brackets, quotes and backslashes inside the assistant text cannot confuse it.
+_CONTENT_RE = re.compile(r'"content"\s*:\s*("(?:[^"\\]|\\.)*")')
+
+
+def _match_brace(text: str, start: int) -> int:
+    """Return the index of the `}` matching the `{` at `text[start]`, or len(text).
+
+    String/escape aware (so a `}` or `{` inside the assistant text, including
+    unbalanced ones, never breaks the scan). Used only to bound the object that
+    carries a `"content"` so we can check it also carries `"modelId"`.
+    """
+    depth = 0
+    i = start
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == '"':
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == '"':
+                    i += 1
+                    break
+                i += 1
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return n
+
+
 def _extract_answer(response: requests.Response) -> str:
     """Decode Q's AWS event-stream response and return the assistant text.
 
     The streaming service returns binary-framed events (`:event-type`,
     `:content-type`, `:message-type` headers, then a JSON payload), not
     newline-delimited Coral JSON. Each `assistantResponseEvent` payload is
-    `{"content": "...", "modelId": "..."}`. We accumulate `content` snippets.
+    `{"content": "...", "modelId": "..."}` where the text may contain code with
+    unbalanced braces/brackets/quotes/backslashes.
+
+    We pull `content` from every payload that also carries `modelId` (so
+    non-assistant event types are ignored). The `content` value is matched as a
+    JSON string — escape-aware — so its own braces never mis-split the JSON.
     """
     raw = b""
     for chunk in response.iter_content(chunk_size=4096):
         raw += chunk
     text = raw.decode("utf-8", "replace")
     parts: list[str] = []
-    # Each event payload is a JSON object; the assistant text lives in the
-    # assistantResponseEvent frames. Parse every {...} object defensively.
-    i = 0
-    n = len(text)
-    while i < n:
-        if text[i] != "{":
-            i += 1
+    for m in _CONTENT_RE.finditer(text):
+        # Bound the enclosing object so we can confirm it's an assistant event.
+        obj_start = text.rfind("{", 0, m.start())
+        if obj_start == -1:
             continue
-        # find the matching closing brace (no nested objects in these payloads)
-        depth = 0
-        j = i
-        while j < n:
-            c = text[j]
-            if c == "{":
-                depth += 1
-            elif c == "}":
-                depth -= 1
-                if depth == 0:
-                    break
-            j += 1
-        if j >= n:
-            break
-        frag = text[i : j + 1]
+        obj_end = _match_brace(text, obj_start)
+        if '"modelId"' not in text[obj_start : obj_end + 1]:
+            continue
         try:
-            obj = json.loads(frag)
+            parts.append(json.loads(m.group(1)))
         except Exception:
-            i = j + 1
             continue
-        # The event payload is the object that carries `content` (assistant text).
-        if isinstance(obj, dict) and "content" in obj and "modelId" in obj:
-            parts.append(obj["content"])
-        i = j + 1
     return "".join(parts).strip() or "(no response)"
 
 
