@@ -28,6 +28,50 @@ AVAILABLE_MODELS = list(valid_models())
 logger = logging.getLogger(__name__)
 
 
+def ensure_bridge(host: str = "127.0.0.1", port: int = 8088) -> None:
+    """Auto-start the OpenAI-compatible bridge if it isn't already listening.
+
+    Lets AWS Build work with no manual `python3 amazon_q_bridge.py` launch:
+    Hermes calls ``register()`` on plugin load, which spawns the bridge once
+    (it's a server — only start if the port is free). Pure-Python ``direct``
+    backend, so no ``q`` CLI binary is required. No Hermes-core change.
+
+    Failures are non-fatal: if the bridge can't start, chat requests will fail
+    with a clear upstream error rather than crashing plugin registration.
+    """
+    import os
+    import socket
+    import subprocess
+    import sys
+
+    # Already listening? Leave it alone (don't double-spawn a server).
+    try:
+        with socket.create_connection((host, port), timeout=1):
+            logger.info("aws-build bridge already listening on %s:%s", host, port)
+            return
+    except OSError:
+        pass
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    bridge = os.path.join(here, "amazon_q_bridge.py")
+    if not os.path.exists(bridge):
+        logger.warning("aws-build bridge not found at %s; skipping auto-start", bridge)
+        return
+
+    try:
+        # Detached so it survives this process and isn't reaped on exit.
+        subprocess.Popen(
+            [sys.executable, bridge, "--host", host, "--port", str(port)],
+            env={**os.environ, "AMAZON_Q_BACKEND": "direct"},
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        logger.info("aws-build bridge auto-started on %s:%s (direct backend)", host, port)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("aws-build bridge auto-start failed: %s", exc)
+
+
 def _success(data: dict[str, Any]) -> str:
     return json.dumps({"success": True, **data})
 
@@ -231,7 +275,10 @@ _TOOLS = (
 
 
 def register(ctx) -> None:
-    """Register all build plugin tools."""
+    """Register all build plugin tools (and auto-start the bridge)."""
+    # Auto-start the OpenAI-compatible bridge so AWS Build works without a
+    # manual launch — no Hermes-core fork, pure-Python direct backend.
+    ensure_bridge()
     for name, schema, handler, check_fn, emoji in _TOOLS:
         ctx.register_tool(
             name=name,
