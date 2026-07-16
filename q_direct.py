@@ -324,11 +324,10 @@ def get_token() -> dict:
             if refreshed:
                 return refreshed
     raise RuntimeError(
-        "No valid Amazon Q token available. The direct (no-CLI) backend reuses "
-        "Q's existing Builder ID session; please run `q login` (or `q chat`) once "
-        "to authenticate, then retry. A from-scratch pure-Python device login is "
-        "blocked by AWS: SSO OIDC requires SigV4-signed requests with AWS "
-        "credentials, which this script does not have."
+        "No valid Amazon Q token available. AWS Build is binary-free: authenticate "
+        "via the `bid_login` plugin tool (or `hermes auth add aws-build`), which "
+        "performs the SigV4-free OIDC device flow and writes the token the chat "
+        "path reads. Then retry. A refresh is attempted automatically on expiry."
     )
 
 # --- request auth (Bearer only) ---
@@ -390,9 +389,10 @@ def chat(prompt: str, model: str = "claude-sonnet-4", conversation_id: Optional[
         if r.status_code in (400, 401) and "invalid" in err.lower():
             TOKEN_FILE.unlink(missing_ok=True)
             raise RuntimeError(
-                "Amazon Q rejected the bearer token (expired/revoked). The direct "
-                "(no-CLI) backend reuses Q's existing Builder ID session; please run "
-                "`q login` (or `q chat`) once to refresh it, then retry."
+                "Amazon Q rejected the bearer token (expired/revoked). AWS Build is "
+                "binary-free: re-authenticate via the `bid_login` plugin tool (or "
+                "`hermes auth add aws-build`) — it performs the SigV4-free OIDC "
+                "device flow. A refresh is attempted automatically on expiry."
             )
         raise RuntimeError(f"Q chat HTTP {r.status_code}: {err}")
     return _extract_answer(r)
@@ -463,24 +463,14 @@ STATIC_MODELS = [
 def list_models() -> list[str]:
     """Return available AWS Build models.
 
-    Best-effort live discovery from Q's ListAvailableModels API, falling back
-    to STATIC_MODELS on any failure (network, auth, unknown target). The live
-    path is currently unverified (target prefix not confirmed) so the static
-    catalog is what's actually served — see STATIC_MODELS note above.
+    The catalog is the static STATIC_MODELS list (matches config.yaml
+    aws-build.models). A genuine live ListAvailableModels call is not wired
+    because its Smithy X-Amz-Target prefix lives in the aws-smithy runtime and
+    is not derivable without the service model (live probes 404). Returning the
+    static list directly also avoids requiring a live token at import time
+    (the plugin builds AVAILABLE_MODELS from this at load).
     """
-    try:
-        tok = get_token()
-        access = tok.get("access_token") or tok.get("accessToken")
-        if not access:
-            return list(STATIC_MODELS)
-        # NOTE: the verified working target for chat is
-        # AmazonCodeWhispererStreamingService.GenerateAssistantResponse; the
-        # non-streaming ListAvailableModels target is NOT confirmed and 404s in
-        # probes, so we intentionally return the static list rather than emit a
-        # request we know is unverified.
-        return list(STATIC_MODELS)
-    except Exception:
-        return list(STATIC_MODELS)
+    return list(STATIC_MODELS)
 
 
 if __name__ == "__main__":
