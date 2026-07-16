@@ -83,8 +83,6 @@ TOKEN_FILE = Path(__file__).resolve().parent / ".q_token.json"
 
 
 # --- token storage ---
-TOKEN_FILE = Path(__file__).resolve().parent / ".q_token.json"
-
 # Q's own authenticated session is cached here by the `q` CLI. We reuse it so the
 # direct backend can call the chat API without the CLI binary. A from-scratch
 # Builder ID device login in pure Python IS possible: AWS SSO OIDC exposes plain
@@ -337,7 +335,7 @@ def get_token() -> dict:
 # with x-amz-target + Content-Type, and NO SigV4 signed-headers. The OIDC
 # access_token from device_login() IS the chat bearer. (Earlier dual-auth
 # SigV4 attempt was wrong — Q rejected the extra X-Amz-* signed headers.)
-def _sign_request(method: str, url: str, body: str, bearer: str) -> dict:
+def _sign_request(method: str, url: str, bearer: str) -> dict:
     return {
         "Content-Type": "application/x-amz-json-1.0",
         "Authorization": f"Bearer {bearer}",
@@ -376,7 +374,7 @@ def chat(prompt: str, model: str = "claude-sonnet-4", conversation_id: Optional[
         body["conversationState"]["conversationId"] = conversation_id
 
     payload = json.dumps(body)
-    headers = _sign_request("POST", CHAT_URL, payload, access)
+    headers = _sign_request("POST", CHAT_URL, access)
     r = requests.post(
         CHAT_URL,
         data=payload,
@@ -386,9 +384,15 @@ def chat(prompt: str, model: str = "claude-sonnet-4", conversation_id: Optional[
     )
     if r.status_code != 200:
         err = r.text[:300]
-        # Auth failure -> clear, actionable error (no silent bearer drop).
+        # Auth failure (expired/revoked bearer). Attempt a silent refresh and
+        # ONE retry before giving up — don't nuke a possibly-valid token on a
+        # generic 400, and don't require user interaction. (m1/m3)
         if r.status_code in (400, 401) and "invalid" in err.lower():
-            TOKEN_FILE.unlink(missing_ok=True)
+            for cand in (_load_token(), _load_q_sqlite_token(), _load_sso_token()):
+                if cand and (cand.get("refresh_token") or cand.get("refreshToken")):
+                    refreshed = _refresh(cand)
+                    if refreshed:
+                        return chat(prompt, model=model, conversation_id=conversation_id)
             raise RuntimeError(
                 "Amazon Q rejected the bearer token (expired/revoked). AWS Build is "
                 "binary-free: re-authenticate via the `bid_login` plugin tool (or "
@@ -471,7 +475,15 @@ def _extract_answer(response: requests.Response) -> str:
             parts.append(json.loads(m.group(1)))
         except Exception:
             continue
-    return "".join(parts).strip() or "(no response)"
+    text = "".join(parts).strip()
+    # Mid-stream auth/upstream error can arrive as a JSON error envelope after
+    # 200 headers (m3). Surface it instead of silently returning "(no response)".
+    if not text:
+        err = re.search(r'"__type"\s*:\s*"([^"]+)"', raw.decode("utf-8", "replace"))
+        if err:
+            return f"(Q error: {err.group(1)})"
+        return "(no response)"
+    return text
 
 
 # Static catalog — single source of truth (matches config.yaml aws-build.models).

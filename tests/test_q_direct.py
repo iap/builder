@@ -84,7 +84,7 @@ def test_chat_body_shape():
         }
     }
     payload = json.dumps(body)
-    headers = q_direct._sign_request("POST", q_direct.CHAT_URL, payload, "TOKEN")
+    headers = q_direct._sign_request("POST", q_direct.CHAT_URL, "TOKEN")
     assert headers["Authorization"] == "Bearer TOKEN"
     assert headers["x-amz-target"] == q_direct.X_AMZ_TARGET
     assert "X-Amz-Signature" not in headers  # no SigV4 (verified: q sends Bearer only)
