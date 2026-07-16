@@ -89,6 +89,12 @@ def discover_models(force: bool = False) -> list[str]:
             return _MODEL_CACHE
     if not force:
         return _MODEL_CACHE
+    # On the binary-free 'direct' backend (the default), never shell `q chat`
+    # for live discovery — re-seed from the static catalog instead. The
+    # subprocess/Q_BIN path is only reachable when BACKEND=="subprocess".
+    if BACKEND == "direct":
+        _MODEL_CACHE, _MODEL_CACHE_TS = list(FALLBACK_MODELS), now
+        return _MODEL_CACHE
     try:
         proc = subprocess.run(
             [Q_BIN, "chat", "--model", "help"],
