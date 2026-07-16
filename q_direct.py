@@ -414,6 +414,43 @@ def _extract_answer(response: requests.Response) -> str:
     return "".join(parts).strip() or "(no response)"
 
 
+# Static catalog — single source of truth (matches config.yaml aws-build.models).
+# `q chat --model help` used to provide this live, but that requires the `q`
+# binary (removed). The dedicated ListAvailableModels Smithy API exists
+# (chat-cli/src/api_client/mod.rs:277) but its X-Amz-Target prefix lives in the
+# aws-smithy runtime and is not derivable without the service model; live probes
+# of `AmazonCodeWhisperer(ListAvailableModels)` on the chat endpoint return 404.
+# So we keep the static list and treat any live fetch as a best-effort override.
+STATIC_MODELS = [
+    "claude-sonnet-4.5",
+    "claude-sonnet-4",
+    "claude-haiku-4.5",
+]
+
+
+def list_models() -> list[str]:
+    """Return available AWS Build models.
+
+    Best-effort live discovery from Q's ListAvailableModels API, falling back
+    to STATIC_MODELS on any failure (network, auth, unknown target). The live
+    path is currently unverified (target prefix not confirmed) so the static
+    catalog is what's actually served — see STATIC_MODELS note above.
+    """
+    try:
+        tok = get_token()
+        access = tok.get("access_token") or tok.get("accessToken")
+        if not access:
+            return list(STATIC_MODELS)
+        # NOTE: the verified working target for chat is
+        # AmazonCodeWhispererStreamingService.GenerateAssistantResponse; the
+        # non-streaming ListAvailableModels target is NOT confirmed and 404s in
+        # probes, so we intentionally return the static list rather than emit a
+        # request we know is unverified.
+        return list(STATIC_MODELS)
+    except Exception:
+        return list(STATIC_MODELS)
+
+
 if __name__ == "__main__":
     import sys
     p = sys.argv[1] if len(sys.argv) > 1 else "reply with exactly: DIRECT_OK"

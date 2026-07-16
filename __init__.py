@@ -1,10 +1,16 @@
-"""build plugin — Amazon BID (Build ID) device login for Hermes Agent.
+"""AWS Build plugin — Amazon Q Developer for Hermes Agent (binary-free).
 
-Exposes headless SSO-OIDC device authorization so the agent can start an
-Amazon BID login, report the user_code + verification URL, poll for the token
-in the background, and report auth status / identity / logout. No AWS
-credentials required on the client. All secrets live under HERMES_HOME (chmod
-600); tool handlers never return them.
+Two capabilities, both pure-Python (no `amazon-q-developer-cli` build):
+
+1. Amazon BID (Build ID) device login — headless SSO-OIDC so the agent can
+   start a login, report the user_code + verification URL, poll for the token
+   in the background, and report auth status / identity / logout. No AWS
+   credentials required on the client.
+
+2. Chat provider — AWS Build is exposed to Hermes as the `aws-build` custom
+   provider (config.yaml) -> the auto-started OpenAI-compatible bridge on
+   :8088 -> pure-Python `q_direct` (Bearer Builder ID token). All secrets live
+   under HERMES_HOME (chmod 600); tool handlers never return them.
 """
 
 from __future__ import annotations
@@ -15,15 +21,17 @@ from typing import Any
 
 try:
     from .auth import get_status, logout, show_identity, start_login
-    from .chat import chat as _chat, valid_models, DEFAULT_MODEL
+    from .q_direct import list_models
 except ImportError:
+    # Allow loading as a flat module under pytest (conftest.py puts the
+    # plugin dir on sys.path without a package parent).
     from auth import get_status, logout, show_identity, start_login
-    from chat import chat as _chat, valid_models, DEFAULT_MODEL
+    from q_direct import list_models
 
-# Models are discovered live from `q chat --model help` (server-driven catalog
-# that drifts) — expose the current set for the `models` tool and the
-# aws_chat schema enum.
-AVAILABLE_MODELS = list(valid_models())
+# Model catalog sourced from the direct backend (q_direct.list_models), which
+# serves a static catalog matching config.yaml aws-build.models. No `q chat
+# --model help` subprocess probing needed.
+AVAILABLE_MODELS = list(list_models())
 
 logger = logging.getLogger(__name__)
 
@@ -142,27 +150,8 @@ def _handle_bid_logout(args: dict[str, Any], **kwargs: Any) -> str:
 
 
 def _handle_bid_models(args: dict[str, Any], **kwargs: Any) -> str:
-    """List available AWS Builder ID models."""
+    """List available AWS Build models."""
     return _success({"models": AVAILABLE_MODELS})
-
-
-def _handle_aws_chat(args: dict[str, Any], **kwargs: Any) -> str:
-    """Chat with AWS Build (Amazon Q Developer) directly via the `q chat` CLI.
-
-    Drives `q chat --no-interactive --model <m> <prompt>` natively and returns
-    the cleaned answer. Optional `trust_tools` maps to `q chat --trust-tools`
-    so the model may run allowed tools (e.g. fs_read,fs_write) during the turn.
-    """
-    prompt = (args or {}).get("prompt")
-    if not prompt or not str(prompt).strip():
-        return _error("`prompt` is required", code="missing_prompt")
-    model = (args or {}).get("model") or DEFAULT_MODEL
-    trust_tools = (args or {}).get("trust_tools") or None
-    try:
-        return _chat(prompt, model=model, trust_tools=trust_tools)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("aws_chat failed")
-        return _error(str(exc), code="chat_failed")
 
 
 _TOOLS = (
@@ -222,49 +211,10 @@ _TOOLS = (
         "🚪",
     ),
     (
-        "aws_chat",
-        {
-            "name": "aws_chat",
-            "description": (
-                "Chat with AWS Build (Amazon Q Developer) using the public "
-                "`q chat` CLI directly. Returns the cleaned model answer. "
-                "Supports `model` (claude-sonnet-4.5, claude-sonnet-4, "
-                "claude-haiku-4.5) and optional `trust_tools` (comma-separated "
-                "q tool names, e.g. fs_read,fs_write) to let the model run "
-                "allowed tools during the turn."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "prompt": {
-                        "type": "string",
-                        "description": "The question or instruction for AWS Build.",
-                    },
-                    "model": {
-                        "type": "string",
-                        "description": "Model id (default claude-sonnet-4.5).",
-                        "enum": list(AVAILABLE_MODELS),
-                    },
-                    "trust_tools": {
-                        "type": "string",
-                        "description": (
-                            "Optional comma-separated q chat tool names to "
-                            "trust for this turn (e.g. 'fs_read,fs_write')."
-                        ),
-                    },
-                },
-                "required": ["prompt"],
-            },
-        },
-        _handle_aws_chat,
-        lambda: True,
-        "💬",
-    ),
-    (
         "models",
         {
             "name": "models",
-            "description": "List available AWS Builder ID models (Claude variants).",
+            "description": "List available AWS Build models (Claude variants).",
             "parameters": {"type": "object", "properties": {}},
         },
         _handle_bid_models,
