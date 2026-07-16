@@ -255,7 +255,12 @@ def _refresh(tok: dict) -> Optional[dict]:
     new = r.json()
     tok.update(new)
     # Refresh responses omit expires_at; stamp it so _token_expired() works.
-    if "expires_at" not in tok and new.get("expiresIn"):
+    # Always recompute from expiresIn — tok may already carry a STALE
+    # expires_at (from the pre-refresh token), and the `if "expires_at" not
+    # in tok` guard would skip the update, leaving an expired timestamp on
+    # disk (bug: every call re-refreshed because the saved token looked
+    # expired). Recompute whenever expiresIn is present.
+    if new.get("expiresIn"):
         import time as _time
 
         tok["expires_at"] = int(_time.time()) + int(new["expiresIn"])
