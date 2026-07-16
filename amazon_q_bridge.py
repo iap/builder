@@ -51,7 +51,6 @@ MODEL_ALIASES = {
     "sonnet45": "claude-sonnet-4.5",
     "haiku": "claude-haiku-4.5",
     "haiku45": "claude-haiku-4.5",
-    "opus": "claude-opus-4",
 }
 # Static catalog matching `q chat --model <bad>`'s "Available models:" list
 # (verified live: claude-sonnet-4.5, claude-sonnet-4, claude-haiku-4.5).
