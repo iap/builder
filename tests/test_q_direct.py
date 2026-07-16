@@ -96,6 +96,31 @@ def test_extract_answer_empty_stream():
     assert q_direct._extract_answer(_FakeResp(["", "   "])) == "(no response)"
 
 
+def test_extract_answer_unbalanced_brace_in_content():
+    # Regression: assistant text containing an unbalanced '}' must NOT be
+    # dropped. The old brace-scanner mis-split the JSON and returned "(no response)".
+    payload = '{"content":"use m.get(k) } end","modelId":"claude-sonnet-4.5"}'
+    out = q_direct._extract_answer(_FakeResp([payload]))
+    assert out == "use m.get(k) } end"
+    assert "}" in out
+
+
+def test_extract_answer_ignores_non_assistant_events():
+    # A payload carrying `content` but no `modelId` is not an assistant event
+    # and must be skipped (matches the brace-regex but lacks `modelId`).
+    non_assistant = '{"content":"should be ignored","eventType":"other"}'
+    assistant = '{"content":"keep me","modelId":"auto"}'
+    out = q_direct._extract_answer(_FakeResp([non_assistant, assistant]))
+    assert out == "keep me"
+
+
+def test_extract_answer_escaped_quotes_and_braces():
+    # `content` with escaped quotes and embedded braces inside the text.
+    payload = '{"content":"print(\\"x { y }\\")","modelId":"auto"}'
+    out = q_direct._extract_answer(_FakeResp([payload]))
+    assert out == 'print("x { y }")'
+
+
 def test_token_expired_epoch():
     assert q_direct._token_expired({"expires_at": 100}, skew=0) is True
     assert q_direct._token_expired({"expires_at": 9_999_999_999_999}, skew=0) is False
