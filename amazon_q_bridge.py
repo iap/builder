@@ -139,9 +139,11 @@ def _error(err_type: str, message: str, http_status: int = 500) -> dict:
 # Substrate: invoke `q chat` via subprocess (no PTY) OR call Q's API directly.
 # --------------------------------------------------------------------------- #
 # BACKEND selects how the bridge reaches Amazon Q:
-#   "subprocess" (default) -> shells out to the `q chat` CLI binary.
-#   "direct"               -> pure-HTTP via q_direct.py (no CLI binary needed).
-BACKEND = os.environ.get("AMAZON_Q_BACKEND", "subprocess").lower()
+#   "direct"    (default) -> pure-HTTP via q_direct.py (no CLI binary needed).
+#   "subprocess"           -> shells out to the `q chat` CLI binary (opt-in fallback).
+# Default is "direct" so AWS Build connects to Q's server models with no
+# amazon-q-developer-cli build/install required.
+BACKEND = os.environ.get("AMAZON_Q_BACKEND", "direct").lower()
 
 
 def _run_q_chat_pty(prompt: str, model: str, timeout: int = REQUEST_TIMEOUT):
