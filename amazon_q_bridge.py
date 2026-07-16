@@ -53,13 +53,14 @@ MODEL_ALIASES = {
     "haiku45": "claude-haiku-4.5",
     "opus": "claude-opus-4",
 }
-# Fallback used only if `q chat --model help` cannot be queried. The real list
-# is discovered live (server-driven catalog that drifts).
+# Static catalog matching `q chat --model <bad>`'s "Available models:" list
+# (verified live: claude-sonnet-4.5, claude-sonnet-4, claude-haiku-4.5).
+# Used as the instant default for GET /v1/models and as the fallback
+# if the live `q` probe fails.
 FALLBACK_MODELS = (
-    "claude-sonnet-4",
     "claude-sonnet-4.5",
+    "claude-sonnet-4",
     "claude-haiku-4.5",
-    "claude-3.7-sonnet",
 )
 
 # Cache for discovered models (TTL-based).
@@ -69,24 +70,35 @@ _MODEL_CACHE_TTL = 300.0
 
 
 def discover_models(force: bool = False) -> list[str]:
-    """Return models `q chat --model` accepts, discovered live from the CLI.
+    """Return models `q chat --model` accepts.
 
-    Parses `q chat --model help` -> "Available models: a, b". Caches for
-    _MODEL_CACHE_TTL seconds. Falls back to FALLBACK_MODELS if q is missing
-    or the parse fails.
+    Returns the static FALLBACK_MODELS immediately (no blocking subprocess)
+    so the dashboard's /v1/models probe is instant. The live `q chat
+    --model help` catalog is only consulted on force=True (e.g. an
+    explicit refresh), since `q` cold-start can take ~30s and would
+    time out the dashboard's short probe.
     """
     global _MODEL_CACHE, _MODEL_CACHE_TS
     now = time.time()
     if not force and _MODEL_CACHE and (now - _MODEL_CACHE_TS) < _MODEL_CACHE_TTL:
+        return _MODEL_CACHE
+    # Seed the cache with the static fallback so the first GET is instant.
+    if not _MODEL_CACHE:
+        _MODEL_CACHE, _MODEL_CACHE_TS = list(FALLBACK_MODELS), now
+        if not force:
+            return _MODEL_CACHE
+    if not force:
         return _MODEL_CACHE
     try:
         proc = subprocess.run(
             [Q_BIN, "chat", "--model", "help"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            timeout=6,
+            timeout=45,
         )
-        out = proc.stdout.decode(errors="replace")
+        # `q chat --model help` prints "Available models: ..." to STDERR
+        # (and exits non-zero, since "help" isn't a valid model).
+        out = (proc.stderr or b"").decode(errors="replace")
         m = re.search(r"Available models:\s*([^\n]+)", out)
         if m:
             models = [x.strip() for x in m.group(1).split(",") if x.strip()]
@@ -95,7 +107,7 @@ def discover_models(force: bool = False) -> list[str]:
                 return models
     except Exception:
         pass
-    return list(FALLBACK_MODELS)
+    return list(_MODEL_CACHE or FALLBACK_MODELS)
 
 
 def valid_models() -> list[str]:
