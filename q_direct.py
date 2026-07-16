@@ -236,16 +236,17 @@ def device_login() -> dict:
 
 
 def _refresh(tok: dict) -> Optional[dict]:
-    if not tok.get("refresh_token"):
+    refresh = tok.get("refresh_token") or tok.get("refreshToken")
+    if not refresh:
         return None
     r = requests.post(
         f"{OIDC_URL}/token",
         headers={"Content-Type": "application/json"},
         json={
             "grantType": REFRESH_GRANT,
-            "clientId": tok.get("client_id", ""),
-            "clientSecret": tok.get("client_secret", ""),
-            "refreshToken": tok["refresh_token"],
+            "clientId": tok.get("client_id") or tok.get("clientId", ""),
+            "clientSecret": tok.get("client_secret") or tok.get("clientSecret", ""),
+            "refreshToken": refresh,
         },
         timeout=30,
     )
@@ -253,6 +254,11 @@ def _refresh(tok: dict) -> Optional[dict]:
         return None
     new = r.json()
     tok.update(new)
+    # Refresh responses omit expires_at; stamp it so _token_expired() works.
+    if "expires_at" not in tok and new.get("expiresIn"):
+        import time as _time
+
+        tok["expires_at"] = int(_time.time()) + int(new["expiresIn"])
     _save_token(tok)
     return tok
 
@@ -264,8 +270,9 @@ def get_token() -> dict:
       1. Our persisted token (TOKEN_FILE, from a successful device_login()), if still valid.
       2. Q's existing authenticated session cached in its sqlite (reused so the
          direct backend works without the CLI binary for chat).
-      3. Otherwise run a fresh Builder ID device login (pure Python, no AWS
-         credentials needed — verified live this session) and persist it.
+      3. If a stored token is present but expired, attempt a silent OIDC
+         refresh_token exchange (no browser/interaction) before giving up.
+      4. Otherwise raise with an actionable message.
 
     Note: the OIDC access_token from device_login() is the Builder ID bearer.
     Q's chat API may require that token to be exchanged for a Q-scoped token;
@@ -278,6 +285,12 @@ def get_token() -> dict:
     q_tok = _load_q_sqlite_token()
     if q_tok and not _token_expired(q_tok):
         return q_tok
+    # Expired but refreshable -> silent refresh (no interactive device flow).
+    for candidate in (tok, q_tok):
+        if candidate and (candidate.get("refresh_token") or candidate.get("refreshToken")):
+            refreshed = _refresh(candidate)
+            if refreshed:
+                return refreshed
     raise RuntimeError(
         "No valid Amazon Q token available. The direct (no-CLI) backend reuses "
         "Q's existing Builder ID session; please run `q login` (or `q chat`) once "
@@ -315,7 +328,9 @@ def chat(prompt: str, model: str = "claude-sonnet-4", conversation_id: Optional[
     clear RuntimeError.
     """
     tok = get_token()
-    access = tok["access_token"]
+    access = tok.get("access_token") or tok.get("accessToken")
+    if not access:
+        raise RuntimeError("Amazon Q token missing access_token")
 
     body = {
         "conversationState": {
