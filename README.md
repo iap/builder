@@ -107,7 +107,7 @@ plugin owns its own settings in-repo.
 backend: subprocess        # direct | subprocess  (env: AMAZON_Q_BACKEND)
 default_model: claude-haiku-4.5   # env: AMAZON_Q_DEFAULT_MODEL
 extra_models:              # appended to /v1/models + validation (env: AMAZON_Q_EXTRA_MODELS, comma-sep)
-  - claude-opus-4.5
+  []                        # only add models `q chat --model` accepts (see below)
 debug: false               # verbose /tmp/q_raw_<pid>.log dump (env: AMAZON_Q_DEBUG)
 ```
 
@@ -182,23 +182,26 @@ The bridge serves an OpenAI-compatible `/v1/models` list and validates the
   so both `claude-haiku-4.5` and `aws-build/claude-haiku-4.5` resolve correctly.
 - **Aliases.** Short forms and dash/dot variants map to catalog entries:
   `haiku`/`haiku45` → `claude-haiku-4.5`, `sonnet`/`sonnet45` → `claude-sonnet-4.5`,
-  `claude-opus` → `claude-opus-4`, `claude-sonnet-4-5` → `claude-sonnet-4.5`, etc.
+  `claude-sonnet-4-5` → `claude-sonnet-4.5`, etc. (No `claude-opus-*` aliases —
+  `q chat` rejects those models with "Model does not exist".)
 - **No hard 400 on unknown names.** A model that isn't in the catalog (typo,
   brand-new Q variant) **falls back to `DEFAULT_MODEL`** (`claude-haiku-4.5`,
   aligned with `~/.hermes/config.yaml` aws-build `default`) and logs a warning —
-  the turn still succeeds instead of erroring out. Valid catalog:
-  `claude-haiku-4.5`, `claude-sonnet-4`, `claude-sonnet-4.5`, `claude-opus-4`.
+  the turn still succeeds instead of erroring out. Valid catalog
+  (verified via `q chat --model`): `claude-haiku-4.5`, `claude-sonnet-4`,
+  `claude-sonnet-4.5`.
   - **Runtime catalog extension.** Set `AMAZON_Q_EXTRA_MODELS` (comma-separated)
   or the `extra_models` key in `config.yaml` to add models Q has shipped
-  without editing code, e.g.:
+  without editing code — but only list names `q chat --model` actually accepts,
+  or the turn will 502 (q chat exits 1). Example:
 
   ```bash
-  AMAZON_Q_EXTRA_MODELS="claude-opus-4.5" python3 amazon_q_bridge.py --host 127.0.0.1 --port 8088
+  AMAZON_Q_EXTRA_MODELS="claude-sonnet-4" python3 amazon_q_bridge.py --host 127.0.0.1 --port 8088
   ```
-  (preferred: add `extra_models: [claude-opus-4.5]` to `config.yaml`).
+  (preferred: add `extra_models: [claude-sonnet-4]` to `config.yaml`).
 
   The `models` plugin tool (`bid_login` toolset) reports the same catalog via
-  `q_direct.list_models()`, which now includes `claude-opus-4`.
+  `q_direct.list_models()`.
 
 ### Tool use & file/context access — IMPORTANT
 

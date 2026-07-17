@@ -18,8 +18,10 @@ default_model: claude-haiku-4.5
 
 # Extra models to append to the served /v1/models catalog and validation,
 # without editing code. Comma-separated, or a YAML list. Optional.
-extra_models:
-  - claude-opus-4.5
+# NOTE: only add models `q chat --model <x>` actually accepts (verified:
+# claude-sonnet-4.5, claude-sonnet-4, claude-haiku-4.5). claude-opus-* is
+# rejected by Q, so do NOT list it here unless Q ships it.
+extra_models: []
 
 # Verbose dump of each `q chat` transcript to /tmp/q_raw_<pid>.log.
 debug: false
