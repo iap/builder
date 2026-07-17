@@ -348,8 +348,11 @@ def chat(
     prompt: str,
     model: str = "claude-sonnet-4",
     conversation_id: Optional[str] = None,
-) -> tuple[str, Optional[str]]:
-    """Send `prompt` to Q's GenerateAssistantResponse and return (answer, conversation_id).
+    tools: Optional[list] = None,
+    tool_results: Optional[list] = None,
+    history: Optional[list] = None,
+) -> tuple[str, Optional[str], Optional[str]]:
+    """Send `prompt` to Q's GenerateAssistantResponse and return (answer, conversation_id, tool_use_id).
 
     `model` is accepted for API compatibility with the subprocess backend but is
     not sent to Q's chat API (Q selects the model server-side); it is ignored
@@ -360,6 +363,22 @@ def chat(
     the prompt. When None, Q starts a new conversation and returns a fresh id
     via the `conversationId` field in the response stream; that id is extracted
     and returned so the caller can thread it through subsequent turns.
+
+    `tools` (optional) is a list of tool specifications the client can execute
+    (name/description/input_schema). Advertising tools + `origin: "CLI"` is what
+    flips Q's agentic mode ON — without it Q replies "agentic-coding OFF". This
+    is the field the `q chat` CLI sends; verified live.
+
+    `tool_results` (optional) carries the executed results of prior tool calls
+    back to Q so its agentic loop can continue. Each entry is
+    {"toolUseId": str, "content": [{"text": str}], "status": "SUCCESS"} — the
+    exact shape Q's `userInputMessageContext.toolResults` expects (verified
+    against the open-source amazon-q-developer-cli serializer). When present,
+    Q emits the next assistant turn (a final answer or another tool call)
+    instead of stalling on turn 1.
+
+    `history` (optional) is a list of prior ChatMessage objects, used to give Q
+    full conversational context across turns.
 
     NOTE: the OIDC access_token from device_login() is the chat bearer (verified
     live via mitmproxy capture of `q chat` — no SigV4, no token-exchange). This
@@ -372,16 +391,24 @@ def chat(
     if not access:
         raise RuntimeError("Amazon Q token missing access_token")
 
+    ctx: dict = {}
+    if tools:
+        ctx["tools"] = tools
+    if tool_results:
+        ctx["toolResults"] = tool_results
+    user_msg: dict = {"content": prompt, "origin": "CLI"}
+    if ctx:
+        user_msg["userInputMessageContext"] = ctx
     body = {
         "conversationState": {
-            "currentMessage": {
-                "userInputMessage": {"content": prompt},
-            },
+            "currentMessage": {"userInputMessage": user_msg},
             "chatTriggerType": "MANUAL",
         }
     }
     if conversation_id:
         body["conversationState"]["conversationId"] = conversation_id
+    if history:
+        body["conversationState"]["history"] = history
 
     payload = json.dumps(body)
     headers = _sign_request("POST", CHAT_URL, access)
@@ -525,8 +552,25 @@ def _extract_conversation_id(text: str) -> Optional[str]:
     return None
 
 
-def _extract_answer_with_conversation_id(response: requests.Response) -> tuple[str, Optional[str]]:
-    """Like `_extract_answer`, but also returns Q's `conversationId`."""
+def _extract_tool_use_id(text: str) -> Optional[str]:
+    """Pull Q's `toolUseId` from a `toolUseEvent` in the response stream.
+
+    Unlike `assistantResponseEvent` (which carries `modelId`), the `toolUseEvent`
+    carries `toolUseId`/`name`/`input` and no `modelId`, so the modelId-gated
+    scanner misses it. We match the `toolUseId` JSON string directly. Returns
+    None when absent (e.g. a plain chat turn with no tool call).
+    """
+    m = re.search(r'"toolUseId"\s*:\s*("(?:[^"\\]|\\.)*")', text)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except Exception:
+            return m.group(1).strip('"')
+    return None
+
+
+def _extract_answer_with_conversation_id(response: requests.Response) -> tuple[str, Optional[str], Optional[str]]:
+    """Like `_extract_answer`, but also returns Q's `conversationId` and `toolUseId`."""
     raw = b""
     for chunk in response.iter_content(chunk_size=4096):
         raw += chunk
@@ -551,7 +595,7 @@ def _extract_answer_with_conversation_id(response: requests.Response) -> tuple[s
             answer = f"(Q error: {err.group(1)})"
         else:
             answer = "(no response)"
-    return answer, _extract_conversation_id(text)
+    return answer, _extract_conversation_id(text), _extract_tool_use_id(text)
 
 
 # Static catalog — single source of truth (matches config.yaml aws-build.models).
