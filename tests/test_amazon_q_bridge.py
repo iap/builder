@@ -181,3 +181,14 @@ def test_default_model_aligned_with_config(monkeypatch):
     # C: bridge DEFAULT_MODEL should match ~/.hermes/config.yaml aws-build default.
     monkeypatch.setattr(bridge, "DEFAULT_MODEL", "claude-haiku-4.5")
     assert bridge.DEFAULT_MODEL == "claude-haiku-4.5"
+
+
+def test_opus_45_in_catalogs_and_alias(monkeypatch):
+    # Fallback catalog (bridge) includes claude-opus-4.5 and it resolves via alias.
+    monkeypatch.setattr(bridge, "DEFAULT_MODEL", "claude-haiku-4.5")
+    assert "claude-opus-4.5" in bridge.FALLBACK_MODELS
+    assert bridge._normalize_model("claude-opus-4-5")[0] == "claude-opus-4.5"
+    assert bridge._normalize_model("claude-opus-4.5")[0] == "claude-opus-4.5"
+    # q_direct static catalog agrees (drives the `models` plugin tool).
+    import q_direct
+    assert "claude-opus-4.5" in q_direct.STATIC_MODELS
