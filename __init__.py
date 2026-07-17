@@ -41,8 +41,13 @@ def ensure_bridge(host: str = "127.0.0.1", port: int = 8088) -> None:
 
     Lets AWS Build work with no manual `python3 amazon_q_bridge.py` launch:
     Hermes calls ``register()`` on plugin load, which spawns the bridge once
-    (it's a server — only start if the port is free). Pure-Python ``direct``
-    backend, so no ``q`` CLI binary is required. No Hermes-core change.
+    (it's a server — only start if the port is free).
+
+    The backend (direct | subprocess) is read from the plugin's ``config.yaml``
+    (the same source of truth the bridge uses), with the ``AMAZON_Q_BACKEND``
+    env var as a higher-precedence override. This keeps the bridge's behavior
+    owned by the repo-tracked config, not hardcoded here — so the launchd
+    plist (if any) is redundant and can be removed. No Hermes-core change.
 
     Failures are non-fatal: if the bridge can't start, chat requests will fail
     with a clear upstream error rather than crashing plugin registration.
@@ -66,16 +71,33 @@ def ensure_bridge(host: str = "127.0.0.1", port: int = 8088) -> None:
         logger.warning("aws-build bridge not found at %s; skipping auto-start", bridge)
         return
 
+    # Backend: env AMAZON_Q_BACKEND wins, else config.yaml `backend`, else direct.
+    backend = os.environ.get("AMAZON_Q_BACKEND")
+    if not backend:
+        try:
+            sys.path.insert(0, here)
+            from amazon_q_bridge import load_plugin_config, _config_str
+
+            backend = _config_str("backend", "direct")
+        except Exception:
+            backend = "direct"
+    backend = backend.lower()
+
     try:
         # Detached so it survives this process and isn't reaped on exit.
         subprocess.Popen(
             [sys.executable, bridge, "--host", host, "--port", str(port)],
-            env={**os.environ, "AMAZON_Q_BACKEND": "direct"},
+            env={**os.environ, "AMAZON_Q_BACKEND": backend},
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        logger.info("aws-build bridge auto-started on %s:%s (direct backend)", host, port)
+        logger.info(
+            "aws-build bridge auto-started on %s:%s (%s backend)",
+            host,
+            port,
+            backend,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("aws-build bridge auto-start failed: %s", exc)
 
