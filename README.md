@@ -99,9 +99,15 @@ backend is `direct` (pure-HTTP via `q_direct.py`, Bearer Builder ID token):
 ### Plugin settings (`config.yaml`)
 
 Runtime behavior is configured in `aws-build/config.yaml` (the **source of
-truth**), with environment variables as a higher-precedence override. This
-keeps the launchd/system-daemon unit generic ("run the bridge") while the
-plugin owns its own settings in-repo.
+truth**), with environment variables as a higher-precedence override.
+
+**The bridge auto-starts when the plugin loads** (`ensure_bridge()` in
+`__init__.py`, called from `register()`). It reads `backend` from
+`config.yaml` (env `AMAZON_Q_BACKEND` wins) and spawns `amazon_q_bridge.py`
+detached on `127.0.0.1:8088`. No launchd plist / system daemon is required —
+the plugin is the sole owner of the bridge lifecycle. A launchd plist, if
+present, is redundant and can be removed (the plugin already starts the
+bridge with the correct backend from `config.yaml`).
 
 ```yaml
 backend: subprocess        # direct | subprocess  (env: AMAZON_Q_BACKEND)
