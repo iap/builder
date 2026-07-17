@@ -133,6 +133,12 @@ Two layers keep a conversation coherent across turns:
         -> 200, header X-Hermes-Conversation-Id: conv-srv-1
    ```
 
+   **Observed behavior:** this account's Q responses did **not** emit a
+   `conversationId` in the stream, so the bridge returns no
+   `X-Hermes-Conversation-Id` header and Layer 2 stays inactive. That's fine —
+   Layer 1 (prompt flattening) carries multi-turn context on its own. Layer 2
+   only engages when the upstream Q account actually returns the id.
+
    The `subprocess` backend has no native conversation threading, so it returns
    `None` for the header (prompt flattening still carries history).
 
