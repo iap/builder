@@ -97,6 +97,45 @@ backend is `direct` (pure-HTTP via `q_direct.py`, Bearer Builder ID token):
 Launch: `python3 amazon_q_bridge.py --host 127.0.0.1 --port 8088`
 (omit `AMAZON_Q_BACKEND` — defaults to `direct`).
 
+### Multi-turn context (chat history across turns)
+
+Two layers keep a conversation coherent across turns:
+
+1. **Prompt flattening (always on, OpenAI route).** The OpenAI-compatible
+   `/v1/chat/completions` handler (`amazon_q_bridge.py`) previously took only the
+   *last* user message as the prompt, discarding all prior turns — so the second
+   turn lost context. It now flattens the full request via
+   `_flatten_openai_messages()`: `system` plus every `user`/`assistant` turn,
+   joined with `role:` labels. This matches what the Anthropic
+   `/v1/anthropic/messages` route already did via `_extract_anthropic_prompt`.
+   Hermes sends the complete `messages` array on every turn, so nothing is lost
+   on the agent side.
+
+2. **Server-side conversation memory (optional, `direct` backend).** Q's
+   `GenerateAssistantResponse` returns a `conversationId` in its stream. The
+   bridge threads it through an `X-Hermes-Conversation-Id` HTTP header:
+
+   - The client may send `X-Hermes-Conversation-Id: <id>` on a request to link
+     the turn to an existing Q conversation (native multi-turn memory by Q, not
+     re-flattened history).
+   - The bridge returns the (possibly new) `conversationId` in the same response
+     header so the client can persist it and pass it back on the next turn.
+
+   Example end-to-end threading:
+
+   ```text
+   # Turn 1 — no inbound id; Q assigns one
+   POST /v1/chat/completions  (X-Hermes-Conversation-Id: absent)
+        -> 200, header X-Hermes-Conversation-Id: conv-srv-1
+
+   # Turn 2 — echo the id back; Q continues the same conversation
+   POST /v1/chat/completions  (X-Hermes-Conversation-Id: conv-srv-1)
+        -> 200, header X-Hermes-Conversation-Id: conv-srv-1
+   ```
+
+   The `subprocess` backend has no native conversation threading, so it returns
+   `None` for the header (prompt flattening still carries history).
+
 ### Tool use & file/context access — IMPORTANT
 
 AWS Build is **chat/reasoning only on the `direct` backend**. This is a hard

@@ -344,12 +344,22 @@ def _sign_request(method: str, url: str, bearer: str) -> dict:
 
 
 # --- chat ----
-def chat(prompt: str, model: str = "claude-sonnet-4", conversation_id: Optional[str] = None) -> str:
-    """Send `prompt` to Q's GenerateAssistantResponse and return the answer text.
+def chat(
+    prompt: str,
+    model: str = "claude-sonnet-4",
+    conversation_id: Optional[str] = None,
+) -> tuple[str, Optional[str]]:
+    """Send `prompt` to Q's GenerateAssistantResponse and return (answer, conversation_id).
 
     `model` is accepted for API compatibility with the subprocess backend but is
     not sent to Q's chat API (Q selects the model server-side); it is ignored
     here to avoid sending an unknown field.
+
+    `conversation_id` (optional) links the turn to an existing Q conversation so
+    multi-turn context is preserved server-side by Q rather than flattened into
+    the prompt. When None, Q starts a new conversation and returns a fresh id
+    via the `conversationId` field in the response stream; that id is extracted
+    and returned so the caller can thread it through subsequent turns.
 
     NOTE: the OIDC access_token from device_login() is the chat bearer (verified
     live via mitmproxy capture of `q chat` — no SigV4, no token-exchange). This
@@ -400,7 +410,7 @@ def chat(prompt: str, model: str = "claude-sonnet-4", conversation_id: Optional[
                 "device flow. A refresh is attempted automatically on expiry."
             )
         raise RuntimeError(f"Q chat HTTP {r.status_code}: {err}")
-    return _extract_answer(r)
+    return _extract_answer_with_conversation_id(r)
 
 
 # Matches the JSON *string* value of a `"content"` key. The value is a properly
@@ -486,6 +496,64 @@ def _extract_answer(response: requests.Response) -> str:
     return text
 
 
+def _extract_conversation_id(text: str) -> Optional[str]:
+    """Pull Q's `conversationId` from the response stream.
+
+    The `assistantResponseEvent` payload carries both `content`/`modelId` and a
+    `conversationId` that links the turn to Q's server-side conversation. We
+    reuse the brace-aware scanner to grab it from the first assistant event that
+    has one. Returns None when absent (e.g. a single-shot, non-conversational
+    response).
+    """
+    for m in _CONTENT_RE.finditer(text):
+        obj_start = text.rfind("{", 0, m.start())
+        if obj_start == -1:
+            continue
+        obj_end = _match_brace(text, obj_start)
+        obj = text[obj_start : obj_end + 1]
+        if '"modelId"' not in obj:
+            continue
+        cid = re.search(r'"conversationId"\s*:\s*("(?:[^"\\]|\\.)*"|\S+)"', obj)
+        if cid:
+            val = cid.group(1)
+            if val.startswith('"'):
+                try:
+                    return json.loads(val)
+                except Exception:
+                    return val.strip('"')
+            return val
+    return None
+
+
+def _extract_answer_with_conversation_id(response: requests.Response) -> tuple[str, Optional[str]]:
+    """Like `_extract_answer`, but also returns Q's `conversationId`."""
+    raw = b""
+    for chunk in response.iter_content(chunk_size=4096):
+        raw += chunk
+    _ = raw  # keep reference for parity with _extract_answer debugging
+    text = raw.decode("utf-8", "replace")
+    parts: list[str] = []
+    for m in _CONTENT_RE.finditer(text):
+        obj_start = text.rfind("{", 0, m.start())
+        if obj_start == -1:
+            continue
+        obj_end = _match_brace(text, obj_start)
+        if '"modelId"' not in text[obj_start : obj_end + 1]:
+            continue
+        try:
+            parts.append(json.loads(m.group(1)))
+        except Exception:
+            continue
+    answer = "".join(parts).strip()
+    if not answer:
+        err = re.search(r'"__type"\s*:\s*"([^"]+)"', text)
+        if err:
+            answer = f"(Q error: {err.group(1)})"
+        else:
+            answer = "(no response)"
+    return answer, _extract_conversation_id(text)
+
+
 # Static catalog — single source of truth (matches config.yaml aws-build.models).
 # `q chat --model help` used to provide this live, but that requires the `q`
 # binary (removed). The dedicated ListAvailableModels Smithy API exists
@@ -516,4 +584,5 @@ def list_models() -> list[str]:
 if __name__ == "__main__":
     import sys
     p = sys.argv[1] if len(sys.argv) > 1 else "reply with exactly: DIRECT_OK"
-    print(chat(p))
+    answer, _cid = chat(p)
+    print(answer)
