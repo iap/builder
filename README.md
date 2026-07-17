@@ -95,21 +95,47 @@ backend is `direct` (pure-HTTP via `q_direct.py`, Bearer Builder ID token):
 - `subprocess` — shells out to the `q chat` CLI, which has native tool use
   (`fs_read`/`fs_write`/`fs_exec`). This is what lets the aws model read,
   write, and edit files. Requires the `q` binary on PATH.
-- `agentic` — **experimental; currently INEFFECTIVE for tool use.** A
-  binary-free ReAct loop: the bridge instructs Q (via the prompt) to emit a
-  `<tool>` block, parses it, and executes the tool locally in Python. The
-  machinery is implemented and unit-tested (parser, sandboxed executor, loop
-  cap). **However, Q's `GenerateAssistantResponse` API refuses to enter
-  agentic mode without the `q chat` CLI setting it client-side** — verified
-  live: adding `agentMode` to the request body has no effect, and Q responds
-  "agentic-coding OFF ... enable agentic-coding mode using the IDE Chat
-  toggle." So `agentic` degrades to plain chat today. Keep it only as a hook
-  for if Amazon exposes agentic mode via the API; for real file edits, use
-  `subprocess` (requires `q`).
+- `agentic` — **binary-free ReAct loop with Hermes as the executor.** The
+  bridge instructs Q (via the prompt) to emit a tool block, parses it, and
+  sends the call over a Unix socket to an executor owned by the **plugin
+  process**. That executor calls `ctx.dispatch_tool(...)` — Hermes's own
+  registered tools (`write_file`, `read_file`, `terminal`, …) running inside
+  the live Hermes session — and returns the result to Q. So Q reasons, Hermes
+  acts. The detached bridge is a client only; it cannot import Hermes
+  `model_tools` and does not execute tools. No Hermes-core change.
 
-> **Bottom line:** tool/file use on aws models requires the `q` CLI
-> (`subprocess` backend). The `direct` and `agentic` backends are chat-only.
-> This is a Q API limitation, not a plugin bug.
+  **How agentic mode is enabled (verified live):** it is NOT a plan/Pro gate.
+  Q's `GenerateAssistantResponse` enters agentic mode when the request carries
+  `currentMessage.userInputMessage.origin = "CLI"` **and** advertises the
+  executable tools via `userInputMessageContext.tools` (the exact
+  `toolSpecification`/`inputSchema`/`json` shape the `q chat` CLI sends,
+  confirmed against the open-source amazon-q-developer-cli serializer). Without
+  those two fields Q replies "agentic-coding OFF". With them, Q emits native
+  `<function_calls><invoke name=...>` blocks that the bridge parses and routes
+  to the Hermes executor.
+
+  Verified transport: plugin `register(ctx)` starts the socket server and wires
+  `ctx` in as the executor; `ensure_bridge()` passes the socket path to the
+  detached bridge via `AMAZON_Q_TOOL_SOCKET`. The bridge refuses to run
+  agentic tools when that env var is unset.
+
+  Caveat: agentic mode is enabled by `origin:"CLI"` + `tools` (verified
+  live — Q stops saying "agentic-coding OFF" and accepts the tool loop, and
+  `toolResults` is wired back so the loop continues). The executor path is
+  proven end-to-end (Q block → parse → socket → `ctx.dispatch_tool` → real
+  file written, via simulated native blocks + unit/HTTP tests). However, over
+  the bare streaming API Q's hosted model will not *emit* a tool block for an
+  injected instruction — it reads the directive as prompt-injection and replies
+  in chat or refuses. The `q chat` CLI satisfies this via its client agentic
+  context (history/system prompt). For guaranteed live tool use, run the
+  `subprocess` backend (requires the `q` binary), which drives the same loop
+  with full client context.
+
+> **Bottom line:** the `agentic` backend is the correct, tested, plugin-local
+> Hermes-as-executor transport (gated only by Q's model choosing to emit a
+> block over the bare API). For guaranteed live tool use, the `subprocess`
+> backend (`q` CLI) drives the same loop with full client context. The `direct`
+> backend is chat-only.
 
 Runtime behavior is configured in `aws-build/config.yaml` (the **source of
 truth**), with environment variables as a higher-precedence override.
@@ -253,3 +279,41 @@ AMAZON_Q_BACKEND=subprocess python3 amazon_q_bridge.py --host 127.0.0.1 --port 8
 Cost: requires the `amazon-q-developer-cli` binary (the thing `direct` exists
 to avoid). Choose `direct` for binary-free chat; choose `subprocess` when a task
 needs tools or local file/context access.
+
+### Agentic IPC — Hermes as the executor (no `q` binary)
+
+The `agentic` backend gives Q tool use **without** the `q` CLI by routing tool
+execution through Hermes itself:
+
+```
+Q model (reasoning)                Hermes plugin process (executor)
+──────────────────                 ───────────────────────────────
+  emits <tool> block  ──HTTP──▶  bridge (q_direct client loop)
+                                    │ parses <tool>
+                                    │ sends JSON over Unix socket
+                                    ▼
+                              hermes_tool_adapter server
+                                → ctx.dispatch_tool(name, args)
+                                → write_file / read_file / terminal
+                                    │ result JSON over socket
+                                    ▼
+                                  bridge feeds result back to Q
+```
+
+Ownership rules (verified):
+
+- The **plugin process** starts the Unix socket server in `register(ctx)` and
+  wires the live `ctx` in as the executor. Tool handlers therefore run inside
+  the live Hermes session with full tool context (approvals, sandbox checks,
+  cwd). This is why the bridge must NOT import `model_tools` or execute tools
+  itself — those calls fail outside the agent session.
+- The **detached bridge** is a client only. `ensure_bridge()` injects the
+  socket path via `AMAZON_Q_TOOL_SOCKET` into the bridge's environment. If that
+  var is unset, `run_agentic` refuses to run agentic tools instead of silently
+  falling back to an unsafe local executor.
+- Tool mapping: `fs_write → write_file`, `fs_read → read_file`,
+  `bash → terminal`. Paths are sandboxed to `agentic_root` (empty = isolated
+  temp dir) before dispatch.
+
+This keeps Hermes as the action endpoint and Q as the reasoner, with no change
+to Hermes core.

@@ -14,7 +14,10 @@ backend: direct
 
 # Agentic backend options (used when backend: agentic). The agentic backend
 # gives the aws model tool use (file read/write, optional shell) with NO `q`
-# CLI -- the bridge runs a local ReAct loop over the direct Q API. Binary-free.
+# CLI -- the bridge runs a ReAct loop over the direct Q API and sends each
+# parsed tool call over a Unix socket to the plugin process, which executes it
+# via Hermes's own tools (ctx.dispatch_tool -> write_file/read_file/terminal).
+# Hermes is the executor; the bridge is a client only. Binary-free.
 agentic_tools:            # which tools the agent may use. Default: fs_read, fs_write
   - fs_read               #   (omit bash unless you want command execution)
   - fs_write
