@@ -132,3 +132,52 @@ def test_bridge_passes_conversation_id_to_direct_backend(monkeypatch):
     assert captured["conversation_id"] == "conv-in-9"
     assert payloads[-1][2] == {"X-Hermes-Conversation-Id": "conv-srv-1"}
     assert payloads[-1][1]["choices"][0]["message"]["content"] == "ok"
+
+
+# --- Model calibration (A/B/C): prefix strip, aliases, fallback, env, default ---
+
+def test_normalize_model_strips_provider_prefix():
+    model, ok = bridge._normalize_model("aws-build/claude-haiku-4.5")
+    assert ok is True
+    assert model == "claude-haiku-4.5"
+
+
+def test_normalize_model_resolves_aliases():
+    assert bridge._normalize_model("haiku")[0] == "claude-haiku-4.5"
+    assert bridge._normalize_model("sonnet45")[0] == "claude-sonnet-4.5"
+    assert bridge._normalize_model("claude-opus")[0] == "claude-opus-4"
+    # dash/dot tolerance
+    assert bridge._normalize_model("claude-sonnet-4-5")[0] == "claude-sonnet-4.5"
+    assert bridge._normalize_model("claude-haiku-4-5")[0] == "claude-haiku-4.5"
+
+
+def test_normalize_model_unknown_falls_back_to_default(monkeypatch):
+    monkeypatch.setattr(bridge, "DEFAULT_MODEL", "claude-haiku-4.5")
+    monkeypatch.setattr(bridge, "valid_models", lambda: ["claude-haiku-4.5"])
+    model, ok = bridge._normalize_model("some-future-model")
+    assert ok is False
+    assert model == "claude-haiku-4.5"
+
+
+def test_normalize_model_none_uses_default(monkeypatch):
+    monkeypatch.setattr(bridge, "DEFAULT_MODEL", "claude-haiku-4.5")
+    model, ok = bridge._normalize_model("")
+    assert ok is True
+    assert model == "claude-haiku-4.5"
+
+
+def test_extra_models_env_extends_catalog(monkeypatch):
+    monkeypatch.setenv("AMAZON_Q_MODELS", "claude-opus-4, claude-opus-4.5")
+    # Reload module-level EXTRA_MODELS by re-importing the module fresh.
+    import importlib
+    reloaded = importlib.reload(bridge)
+    catalog = reloaded.discover_models()
+    assert "claude-opus-4" in catalog
+    assert "claude-opus-4.5" in catalog
+    monkeypatch.delenv("AMAZON_Q_MODELS", raising=False)
+
+
+def test_default_model_aligned_with_config(monkeypatch):
+    # C: bridge DEFAULT_MODEL should match ~/.hermes/config.yaml aws-build default.
+    monkeypatch.setattr(bridge, "DEFAULT_MODEL", "claude-haiku-4.5")
+    assert bridge.DEFAULT_MODEL == "claude-haiku-4.5"

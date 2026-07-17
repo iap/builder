@@ -562,9 +562,10 @@ def _extract_answer_with_conversation_id(response: requests.Response) -> tuple[s
 # of `AmazonCodeWhisperer(ListAvailableModels)` on the chat endpoint return 404.
 # So we keep the static list and treat any live fetch as a best-effort override.
 STATIC_MODELS = [
-    "claude-sonnet-4.5",
-    "claude-sonnet-4",
     "claude-haiku-4.5",
+    "claude-sonnet-4",
+    "claude-sonnet-4.5",
+    "claude-opus-4",
 ]
 
 

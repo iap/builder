@@ -7,15 +7,19 @@ CLI as the inference substrate. Designed to be provider-qualified, to fail
 cleanly with structured error envelopes, and to run on CPython 3.9+.
 
 Key invariants (verified by the ad-hoc test harness):
-  * `_run_q_chat_pty(prompt, model, timeout) -> tuple[str, Optional[int], bool]`
+  * `_run_q_chat_pty(prompt, model, timeout, conversation_id) -> tuple[str, Optional[int], bool, Optional[str]]`
+    (last element is Q's server-side conversation id, or None on subprocess).
   * `_error(type, message, http_status=500) -> dict` with an `_http_status` key
   * Subscription gating: if `q chat` output mentions a required subscription
     ("Kiro subscription" / "Q Developer Pro subscription") we return HTTP 403.
+  * Model resolution: `_normalize_model` strips provider prefixes and applies
+    aliases, falling back to DEFAULT_MODEL instead of 400-ing unknown names.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
 import subprocess
@@ -24,6 +28,8 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
+
+logger = logging.getLogger("aws_build.bridge")
 
 # --------------------------------------------------------------------------- #
 # Configuration
@@ -41,7 +47,7 @@ Q_BIN = next(
     ),
     "q",
 )
-DEFAULT_MODEL = "claude-sonnet-4"
+DEFAULT_MODEL = "claude-haiku-4.5"  # aligned with ~/.hermes/config.yaml aws-build default
 REQUEST_TIMEOUT = 90  # seconds given to `q chat` to respond
 # Aliases resolve via discover_models(); these are best-effort hints that are
 # re-checked against the live catalog before use.
@@ -51,15 +57,31 @@ MODEL_ALIASES = {
     "sonnet45": "claude-sonnet-4.5",
     "haiku": "claude-haiku-4.5",
     "haiku45": "claude-haiku-4.5",
+    # Common Q / Anthropic-family variants accepted by `q chat --model`.
+    "claude-opus-4": "claude-opus-4",
+    "claude-opus-4.5": "claude-opus-4.5",
+    "claude-sonnet-4-5": "claude-sonnet-4.5",  # tolerate dash/dot互换
+    "claude-haiku-4-5": "claude-haiku-4.5",
+    "claude-sonnet": "claude-sonnet-4",
+    "claude-haiku": "claude-haiku-4.5",
+    "claude-opus": "claude-opus-4",
 }
 # Static catalog matching `q chat --model <bad>`'s "Available models:" list
 # (verified live: claude-sonnet-4.5, claude-sonnet-4, claude-haiku-4.5).
 # Used as the instant default for GET /v1/models and as the fallback
-# if the live `q` probe fails.
+# if the live `q` probe fails. Extend at runtime via AMAZON_Q_MODELS
+# (comma-separated) without editing code.
 FALLBACK_MODELS = (
-    "claude-sonnet-4.5",
-    "claude-sonnet-4",
     "claude-haiku-4.5",
+    "claude-sonnet-4",
+    "claude-sonnet-4.5",
+    "claude-opus-4",
+)
+# Optional runtime extension of the served catalog. Lets the user add models
+# Q has shipped (e.g. claude-opus-4) without a code change.
+_EXTRA_MODELS_ENV = os.environ.get("AMAZON_Q_MODELS", "").strip()
+EXTRA_MODELS = tuple(
+    m.strip() for m in _EXTRA_MODELS_ENV.split(",") if m.strip()
 )
 
 # Cache for discovered models (TTL-based).
@@ -83,7 +105,10 @@ def discover_models(force: bool = False) -> list[str]:
         return _MODEL_CACHE
     # Seed the cache with the static fallback so the first GET is instant.
     if not _MODEL_CACHE:
-        _MODEL_CACHE, _MODEL_CACHE_TS = list(FALLBACK_MODELS), now
+        _MODEL_CACHE, _MODEL_CACHE_TS = (
+            list(FALLBACK_MODELS) + list(EXTRA_MODELS),
+            now,
+        )
         if not force:
             return _MODEL_CACHE
     if not force:
@@ -92,7 +117,10 @@ def discover_models(force: bool = False) -> list[str]:
     # for live discovery — re-seed from the static catalog instead. The
     # subprocess/Q_BIN path is only reachable when BACKEND=="subprocess".
     if BACKEND == "direct":
-        _MODEL_CACHE, _MODEL_CACHE_TS = list(FALLBACK_MODELS), now
+        _MODEL_CACHE, _MODEL_CACHE_TS = (
+            list(FALLBACK_MODELS) + list(EXTRA_MODELS),
+            now,
+        )
         return _MODEL_CACHE
     try:
         proc = subprocess.run(
@@ -272,10 +300,32 @@ def extract_answer(raw: str) -> str:
     return text or "(no response)"
 
 
-def _normalize_model(model: str) -> str:
+def _normalize_model(model: str) -> tuple[str, bool]:
+    """Resolve a requested model name to a catalog entry.
+
+    Returns (resolved_model, ok):
+      * ok=True  -> resolved_model is a known/aliased catalog entry.
+      * ok=False -> the name was unknown; resolved_model falls back to
+        DEFAULT_MODEL (caller should still surface a warning, but the request
+        proceeds instead of hard-failing with HTTP 400).
+
+    Hermes may send provider-prefixed names (e.g. "aws-build/claude-haiku-4.5")
+    or short aliases ("haiku"); we strip the prefix and apply MODEL_ALIASES
+    before validating against the served catalog.
+    """
     if not model:
-        return DEFAULT_MODEL
-    return MODEL_ALIASES.get(model.lower(), model)
+        return DEFAULT_MODEL, True
+    raw = model.strip()
+    # Drop a provider prefix like "aws-build/" or "openai/".
+    if "/" in raw:
+        raw = raw.rsplit("/", 1)[-1]
+    # Apply known aliases (covers dash/dot互换 + short forms).
+    aliased = MODEL_ALIASES.get(raw.lower(), raw)
+    # Direct catalog hit (after alias) always wins.
+    if aliased in valid_models():
+        return aliased, True
+    # Unknown: fall back to the default rather than 400-ing the whole turn.
+    return DEFAULT_MODEL, False
 
 
 def _subscription_blocked(output: str) -> bool:
@@ -473,14 +523,16 @@ class Handler(BaseHTTPRequestHandler):
             self._send(_error("invalid_request_error", "no user message found", 400), 400)
             return
 
-        model = _normalize_model(data.get("model", DEFAULT_MODEL))
-        # Validate against the live-discovered set `q chat --model` accepts.
-        if model not in valid_models():
-            self._send(
-                _error("invalid_request_error", f"invalid model name: {model}", 400),
-                400,
+        model, model_ok = _normalize_model(data.get("model", DEFAULT_MODEL))
+        if not model_ok:
+            # Unknown model name (typo, new Q variant, or provider-prefixed).
+            # Fall back to the default instead of hard-failing the turn; the
+            # caller still gets a usable answer, just on the default model.
+            logger.warning(
+                "aws-build: unknown model %r; falling back to %r",
+                data.get("model"),
+                model,
             )
-            return
         conversation_id = self.headers.get(CONVERSATION_ID_HEADER) or None
         output, status, ok, _conversation_id = _run_q_chat_pty(
             prompt, model, conversation_id=conversation_id
@@ -622,14 +674,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send(_error("invalid_request_error", "no user message found", 400), 400, hdr)
             return
 
-        model = _normalize_model(data.get("model", DEFAULT_MODEL))
-        if model not in valid_models():
-            self._send(
-                _error("invalid_request_error", f"invalid model name: {model}", 400),
-                400,
-                hdr,
+        model, model_ok = _normalize_model(data.get("model", DEFAULT_MODEL))
+        if not model_ok:
+            logger.warning(
+                "aws-build: unknown model %r; falling back to %r",
+                data.get("model"),
+                model,
             )
-            return
 
         conversation_id = self.headers.get(CONVERSATION_ID_HEADER) or None
         output, status, ok, _conversation_id = _run_q_chat_pty(

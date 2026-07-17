@@ -136,6 +136,32 @@ Two layers keep a conversation coherent across turns:
    The `subprocess` backend has no native conversation threading, so it returns
    `None` for the header (prompt flattening still carries history).
 
+### Model catalog & calibration
+
+The bridge serves an OpenAI-compatible `/v1/models` list and validates the
+`model` field on each `/v1/chat/completions` request. Calibration rules:
+
+- **Provider-prefix stripping.** Hermes may send `aws-build/claude-haiku-4.5`
+  (or any `provider/name` form). The bridge strips the prefix before matching,
+  so both `claude-haiku-4.5` and `aws-build/claude-haiku-4.5` resolve correctly.
+- **Aliases.** Short forms and dash/dot variants map to catalog entries:
+  `haiku`/`haiku45` → `claude-haiku-4.5`, `sonnet`/`sonnet45` → `claude-sonnet-4.5`,
+  `claude-opus` → `claude-opus-4`, `claude-sonnet-4-5` → `claude-sonnet-4.5`, etc.
+- **No hard 400 on unknown names.** A model that isn't in the catalog (typo,
+  brand-new Q variant) **falls back to `DEFAULT_MODEL`** (`claude-haiku-4.5`,
+  aligned with `~/.hermes/config.yaml` aws-build `default`) and logs a warning —
+  the turn still succeeds instead of erroring out. Valid catalog:
+  `claude-haiku-4.5`, `claude-sonnet-4`, `claude-sonnet-4.5`, `claude-opus-4`.
+- **Runtime catalog extension.** Set `AMAZON_Q_MODELS` (comma-separated) to add
+  models Q has shipped without editing code, e.g.:
+
+  ```bash
+  AMAZON_Q_MODELS="claude-opus-4.5" python3 amazon_q_bridge.py --host 127.0.0.1 --port 8088
+  ```
+
+  The `models` plugin tool (`bid_login` toolset) reports the same catalog via
+  `q_direct.list_models()`, which now includes `claude-opus-4`.
+
 ### Tool use & file/context access — IMPORTANT
 
 AWS Build is **chat/reasoning only on the `direct` backend**. This is a hard
