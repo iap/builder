@@ -62,6 +62,7 @@ MODEL_ALIASES = {
     "claude-opus-4.5": "claude-opus-4.5",
     "claude-sonnet-4-5": "claude-sonnet-4.5",  # tolerate dash/dot互换
     "claude-haiku-4-5": "claude-haiku-4.5",
+    "claude-opus-4-5": "claude-opus-4.5",
     "claude-sonnet": "claude-sonnet-4",
     "claude-haiku": "claude-haiku-4.5",
     "claude-opus": "claude-opus-4",
@@ -76,6 +77,7 @@ FALLBACK_MODELS = (
     "claude-sonnet-4",
     "claude-sonnet-4.5",
     "claude-opus-4",
+    "claude-opus-4.5",
 )
 # Optional runtime extension of the served catalog. Lets the user add models
 # Q has shipped (e.g. claude-opus-4) without a code change.
