@@ -110,7 +110,9 @@ present, is redundant and can be removed (the plugin already starts the
 bridge with the correct backend from `config.yaml`).
 
 ```yaml
-backend: subprocess        # direct | subprocess  (env: AMAZON_Q_BACKEND)
+backend: direct            # direct | subprocess  (env: AMAZON_Q_BACKEND)
+                           # direct  = pure-HTTP, no q CLI, chat-only (default)
+                           # subprocess = shells out to `q chat`, enables file/tool use
 default_model: claude-haiku-4.5   # env: AMAZON_Q_DEFAULT_MODEL
 extra_models:              # appended to /v1/models + validation (env: AMAZON_Q_EXTRA_MODELS, comma-sep)
   []                        # only add models `q chat --model` accepts (see below)
