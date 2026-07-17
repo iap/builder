@@ -9,3 +9,4 @@ __pycache__/
 
 # OIDC public client secret (AWS published, not private)
 auth/oidc_client_secret.json
+.amazonq/
