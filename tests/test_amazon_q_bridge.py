@@ -145,7 +145,7 @@ def test_normalize_model_strips_provider_prefix():
 def test_normalize_model_resolves_aliases():
     assert bridge._normalize_model("haiku")[0] == "claude-haiku-4.5"
     assert bridge._normalize_model("sonnet45")[0] == "claude-sonnet-4.5"
-    assert bridge._normalize_model("claude-opus")[0] == "claude-opus-4"
+    assert bridge._normalize_model("claude-sonnet")[0] == "claude-sonnet-4"
     # dash/dot tolerance
     assert bridge._normalize_model("claude-sonnet-4-5")[0] == "claude-sonnet-4.5"
     assert bridge._normalize_model("claude-haiku-4-5")[0] == "claude-haiku-4.5"
@@ -167,14 +167,15 @@ def test_normalize_model_none_uses_default(monkeypatch):
 
 
 def test_extra_models_env_extends_catalog(monkeypatch):
-    monkeypatch.setenv("AMAZON_Q_MODELS", "claude-opus-4, claude-opus-4.5")
-    # Reload module-level EXTRA_MODELS by re-importing the module fresh.
+    # The extra_models mechanism appends to the served catalog. Use valid Q
+    # model names (q chat accepts claude-sonnet-4.5/-4/haiku-4.5); here we
+    # demonstrate the extension mechanism with a real name.
+    monkeypatch.setenv("AMAZON_Q_EXTRA_MODELS", "claude-sonnet-4")
     import importlib
     reloaded = importlib.reload(bridge)
     catalog = reloaded.discover_models()
-    assert "claude-opus-4" in catalog
-    assert "claude-opus-4.5" in catalog
-    monkeypatch.delenv("AMAZON_Q_MODELS", raising=False)
+    assert "claude-sonnet-4" in catalog
+    monkeypatch.delenv("AMAZON_Q_EXTRA_MODELS", raising=False)
 
 
 def test_default_model_aligned_with_config(monkeypatch):
@@ -183,15 +184,19 @@ def test_default_model_aligned_with_config(monkeypatch):
     assert bridge.DEFAULT_MODEL == "claude-haiku-4.5"
 
 
-def test_opus_45_in_catalogs_and_alias(monkeypatch):
-    # Fallback catalog (bridge) includes claude-opus-4.5 and it resolves via alias.
+def test_opus_not_in_catalog_falls_back(monkeypatch):
+    # `q chat` rejects claude-opus-* ("Model does not exist"); the catalog must
+    # NOT advertise it, and an opus request must fall back to DEFAULT_MODEL
+    # rather than 502 via a bad `q chat --model` call.
     monkeypatch.setattr(bridge, "DEFAULT_MODEL", "claude-haiku-4.5")
-    assert "claude-opus-4.5" in bridge.FALLBACK_MODELS
-    assert bridge._normalize_model("claude-opus-4-5")[0] == "claude-opus-4.5"
-    assert bridge._normalize_model("claude-opus-4.5")[0] == "claude-opus-4.5"
+    assert "claude-opus-4.5" not in bridge.FALLBACK_MODELS
+    assert "claude-opus-4" not in bridge.FALLBACK_MODELS
+    resolved, ok = bridge._normalize_model("claude-opus-4.5")
+    assert ok is False
+    assert resolved == "claude-haiku-4.5"  # fell back
     # q_direct static catalog agrees (drives the `models` plugin tool).
     import q_direct
-    assert "claude-opus-4.5" in q_direct.STATIC_MODELS
+    assert "claude-opus-4.5" not in q_direct.STATIC_MODELS
 
 
 # --- Plugin settings (config.yaml) ---
