@@ -90,12 +90,42 @@ The bridge connects to Amazon Q with **no `q` CLI build required**. Default
 backend is `direct` (pure-HTTP via `q_direct.py`, Bearer Builder ID token):
 
 - `direct` (default) — no `amazon-q-developer-cli` binary; satisfies "AWS Build
-  connects to Q's server models without building q_cli".
-- `subprocess` (opt-in) — set `AMAZON_Q_BACKEND=subprocess` to shell out to a
-  local `q chat` build (only if you want Q's agentic/tool mode).
+  connects to Q's server models without building q_cli". Chat-only: Q's API
+  rejects `tools`, so the model narrates instead of acting on files.
+- `subprocess` — shells out to the `q chat` CLI, which has native tool use
+  (`fs_read`/`fs_write`/`fs_exec`). This is what lets the aws model read,
+  write, and edit files. Requires the `q` binary on PATH.
+
+### Plugin settings (`config.yaml`)
+
+Runtime behavior is configured in `aws-build/config.yaml` (the **source of
+truth**), with environment variables as a higher-precedence override. This
+keeps the launchd/system-daemon unit generic ("run the bridge") while the
+plugin owns its own settings in-repo.
+
+```yaml
+backend: subprocess        # direct | subprocess  (env: AMAZON_Q_BACKEND)
+default_model: claude-haiku-4.5   # env: AMAZON_Q_DEFAULT_MODEL
+extra_models:              # appended to /v1/models + validation (env: AMAZON_Q_EXTRA_MODELS, comma-sep)
+  - claude-opus-4.5
+debug: false               # verbose /tmp/q_raw_<pid>.log dump (env: AMAZON_Q_DEBUG)
+```
+
+Env var → config key mapping (env always wins):
+
+| Env var | config.yaml key | Effect |
+|---------|----------------|--------|
+| `AMAZON_Q_BACKEND` | `backend` | `direct` or `subprocess` |
+| `AMAZON_Q_DEFAULT_MODEL` | `default_model` | model used when none/unknown sent |
+| `AMAZON_Q_EXTRA_MODELS` | `extra_models` | extra catalog entries (comma-sep) |
+| `AMAZON_Q_DEBUG` | `debug` | transcript dump |
+
+PyYAML is used when available; a minimal built-in parser handles this flat
+config if PyYAML is missing, so a missing dependency never crashes startup.
+A missing or broken `config.yaml` falls back to built-in defaults + env vars.
 
 Launch: `python3 amazon_q_bridge.py --host 127.0.0.1 --port 8088`
-(omit `AMAZON_Q_BACKEND` — defaults to `direct`).
+(backend/model/catalog now come from `config.yaml`, not flags.)
 
 ### Multi-turn context (chat history across turns)
 
@@ -158,12 +188,14 @@ The bridge serves an OpenAI-compatible `/v1/models` list and validates the
   aligned with `~/.hermes/config.yaml` aws-build `default`) and logs a warning —
   the turn still succeeds instead of erroring out. Valid catalog:
   `claude-haiku-4.5`, `claude-sonnet-4`, `claude-sonnet-4.5`, `claude-opus-4`.
-- **Runtime catalog extension.** Set `AMAZON_Q_MODELS` (comma-separated) to add
-  models Q has shipped without editing code, e.g.:
+  - **Runtime catalog extension.** Set `AMAZON_Q_EXTRA_MODELS` (comma-separated)
+  or the `extra_models` key in `config.yaml` to add models Q has shipped
+  without editing code, e.g.:
 
   ```bash
-  AMAZON_Q_MODELS="claude-opus-4.5" python3 amazon_q_bridge.py --host 127.0.0.1 --port 8088
+  AMAZON_Q_EXTRA_MODELS="claude-opus-4.5" python3 amazon_q_bridge.py --host 127.0.0.1 --port 8088
   ```
+  (preferred: add `extra_models: [claude-opus-4.5]` to `config.yaml`).
 
   The `models` plugin tool (`bid_login` toolset) reports the same catalog via
   `q_direct.list_models()`, which now includes `claude-opus-4`.

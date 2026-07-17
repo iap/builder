@@ -1,0 +1,25 @@
+# aws-build plugin settings (source of truth for runtime behavior).
+#
+# These override the built-in defaults but are themselves overridden by
+# environment variables (so a launchd plist or one-off shell can still win).
+#
+# backend:
+#   "direct"    (default) — pure-HTTP via q_direct.py, chat-only, no `q` binary.
+#                           Multi-turn via prompt flattening; NO tool/file use.
+#   "subprocess"          — shells out to the `q chat` CLI, which has native
+#                           tool use (fs_read/fs_write/fs_exec). Enables the
+#                           aws model to read/write/edit files. Requires the
+#                           `q` binary on PATH.
+backend: subprocess
+
+# Default model served when the client sends none / an unknown name.
+# Must be one of the catalog entries (see README "Model catalog & calibration").
+default_model: claude-haiku-4.5
+
+# Extra models to append to the served /v1/models catalog and validation,
+# without editing code. Comma-separated, or a YAML list. Optional.
+extra_models:
+  - claude-opus-4.5
+
+# Verbose dump of each `q chat` transcript to /tmp/q_raw_<pid>.log.
+debug: false
