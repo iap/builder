@@ -82,9 +82,30 @@ def test_q_direct_chat_returns_tuple_with_conversation_id(monkeypatch):
     monkeypatch.setattr(q_direct, "get_token", lambda: {"access_token": "tok"})
     monkeypatch.setattr(q_direct.requests, "post", lambda *a, **k: _FakeResp())
 
-    answer, cid = q_direct.chat("hi", model="claude-sonnet-4")
+    answer, cid, tool_use_id = q_direct.chat("hi", model="claude-sonnet-4")
     assert answer == "answer"
     assert cid == "conv-xyz"
+    assert tool_use_id is None
+
+
+def test_q_direct_chat_extracts_tool_use_id(monkeypatch):
+    """A toolUseEvent in the stream must surface its toolUseId."""
+    class _FakeResp:
+        status_code = 200
+
+        def iter_content(self, chunk_size=1024):
+            yield (b'{"content":"<function_calls><invoke name=\\"fs_write\\">'
+                   b'<parameter name=\\"path\\">a.txt</parameter>'
+                   b'<parameter name=\\"content\\">x</parameter></invoke>'
+                   b'</function_calls>","modelId":"auto","conversationId":"c1"}')
+            yield b'{"toolUseId":"tu-9","name":"fs_write","input":{"path":"a.txt","content":"x"}}'
+
+    monkeypatch.setattr(q_direct, "get_token", lambda: {"access_token": "tok"})
+    monkeypatch.setattr(q_direct.requests, "post", lambda *a, **k: _FakeResp())
+
+    answer, cid, tool_use_id = q_direct.chat("hi", model="claude-sonnet-4")
+    assert "fs_write" in answer
+    assert tool_use_id == "tu-9"
 
 
 def test_bridge_passes_conversation_id_to_direct_backend(monkeypatch):

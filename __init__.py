@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any
 
 try:
@@ -34,6 +35,26 @@ except ImportError:
 AVAILABLE_MODELS = list(list_models())
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_tool_server(ctx=None) -> str | None:
+    """Start the Hermes-owned tool IPC server in the plugin process.
+
+    If ``ctx`` (the Hermes PluginContext) is provided, it is wired in as the
+    executor so tool calls are dispatched through the live Hermes runtime.
+    """
+    try:
+        try:
+            from .hermes_tool_adapter import start_tool_server, set_executor
+        except ImportError:
+            from hermes_tool_adapter import start_tool_server, set_executor
+        path = start_tool_server()
+        if ctx is not None:
+            set_executor(lambda name, args: ctx.dispatch_tool(name, args))
+        return path
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("aws-build tool server not started: %s", exc)
+        return None
 
 
 def ensure_bridge(host: str = "127.0.0.1", port: int = 8088) -> None:
@@ -71,6 +92,10 @@ def ensure_bridge(host: str = "127.0.0.1", port: int = 8088) -> None:
         logger.warning("aws-build bridge not found at %s; skipping auto-start", bridge)
         return
 
+    # Start the Hermes-owned executor before the detached bridge. The bridge
+    # must be a client only; it cannot import Hermes model_tools reliably.
+    tool_socket = _ensure_tool_server()
+
     # Backend: env AMAZON_Q_BACKEND wins, else config.yaml `backend`, else direct.
     backend = os.environ.get("AMAZON_Q_BACKEND")
     if not backend:
@@ -85,9 +110,12 @@ def ensure_bridge(host: str = "127.0.0.1", port: int = 8088) -> None:
 
     try:
         # Detached so it survives this process and isn't reaped on exit.
+        child_env = {**os.environ, "AMAZON_Q_BACKEND": backend}
+        if tool_socket:
+            child_env["AMAZON_Q_TOOL_SOCKET"] = tool_socket
         subprocess.Popen(
             [sys.executable, bridge, "--host", host, "--port", str(port)],
-            env={**os.environ, "AMAZON_Q_BACKEND": backend},
+            env=child_env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
@@ -248,6 +276,10 @@ _TOOLS = (
 
 def register(ctx) -> None:
     """Register all build plugin tools (and auto-start the bridge)."""
+    # The plugin process owns Hermes tool execution. The detached bridge is
+    # only Q inference and connects to this server over Unix IPC. Wire the live
+    # Hermes PluginContext in as the executor so tool calls run in-process.
+    _ensure_tool_server(ctx=ctx)
     # Auto-start the OpenAI-compatible bridge so AWS Build works without a
     # manual launch — no Hermes-core fork, pure-Python direct backend.
     ensure_bridge()

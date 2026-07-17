@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-amazon_q_bridge.py — OpenAI-compatible HTTP bridge for Amazon Q `q chat`.
+amazon_q_bridge.py - OpenAI-compatible HTTP bridge for Amazon Q.
 
-Exposes an /v1/chat/completions endpoint that shells out to the `q chat`
-CLI as the inference substrate. Designed to be provider-qualified, to fail
-cleanly with structured error envelopes, and to run on CPython 3.9+.
+By default (BACKEND="direct") it calls Q's HTTPS API through q_direct.py and
+needs NO `q chat` CLI binary. An opt-in "subprocess" backend that shells out to
+the `q chat` CLI is also provided but is not the default. Designed to be
+provider-qualified, to fail cleanly with structured error envelopes, and to run
+on CPython 3.9+.
 
 Key invariants (verified by the ad-hoc test harness):
   * `_run_q_chat_pty(prompt, model, timeout, conversation_id) -> tuple[str, Optional[int], bool, Optional[str]]`
@@ -22,6 +24,7 @@ import json
 import logging
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
@@ -31,9 +34,16 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger("aws_build.bridge")
 
+
 # --------------------------------------------------------------------------- #
 # Configuration
 # --------------------------------------------------------------------------- #
+# `q` is the Amazon Q Developer CLI binary. The bridge is binary-FREE by
+# default (BACKEND="direct" uses q_direct.py over HTTPS); `Q_BIN` is only
+# consulted on the opt-in "subprocess" backend. Resolve from installed
+# locations / PATH only — the local source build under
+# ~/amazon-q-developer-cli/target is intentionally NOT referenced (it was a
+# 14GB dead build cache, removed per user request).
 Q_BIN = next(
     (
         p
@@ -289,33 +299,43 @@ def _run_q_chat_pty(prompt: str, model: str, timeout: int = REQUEST_TIMEOUT,
     return _run_q_chat_subprocess(prompt, model, timeout)
 
 
+def cli(subcommand: str = "chat", *args: str, timeout: int = REQUEST_TIMEOUT) -> tuple[str, int]:
+    """Run `q <subcommand> ...` and return (combined_output, returncode).
+
+    This is the single entrypoint for invoking the Amazon Q Developer CLI
+    from the bridge. Callers can use it for arbitrary subcommands, not just
+    `q chat`, while preserving the same output/error semantics as the old
+    inline subprocess calls.
+    """
+    cmd = [Q_BIN, subcommand, *args]
+    completed = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=timeout,
+        check=False,
+    )
+    output = (completed.stdout or b"").decode(errors="replace")
+    return output, completed.returncode
+
+
 def _run_q_chat_subprocess(prompt: str, model: str, timeout: int = REQUEST_TIMEOUT):
     """Run `q chat` via subprocess; return (output_text, exit_code_or_None, ok, None).
 
     Avoids the prior PTY implementation that raised
     ``OSError: [Errno 9] Bad file descriptor`` on FD lifecycle races.
     """
-    cmd = [Q_BIN, "chat", "--no-interactive", "--model", model, prompt]
     try:
-        completed = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # combine so we capture gate messages
-            timeout=timeout,
-        )
-        out = (completed.stdout or b"") + (completed.stderr or b"")
-        output_str = out.decode(errors="replace")
-        status = completed.returncode
+        output, status = cli("chat", "--no-interactive", "--model", model, prompt, timeout=timeout)
         ok = status == 0
         if DEBUG:
-            _dump(model, status, output_str)
-        return output_str, status, ok, None
+            _dump(model, status, output)
+        return output, status, ok, None
     except subprocess.TimeoutExpired as exc:
-        out = (exc.stdout or b"") + (exc.stderr or b"")
-        output_str = out.decode(errors="replace")
+        output = (exc.stdout or b"").decode(errors="replace")
         if DEBUG:
-            _dump(model, None, output_str, note="timeout")
-        return output_str, None, False, None
+            _dump(model, None, output, note="timeout")
+        return output, None, False, None
     except Exception as exc:  # pragma: no cover - defensive
         if DEBUG:
             _dump(model, -1, str(exc), note="exception")
@@ -348,18 +368,24 @@ def _run_q_direct(prompt: str, model: str, timeout: int = REQUEST_TIMEOUT,
 # --------------------------------------------------------------------------- #
 # The `agentic` backend turns the chat-only `direct` API into a ReAct-style
 # agent: it instructs Q (via the prompt) to emit a structured tool call, parses
-# it, executes the tool LOCALLY in Python, feeds the result back, and loops
+# it, sends the call to Hermes over Unix IPC, feeds the result back, and loops
 # until Q returns a final answer. This is exactly what `q chat` does
 # internally -- reimplemented in-plugin so it works without the `q` binary and
-# without any Hermes-core change. Hermes only sends chat messages, so the bridge
-# is the sole owner of tool execution (the "source of truth" for agentic use).
+# and without any Hermes-core change. Hermes remains the sole owner of tool
+# execution; the bridge is only the Q inference/client loop.
 import re as _re
 
 # Default tool set: file read/write only (tight safety story). `bash` may be
 # added via config.yaml `agentic_tools` when command execution is wanted.
 DEFAULT_AGENTIC_TOOLS = ("fs_read", "fs_write")
 _TOOL_BLOCK_RE = _re.compile(
-    r"<tool>\s*(?P<name>[a-z_]+)\s*</tool>\s*<args>(?P<args>.*?)</args>",
+    r"<function_calls>\s*<invoke\s+name=\"(?P<name>[a-zA-Z_][\w-]*)\">"
+    r"(?P<args>.*?)</invoke>\s*</function_calls>",
+    _re.DOTALL,
+)
+# Legacy fallback: some Q turns (or older prompts) emit a simpler block.
+_TOOL_BLOCK_LEGACY_RE = _re.compile(
+    r"<tool>\s*(?P<name>[a-zA-Z_][\w-]*)\s*</tool>\s*<args>(?P<args>.*?)</args>",
     _re.DOTALL,
 )
 
@@ -417,18 +443,123 @@ def _tool_protocol_prompt(user_prompt: str, tools: tuple, root: str) -> str:
     )
 
 
-def parse_tool_call(text: str):
-    """Return (name, args) if `text` contains a well-formed tool block, else None.
+def _exec_tool_via_socket(tool: str, args: dict, root: str, timeout: int = 30) -> str:
+    """Send a tool call to the Hermes-owned executor over the Unix IPC socket.
 
-    Malformed blocks are ignored (treated as final text) so the agent never
-    crashes on a slightly-off model response."""
+    `args` is the parsed parameter dict from ``parse_tool_call`` (e.g.
+    {"path": ..., "content": ...} for fs_write). The plugin process owns the
+    socket and dispatches through Hermes's native tool runtime; this function is
+    a client only and returns an error string if ``AMAZON_Q_TOOL_SOCKET`` is
+    unset or the socket is missing.
+    """
+    socket_path = os.environ.get("AMAZON_Q_TOOL_SOCKET")
+    if not socket_path or not os.path.exists(socket_path):
+        return "(Hermes tool socket not available)"
+    if tool == "fs_write":
+        content = f'{args.get("path", "")}\n{args.get("content", "")}'
+        payload = json.dumps({
+            "tool": "fs_write",
+            "args": {"content": content, "root": root},
+        }) + "\n"
+    elif tool == "fs_read":
+        payload = json.dumps({
+            "tool": "fs_read",
+            "args": {"path": args.get("path", ""), "root": root},
+        }) + "\n"
+    elif tool == "bash":
+        payload = json.dumps({
+            "tool": "bash",
+            "args": {"command": args.get("command", ""), "root": root},
+        }) + "\n"
+    else:
+        payload = json.dumps({"tool": tool, "args": args}) + "\n"
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout)
+            s.connect(socket_path)
+            s.sendall(payload.encode("utf-8"))
+            buf = b""
+            while True:
+                chunk = s.recv(65536)
+                if not chunk:
+                    break
+                buf += chunk
+                if b"\n" in buf:
+                    break
+        text = buf.decode("utf-8", errors="replace").strip()
+        if not text:
+            return "(empty response from tool server)"
+        try:
+            envelope = json.loads(text)
+        except Exception:
+            return text
+        if envelope.get("ok"):
+            result = envelope.get("result", "")
+            return result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+        return envelope.get("error") or json.dumps(envelope, ensure_ascii=False)
+    except Exception as exc:
+        return f"tool socket error: {type(exc).__name__}: {exc}"
+
+
+def parse_tool_call(text: str):
+    """Return (name, args_dict) if `text` contains a well-formed tool block, else None.
+
+    Accepts Q's native agentic serialization (the same format the `q chat` CLI
+    parses), plus a legacy `<tool>/<args>` fallback:
+
+        <function_calls>
+        <invoke name="fs_write">
+        <parameter name="path">greeting.txt</parameter>
+        <parameter name="content">HELLO</parameter>
+        </invoke>
+        </function_calls>
+
+    Each <parameter name="k">v</parameter> becomes an entry in the returned
+    args dict. `name` must be one of the configured agentic tools. Malformed
+    blocks are ignored (treated as final text) so the agent never crashes on a
+    slightly-off model response.
+    """
+    import re as _re_inner
+
     m = _TOOL_BLOCK_RE.search(text)
-    if not m:
-        return None
-    name = m.group("name")
-    if name not in _agentic_tools():
-        return None
-    return name, m.group("args").strip()
+    if m:
+        name = m.group("name")
+        if name not in _agentic_tools():
+            return None
+        args = {}
+        for pm in _re_inner.finditer(
+            r'<parameter\s+name="(?P<k>[^"]+)">(?P<v>.*?)</parameter>',
+            m.group("args"), _re.DOTALL,
+        ):
+            args[pm.group("k")] = pm.group("v")
+        if not args and m.group("args").strip().startswith("{"):
+            try:
+                args = json.loads(m.group("args").strip())
+            except Exception:
+                args = {}
+        return name, args
+
+    # Legacy fallback: <tool>NAME</tool><args>path\ncontent</args>
+    m = _TOOL_BLOCK_LEGACY_RE.search(text)
+    if m:
+        name = m.group("name")
+        if name not in _agentic_tools():
+            return None
+        raw = m.group("args").strip()
+        args = {}
+        if name == "fs_write":
+            lines = raw.split("\n", 1)
+            args = {"path": lines[0].strip(),
+                    "content": lines[1] if len(lines) > 1 else ""}
+        elif name == "fs_read":
+            args = {"path": raw.strip()}
+        elif name == "bash":
+            args = {"command": raw.strip()}
+        else:
+            args = {"text": raw}
+        return name, args
+
+    return None
 
 
 def exec_tool(name: str, args: str, root: str, timeout: int) -> str:
@@ -471,27 +602,77 @@ def exec_tool(name: str, args: str, root: str, timeout: int) -> str:
         return f"tool error: {type(exc).__name__}: {exc}"
 
 
+def _q_tool_specs(tools: tuple) -> list:
+    """Build the API `tools` array advertised to Q (enables agentic mode).
+
+    Mirrors the exact shape the `q chat` CLI sends in
+    userInputMessageContext.tools (verified against the open-source
+    amazon-q-developer-cli serializer: toolSpecification/inputSchema/json).
+    The names map to our executor's tool names (fs_write/fs_read/bash). Without
+    this array + `origin: "CLI"`, Q replies "agentic-coding OFF".
+    """
+    specs = []
+    schema_props = {
+        "fs_write": {"content": {"type": "string"}},
+        "fs_read": {"path": {"type": "string"}},
+        "bash": {"command": {"type": "string"}},
+    }
+    desc = {
+        "fs_write": "Write text content to a file in the sandbox. "
+                    "args: first line is the relative path, rest is content.",
+        "fs_read": "Read a file's text content from the sandbox. args: the relative path.",
+        "bash": "Run a non-interactive shell command in the sandbox. args: the command string.",
+    }
+    for t in tools:
+        if t not in schema_props:
+            continue
+        specs.append({
+            "toolSpecification": {
+                "name": t,
+                "description": desc[t],
+                "inputSchema": {"json": {
+                    "type": "object",
+                    "properties": schema_props[t],
+                    "required": list(schema_props[t].keys()),
+                }},
+            }
+        })
+    return specs
+
+
 def run_agentic(prompt: str, model: str, max_iters: int | None = None,
                 timeout: int | None = None):
     """ReAct loop over the direct Q API. Returns (answer_text, status, ok, cid).
 
-    The direct API is stateless, so each iteration re-sends the running
-    conversation (user request + tool calls + results) as one flattened prompt.
+    Agentic mode is enabled by advertising `tools` + `origin: "CLI"` on the
+    first call (verified live). Q emits a `<function_calls>` block; we execute
+    it via the Hermes-owned socket and feed the result back through
+    `toolResults` so Q's agentic loop continues to a final answer.
     """
     import q_direct
 
     root = _agentic_root()
     tools = _agentic_tools()
+    tool_specs = _q_tool_specs(tools)
     max_iters = max_iters or _agentic_max_iters()
     timeout = timeout or _agentic_timeout()
+    socket_path = os.environ.get("AMAZON_Q_TOOL_SOCKET")
 
-    convo = _tool_protocol_prompt(prompt, tools, root)
     last_cid = None
+    tool_use_id = None
+    tool_results = None
+    # First turn: the user's request. Later turns: a continuation telling Q the
+    # tool result is in, so it should emit the next step or a final answer.
+    convo = _tool_protocol_prompt(prompt, tools, root)
     answer = convo
     for _ in range(max_iters):
         try:
-            answer, last_cid = q_direct.chat(convo, model=model,
-                                              conversation_id=last_cid)
+            answer, last_cid, tool_use_id = q_direct.chat(
+                convo, model=model,
+                conversation_id=last_cid,
+                tools=tool_specs if tool_results is None else None,
+                tool_results=tool_results,
+            )
         except Exception as exc:  # noqa: BLE001
             return f"{type(exc).__name__}: {exc}", -1, False, last_cid
         call = parse_tool_call(answer)
@@ -499,8 +680,23 @@ def run_agentic(prompt: str, model: str, max_iters: int | None = None,
             # No tool block -> final answer.
             return answer.strip(), 0, True, last_cid
         name, args = call
-        result = exec_tool(name, args, root, timeout)
-        convo += f"\n\nTOOL RESULT ({name}):\n{result}\n\nContinue."
+        if not socket_path:
+            return (
+                "Hermes tool executor unavailable: "
+                "AMAZON_Q_TOOL_SOCKET is not set",
+                -1,
+                False,
+                last_cid,
+            )
+        result = _exec_tool_via_socket(name, args, root, timeout=timeout)
+        # Feed the executed result back to Q so its agentic loop continues.
+        tool_results = [{
+            "toolUseId": tool_use_id or f"tool-{len(tool_results or []) + 1}",
+            "content": [{"text": result}],
+            "status": "SUCCESS",
+        }]
+        # Reset to a continuation prompt for the next turn.
+        convo = "Tool executed. Continue with the next step or give the final answer."
     # Hit iteration cap: return the last model text so the turn still produces
     # a usable (if possibly incomplete) answer.
     return answer.strip(), 0, True, last_cid
