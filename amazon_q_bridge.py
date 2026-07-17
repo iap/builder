@@ -151,20 +151,24 @@ def _error(err_type: str, message: str, http_status: int = 500) -> dict:
 BACKEND = os.environ.get("AMAZON_Q_BACKEND", "direct").lower()
 
 
-def _run_q_chat_pty(prompt: str, model: str, timeout: int = REQUEST_TIMEOUT):
-    """Run a Q chat turn; return (output_text, exit_code_or_None, ok).
+def _run_q_chat_pty(prompt: str, model: str, timeout: int = REQUEST_TIMEOUT,
+                    conversation_id: str | None = None):
+    """Run a Q chat turn; return (output_text, exit_code_or_None, ok, conversation_id).
 
     Dispatches on BACKEND:
-      * subprocess -> `q chat` CLI (original path).
-      * direct     -> q_direct.chat (HTTPS, no binary).
+      * subprocess -> `q chat` CLI (original path); conversation_id is None
+        because the subprocess backend shells out per call and has no native
+        conversation threading.
+      * direct     -> q_direct.chat (HTTPS, no binary); conversation_id is Q's
+        server-side id for this turn (enables native multi-turn memory).
     """
     if BACKEND == "direct":
-        return _run_q_direct(prompt, model, timeout)
+        return _run_q_direct(prompt, model, timeout, conversation_id=conversation_id)
     return _run_q_chat_subprocess(prompt, model, timeout)
 
 
 def _run_q_chat_subprocess(prompt: str, model: str, timeout: int = REQUEST_TIMEOUT):
-    """Run `q chat` via subprocess; return (output_text, exit_code_or_None, ok).
+    """Run `q chat` via subprocess; return (output_text, exit_code_or_None, ok, None).
 
     Avoids the prior PTY implementation that raised
     ``OSError: [Errno 9] Bad file descriptor`` on FD lifecycle races.
@@ -183,31 +187,46 @@ def _run_q_chat_subprocess(prompt: str, model: str, timeout: int = REQUEST_TIMEO
         ok = status == 0
         if os.environ.get("AMAZON_Q_DEBUG"):
             _dump(model, status, output_str)
-        return output_str, status, ok
+        return output_str, status, ok, None
     except subprocess.TimeoutExpired as exc:
         out = (exc.stdout or b"") + (exc.stderr or b"")
         output_str = out.decode(errors="replace")
         if os.environ.get("AMAZON_Q_DEBUG"):
             _dump(model, None, output_str, note="timeout")
-        return output_str, None, False
+        return output_str, None, False, None
     except Exception as exc:  # pragma: no cover - defensive
         if os.environ.get("AMAZON_Q_DEBUG"):
             _dump(model, -1, str(exc), note="exception")
         # -1 (distinct from None=timeout) so the handler can report a 502
         # upstream error instead of mislabeling it as a timeout.
-        return "", -1, False
+        return "", -1, False, None
 
 
-def _run_q_direct(prompt: str, model: str, timeout: int = REQUEST_TIMEOUT):
-    """Run a Q chat turn via the direct HTTPS backend (q_direct)."""
+def _run_q_direct(prompt: str, model: str, timeout: int = REQUEST_TIMEOUT,
+                   conversation_id: str | None = None):
+    """Run a Q chat turn via the direct HTTPS backend (q_direct).
+
+    Returns (output_text, status, ok, conversation_id) where conversation_id is
+    Q's server-side conversation id for this turn (or None when Q omits it).
+    """
     try:
         import q_direct
 
-        answer = q_direct.chat(prompt, model=model)
-        return answer, 0, True
+        answer, cid = q_direct.chat(
+            prompt, model=model, conversation_id=conversation_id
+        )
+        return answer, 0, True, cid
     except Exception as exc:  # noqa: BLE001
         # Surface the error text so subscription-gating / upstream parsing still works.
-        return f"{type(exc).__name__}: {exc}", -1, False
+        return f"{type(exc).__name__}: {exc}", -1, False, None
+
+
+# Bridge-side conversation memory: the client may pass an inbound conversation
+# id via this header so Q links the turn to an existing server-side conversation.
+# The bridge returns the (possibly new) conversation id via the same header so
+# the client can thread it through subsequent turns instead of flattening the
+# whole history into every prompt.
+CONVERSATION_ID_HEADER = "X-Hermes-Conversation-Id"
 
 
 def _dump(model, status, text, note=""):
@@ -303,6 +322,43 @@ def _extract_anthropic_prompt(data: dict) -> str:
         text = _text_of(m.get("content")).strip()
         if role in ("user", "assistant") and text:
             parts.append(text)
+    return "\n\n".join(parts).strip()
+
+
+def _flatten_openai_messages(data: dict) -> str:
+    """Build a `q chat` prompt from OpenAI-compatible request fields.
+
+    Concatenates `system` then each message's text content with role labels
+    so multi-turn context is preserved across stateless `q chat` calls.
+    Returns "" if no usable text is found.
+    """
+    parts: list[str] = []
+
+    def _text_of(content) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return " ".join(
+                c.get("text", "") for c in content if isinstance(c, dict)
+            )
+        return ""
+
+    system = data.get("system")
+    if isinstance(system, str) and system.strip():
+        parts.append(system.strip())
+    elif isinstance(system, list):
+        sys_text = _text_of(system)
+        if sys_text.strip():
+            parts.append(sys_text.strip())
+
+    messages = data.get("messages") or []
+    for m in messages:
+        if not isinstance(m, dict):
+            continue
+        role = m.get("role")
+        text = _text_of(m.get("content")).strip()
+        if role in ("user", "assistant", "system") and text:
+            parts.append(f"{role}: {text}")
     return "\n\n".join(parts).strip()
 
 
@@ -412,11 +468,7 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
-        prompt = ""
-        for m in reversed(messages):
-            if m.get("role") == "user":
-                prompt = (m.get("content") or "").strip()
-                break
+        prompt = _flatten_openai_messages(data)
         if not prompt:
             self._send(_error("invalid_request_error", "no user message found", 400), 400)
             return
@@ -429,7 +481,10 @@ class Handler(BaseHTTPRequestHandler):
                 400,
             )
             return
-        output, status, ok = _run_q_chat_pty(prompt, model)
+        conversation_id = self.headers.get(CONVERSATION_ID_HEADER) or None
+        output, status, ok, _conversation_id = _run_q_chat_pty(
+            prompt, model, conversation_id=conversation_id
+        )
 
         # Subscription gating is independent of exit status: `q chat` may exit
         # 0 yet still emit a gate message (e.g. fallback), so check the output
@@ -463,6 +518,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         answer = extract_answer(output)
+        # Echo Q's server-side conversation id so the client can thread it
+        # through subsequent turns (native multi-turn memory instead of
+        # re-flattening history into every prompt).
+        conv_headers = {CONVERSATION_ID_HEADER: _conversation_id} if _conversation_id else None
         if data.get("stream"):
             self._send_openai_sse(answer, model)
             return
@@ -484,7 +543,8 @@ class Handler(BaseHTTPRequestHandler):
                     "completion_tokens": len(answer.split()),
                     "total_tokens": len(prompt.split()) + len(answer.split()),
                 },
-            }
+            },
+            extra_headers=conv_headers,
         )
 
     def _send_openai_sse(self, answer: str, model: str):
@@ -571,7 +631,10 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
-        output, status, ok = _run_q_chat_pty(prompt, model)
+        conversation_id = self.headers.get(CONVERSATION_ID_HEADER) or None
+        output, status, ok, _conversation_id = _run_q_chat_pty(
+            prompt, model, conversation_id=conversation_id
+        )
 
         if _subscription_blocked(output):
             self._send(
