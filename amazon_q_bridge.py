@@ -343,6 +343,174 @@ def _run_q_direct(prompt: str, model: str, timeout: int = REQUEST_TIMEOUT,
         return f"{type(exc).__name__}: {exc}", -1, False, None
 
 
+# --------------------------------------------------------------------------- #
+# Agentic backend (binary-free tool use, no `q` CLI)
+# --------------------------------------------------------------------------- #
+# The `agentic` backend turns the chat-only `direct` API into a ReAct-style
+# agent: it instructs Q (via the prompt) to emit a structured tool call, parses
+# it, executes the tool LOCALLY in Python, feeds the result back, and loops
+# until Q returns a final answer. This is exactly what `q chat` does
+# internally -- reimplemented in-plugin so it works without the `q` binary and
+# without any Hermes-core change. Hermes only sends chat messages, so the bridge
+# is the sole owner of tool execution (the "source of truth" for agentic use).
+import re as _re
+
+# Default tool set: file read/write only (tight safety story). `bash` may be
+# added via config.yaml `agentic_tools` when command execution is wanted.
+DEFAULT_AGENTIC_TOOLS = ("fs_read", "fs_write")
+_TOOL_BLOCK_RE = _re.compile(
+    r"<tool>\s*(?P<name>[a-z_]+)\s*</tool>\s*<args>(?P<args>.*?)</args>",
+    _re.DOTALL,
+)
+
+
+def _agentic_root() -> str:
+    """Sandbox directory the agentic tools may touch. Configurable; defaults
+    to an isolated temp dir so the agent cannot wander the whole filesystem."""
+    root = _config_str("agentic_root", "")
+    root = root.strip() if root else ""
+    if not root:
+        import tempfile
+
+        root = os.path.join(tempfile.gettempdir(), "awsbuild_agentic")
+    os.makedirs(root, exist_ok=True)
+    return os.path.abspath(root)
+
+
+def _agentic_tools() -> tuple:
+    return _config_list("agentic_tools", DEFAULT_AGENTIC_TOOLS)
+
+
+def _agentic_max_iters() -> int:
+    try:
+        return max(1, int(_config_str("agentic_max_iters", "8")))
+    except (TypeError, ValueError):
+        return 8
+
+
+def _agentic_timeout() -> int:
+    try:
+        return max(1, int(_config_str("agentic_timeout", "30")))
+    except (TypeError, ValueError):
+        return 30
+
+
+def _tool_protocol_prompt(user_prompt: str, tools: tuple, root: str) -> str:
+    """Wrap the user prompt with the tool-use protocol Q must follow."""
+    tool_lines = []
+    for t in tools:
+        if t == "fs_read":
+            tool_lines.append("- fs_read: read a file. args = absolute or relative path under the sandbox.")
+        elif t == "fs_write":
+            tool_lines.append("- fs_write: write/append a file. args = 'path\\n<content>' (first line is the path).")
+        elif t == "bash":
+            tool_lines.append("- bash: run a shell command (non-interactive). args = the command. CWD is the sandbox.")
+    tools_block = "\n".join(tool_lines) if tool_lines else "(no tools available)"
+    return (
+        "You are an agentic coding assistant. To use a tool, respond with EXACTLY "
+        "this block on its own, then stop and wait for the result:\n"
+        "<tool>TOOL_NAME</tool>\n"
+        "<args>TOOL_ARGS</args>\n"
+        "When you have the final answer (no more tools needed), reply in normal text.\n"
+        f"Available tools (sandbox root = {root}):\n{tools_block}\n\n"
+        f"USER REQUEST:\n{user_prompt}"
+    )
+
+
+def parse_tool_call(text: str):
+    """Return (name, args) if `text` contains a well-formed tool block, else None.
+
+    Malformed blocks are ignored (treated as final text) so the agent never
+    crashes on a slightly-off model response."""
+    m = _TOOL_BLOCK_RE.search(text)
+    if not m:
+        return None
+    name = m.group("name")
+    if name not in _agentic_tools():
+        return None
+    return name, m.group("args").strip()
+
+
+def exec_tool(name: str, args: str, root: str, timeout: int) -> str:
+    """Execute a single tool locally, sandboxed to `root`. Returns a short
+    result string (or an error string -- never raises)."""
+    root = os.path.abspath(root)
+
+    def _safe_path(p: str) -> str:
+        cand = os.path.abspath(os.path.join(root, p))
+        if not (cand == root or cand.startswith(root + os.sep)):
+            raise ValueError(f"path escapes sandbox: {p}")
+        return cand
+
+    try:
+        if name == "fs_read":
+            path = _safe_path(args.strip())
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                return fh.read()[:20000]
+        if name == "fs_write":
+            lines = args.split("\n", 1)
+            path = _safe_path(lines[0].strip())
+            content = lines[1] if len(lines) > 1 else ""
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            return f"wrote {len(content)} bytes to {path}"
+        if name == "bash":
+            import subprocess as _sp
+
+            completed = _sp.run(
+                args,
+                shell=True,
+                cwd=root,
+                stdout=_sp.PIPE,
+                stderr=_sp.STDOUT,
+                timeout=timeout,
+            )
+            return (completed.stdout or b"").decode(errors="replace")[:5000]
+        return f"unknown tool: {name}"
+    except Exception as exc:  # noqa: BLE001
+        return f"tool error: {type(exc).__name__}: {exc}"
+
+
+def run_agentic(prompt: str, model: str, max_iters: int | None = None,
+                timeout: int | None = None):
+    """ReAct loop over the direct Q API. Returns (answer_text, status, ok, cid).
+
+    The direct API is stateless, so each iteration re-sends the running
+    conversation (user request + tool calls + results) as one flattened prompt.
+    """
+    import q_direct
+
+    root = _agentic_root()
+    tools = _agentic_tools()
+    max_iters = max_iters or _agentic_max_iters()
+    timeout = timeout or _agentic_timeout()
+
+    convo = _tool_protocol_prompt(prompt, tools, root)
+    last_cid = None
+    answer = convo
+    for _ in range(max_iters):
+        try:
+            answer, last_cid = q_direct.chat(convo, model=model,
+                                              conversation_id=last_cid)
+        except Exception as exc:  # noqa: BLE001
+            return f"{type(exc).__name__}: {exc}", -1, False, last_cid
+        call = parse_tool_call(answer)
+        if not call:
+            # No tool block -> final answer.
+            return answer.strip(), 0, True, last_cid
+        name, args = call
+        result = exec_tool(name, args, root, timeout)
+        convo += f"\n\nTOOL RESULT ({name}):\n{result}\n\nContinue."
+    # Hit iteration cap: return the last model text so the turn still produces
+    # a usable (if possibly incomplete) answer.
+    return answer.strip(), 0, True, last_cid
+
+
+def _run_agentic(prompt: str, model: str, conversation_id: str | None = None):
+    """Public entry used by do_POST. Mirrors _run_q_chat_pty's return shape."""
+    return run_agentic(prompt, model)
+
+
 # Bridge-side conversation memory: the client may pass an inbound conversation
 # id via this header so Q links the turn to an existing server-side conversation.
 # The bridge returns the (possibly new) conversation id via the same header so
@@ -628,9 +796,14 @@ class Handler(BaseHTTPRequestHandler):
                 model,
             )
         conversation_id = self.headers.get(CONVERSATION_ID_HEADER) or None
-        output, status, ok, _conversation_id = _run_q_chat_pty(
-            prompt, model, conversation_id=conversation_id
-        )
+        if BACKEND == "agentic":
+            output, status, ok, _conversation_id = _run_agentic(
+                prompt, model, conversation_id=conversation_id
+            )
+        else:
+            output, status, ok, _conversation_id = _run_q_chat_pty(
+                prompt, model, conversation_id=conversation_id
+            )
 
         # Subscription gating is independent of exit status: `q chat` may exit
         # 0 yet still emit a gate message (e.g. fallback), so check the output
