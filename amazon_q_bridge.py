@@ -47,7 +47,99 @@ Q_BIN = next(
     ),
     "q",
 )
-DEFAULT_MODEL = "claude-haiku-4.5"  # aligned with ~/.hermes/config.yaml aws-build default
+# --------------------------------------------------------------------------- #
+# Plugin settings — config.yaml (source of truth) with env-var override
+# --------------------------------------------------------------------------- #
+def load_plugin_config(path: str | None = None) -> dict:
+    """Load aws-build plugin settings from config.yaml.
+
+    Falls back to empty dict when the file is absent or unparsable, so the
+    bridge still runs with built-in defaults + env vars. Env vars always win
+    over config.yaml (see the BACKEND/DEFAULT_MODEL wiring below).
+
+    PyYAML is preferred; if it's unavailable we fall back to a minimal parser
+    that handles the flat `key: value` and simple `- item` list shapes this
+    plugin's config uses, so a missing dependency never crashes startup.
+    """
+    cfg_path = path or os.path.join(os.path.dirname(__file__), "config.yaml")
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as fh:
+            raw = fh.read()
+    except FileNotFoundError:
+        return {}
+    try:
+        import yaml  # type: ignore
+
+        data = yaml.safe_load(raw) or {}
+        return data if isinstance(data, dict) else {}
+    except ImportError:
+        return _parse_simple_config(raw)
+    except Exception:
+        # A broken config must not crash startup; fall back to defaults.
+        return {}
+
+
+def _parse_simple_config(raw: str) -> dict:
+    """Minimal fallback parser for flat `key: value` + `- item` lists."""
+    result: dict = {}
+    list_key: str | None = None
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if list_key is not None:
+            if stripped.startswith("- "):
+                result.setdefault(list_key, []).append(stripped[2:].strip())
+                continue
+            list_key = None
+        if ":" not in stripped:
+            continue
+        key, _, val = stripped.partition(":")
+        key, val = key.strip(), val.strip()
+        if val == "":
+            list_key = key  # next lines may be list items
+            result.setdefault(key, [])
+        else:
+            result[key] = val
+    return result
+
+
+_PLUGIN_CONFIG = load_plugin_config()
+
+
+def _config_str(key: str, default: str) -> str:
+    env_val = os.environ.get(f"AMAZON_Q_{key.upper()}")
+    if env_val:
+        return env_val
+    val = _PLUGIN_CONFIG.get(key)
+    return str(val) if isinstance(val, (str, int, float, bool)) else default
+
+
+def _config_bool(key: str, default: bool) -> bool:
+    env_val = os.environ.get(f"AMAZON_Q_{key.upper()}")
+    if env_val:
+        return env_val.strip().lower() in {"1", "true", "yes", "on"}
+    val = _PLUGIN_CONFIG.get(key)
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        return val.strip().lower() in {"1", "true", "yes", "on"}
+    return default
+
+
+def _config_list(key: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    env_val = os.environ.get(f"AMAZON_Q_{key.upper()}")
+    if env_val:
+        return tuple(m.strip() for m in env_val.split(",") if m.strip())
+    val = _PLUGIN_CONFIG.get(key)
+    if isinstance(val, str):
+        return tuple(m.strip() for m in val.split(",") if m.strip())
+    if isinstance(val, (list, tuple)):
+        return tuple(str(m).strip() for m in val if str(m).strip())
+    return default
+
+
+DEFAULT_MODEL = _config_str("default_model", "claude-haiku-4.5")
 REQUEST_TIMEOUT = 90  # seconds given to `q chat` to respond
 # Aliases resolve via discover_models(); these are best-effort hints that are
 # re-checked against the live catalog before use.
@@ -80,11 +172,9 @@ FALLBACK_MODELS = (
     "claude-opus-4.5",
 )
 # Optional runtime extension of the served catalog. Lets the user add models
-# Q has shipped (e.g. claude-opus-4) without a code change.
-_EXTRA_MODELS_ENV = os.environ.get("AMAZON_Q_MODELS", "").strip()
-EXTRA_MODELS = tuple(
-    m.strip() for m in _EXTRA_MODELS_ENV.split(",") if m.strip()
-)
+# Q has shipped (e.g. claude-opus-4) without a code change. Sourced from the
+# AMAZON_Q_MODELS env var or config.yaml `extra_models`, with env winning.
+EXTRA_MODELS = _config_list("extra_models", ())
 
 # Cache for discovered models (TTL-based).
 _MODEL_CACHE: list[str] = []
@@ -177,8 +267,12 @@ def _error(err_type: str, message: str, http_status: int = 500) -> dict:
 #   "direct"    (default) -> pure-HTTP via q_direct.py (no CLI binary needed).
 #   "subprocess"           -> shells out to the `q chat` CLI binary (opt-in fallback).
 # Default is "direct" so AWS Build connects to Q's server models with no
-# amazon-q-developer-cli build/install required.
-BACKEND = os.environ.get("AMAZON_Q_BACKEND", "direct").lower()
+# amazon-q-developer-cli build/install required. Sourced from AMAZON_Q_BACKEND
+# Sourced from AMAZON_Q_BACKEND env or config.yaml `backend`, with env winning.
+BACKEND = _config_str("backend", "direct").lower()
+# Verbose transcript dump to /tmp/q_raw_<pid>.log. Env AMAZON_Q_DEBUG or
+# config.yaml `debug` (env wins).
+DEBUG = _config_bool("debug", False)
 
 
 def _run_q_chat_pty(prompt: str, model: str, timeout: int = REQUEST_TIMEOUT,
@@ -215,17 +309,17 @@ def _run_q_chat_subprocess(prompt: str, model: str, timeout: int = REQUEST_TIMEO
         output_str = out.decode(errors="replace")
         status = completed.returncode
         ok = status == 0
-        if os.environ.get("AMAZON_Q_DEBUG"):
+        if DEBUG:
             _dump(model, status, output_str)
         return output_str, status, ok, None
     except subprocess.TimeoutExpired as exc:
         out = (exc.stdout or b"") + (exc.stderr or b"")
         output_str = out.decode(errors="replace")
-        if os.environ.get("AMAZON_Q_DEBUG"):
+        if DEBUG:
             _dump(model, None, output_str, note="timeout")
         return output_str, None, False, None
     except Exception as exc:  # pragma: no cover - defensive
-        if os.environ.get("AMAZON_Q_DEBUG"):
+        if DEBUG:
             _dump(model, -1, str(exc), note="exception")
         # -1 (distinct from None=timeout) so the handler can report a 502
         # upstream error instead of mislabeling it as a timeout.
@@ -727,7 +821,7 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def log_message(self, fmt, *args):  # silence default access log
-        if os.environ.get("AMAZON_Q_DEBUG"):
+        if DEBUG:
             super().log_message(fmt, *args)
 
 

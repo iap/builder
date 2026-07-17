@@ -192,3 +192,61 @@ def test_opus_45_in_catalogs_and_alias(monkeypatch):
     # q_direct static catalog agrees (drives the `models` plugin tool).
     import q_direct
     assert "claude-opus-4.5" in q_direct.STATIC_MODELS
+
+
+# --- Plugin settings (config.yaml) ---
+
+def test_load_plugin_config_reads_yaml(monkeypatch, tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "backend: subprocess\n"
+        "default_model: claude-sonnet-4\n"
+        "extra_models:\n  - claude-opus-4.5\n"
+        "debug: true\n"
+    )
+    data = bridge.load_plugin_config(str(cfg))
+    assert data["backend"] == "subprocess"
+    assert data["default_model"] == "claude-sonnet-4"
+    assert data["extra_models"] == ["claude-opus-4.5"]
+    assert data["debug"] is True
+
+
+def test_load_plugin_config_missing_file_returns_empty(monkeypatch, tmp_path):
+    data = bridge.load_plugin_config(str(tmp_path / "absent.yaml"))
+    assert data == {}
+
+
+def test_config_str_env_wins_over_file(monkeypatch, tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("default_model: claude-sonnet-4\n")
+    monkeypatch.setattr(bridge, "_PLUGIN_CONFIG", bridge.load_plugin_config(str(cfg)))
+    monkeypatch.setenv("AMAZON_Q_DEFAULT_MODEL", "claude-haiku-4.5")
+    assert bridge._config_str("default_model", "x") == "claude-haiku-4.5"
+
+
+def test_config_str_falls_back_to_file(monkeypatch, tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("default_model: claude-sonnet-4\n")
+    monkeypatch.setattr(bridge, "_PLUGIN_CONFIG", bridge.load_plugin_config(str(cfg)))
+    monkeypatch.delenv("AMAZON_Q_DEFAULT_MODEL", raising=False)
+    assert bridge._config_str("default_model", "x") == "claude-sonnet-4"
+
+
+def test_config_list_parses_yaml_list_and_comma_env(monkeypatch, tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("extra_models:\n  - claude-opus-4.5\n  - claude-opus-5\n")
+    monkeypatch.setattr(bridge, "_PLUGIN_CONFIG", bridge.load_plugin_config(str(cfg)))
+    monkeypatch.delenv("AMAZON_Q_EXTRA_MODELS", raising=False)
+    assert bridge._config_list("extra_models", ()) == ("claude-opus-4.5", "claude-opus-5")
+    # env (AMAZON_Q_EXTRA_MODELS) comma form wins
+    monkeypatch.setenv("AMAZON_Q_EXTRA_MODELS", "a, b")
+    assert bridge._config_list("extra_models", ()) == ("a", "b")
+
+
+def test_parse_simple_config_fallback():
+    # Minimal parser used when PyYAML is unavailable.
+    raw = "# comment\nbackend: direct\ndefault_model: claude-haiku-4.5\nextra_models:\n  - claude-opus-4.5\n"
+    data = bridge._parse_simple_config(raw)
+    assert data["backend"] == "direct"
+    assert data["default_model"] == "claude-haiku-4.5"
+    assert data["extra_models"] == ["claude-opus-4.5"]
