@@ -149,27 +149,25 @@ MODEL_ALIASES = {
     "sonnet45": "claude-sonnet-4.5",
     "haiku": "claude-haiku-4.5",
     "haiku45": "claude-haiku-4.5",
-    # Common Q / Anthropic-family variants accepted by `q chat --model`.
-    "claude-opus-4": "claude-opus-4",
-    "claude-opus-4.5": "claude-opus-4.5",
-    "claude-sonnet-4-5": "claude-sonnet-4.5",  # tolerate dash/dot互换
+    # Dash/dot tolerance for the models `q chat` actually accepts.
+    "claude-sonnet-4-5": "claude-sonnet-4.5",
     "claude-haiku-4-5": "claude-haiku-4.5",
-    "claude-opus-4-5": "claude-opus-4.5",
     "claude-sonnet": "claude-sonnet-4",
     "claude-haiku": "claude-haiku-4.5",
-    "claude-opus": "claude-opus-4",
+    # NOTE: no claude-opus-* aliases — `q chat` rejects those models
+    # ("Model does not exist"). Add them only via extra_models once real.
 }
 # Static catalog matching `q chat --model <bad>`'s "Available models:" list
-# (verified live: claude-sonnet-4.5, claude-sonnet-4, claude-haiku-4.5).
-# Used as the instant default for GET /v1/models and as the fallback
-# if the live `q` probe fails. Extend at runtime via AMAZON_Q_MODELS
-# (comma-separated) without editing code.
+# (verified live via `q chat --model <x>`: only claude-sonnet-4.5,
+# claude-sonnet-4, claude-haiku-4.5 are accepted; claude-opus-* is REJECTED
+# with "Model does not exist"). Used as the instant default for GET /v1/models
+# and as the fallback if the live `q` probe fails. Extend at runtime via
+# AMAZON_Q_EXTRA_MODELS (comma-separated) or config.yaml `extra_models` when
+# Q actually ships a new model — do NOT hardcode assumed names here.
 FALLBACK_MODELS = (
     "claude-haiku-4.5",
     "claude-sonnet-4",
     "claude-sonnet-4.5",
-    "claude-opus-4",
-    "claude-opus-4.5",
 )
 # Optional runtime extension of the served catalog. Lets the user add models
 # Q has shipped (e.g. claude-opus-4) without a code change. Sourced from the
