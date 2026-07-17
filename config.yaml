@@ -10,7 +10,7 @@
 #                           tool use (fs_read/fs_write/fs_exec). Enables the
 #                           aws model to read/write/edit files. Requires the
 #                           `q` binary on PATH.
-backend: subprocess
+backend: direct
 
 # Default model served when the client sends none / an unknown name.
 # Must be one of the catalog entries (see README "Model catalog & calibration").

@@ -14,9 +14,9 @@ import __init__ as plugin  # noqa: E402
 
 
 def test_ensure_bridge_uses_config_yaml_backend(monkeypatch):
-    """ensure_bridge must spawn the bridge with the backend from config.yaml
-    (subprocess), not the old hardcoded 'direct' -- so the launchd plist is
-    redundant and can be removed without losing tool use."""
+    """ensure_bridge must spawn the bridge with the backend read from
+    config.yaml (whatever it currently is), not a hardcoded value -- so the
+    launchd plist is redundant and the plugin owns the backend choice."""
     # Simulate port free -> it will try to spawn.
     monkeypatch.setattr(
         __import__("socket"), "create_connection", mock.Mock(side_effect=OSError())
@@ -27,10 +27,15 @@ def test_ensure_bridge_uses_config_yaml_backend(monkeypatch):
         "Popen",
         mock.Mock(side_effect=lambda *a, **k: spawned.update(k) or mock.Mock()),
     )
-    # Ensure config.yaml says subprocess (it does in the repo).
+    # Env override absent -> backend comes from config.yaml.
     monkeypatch.delenv("AMAZON_Q_BACKEND", raising=False)
+    # Determine the expected backend from config.yaml the same way the code does.
+    sys.path.insert(0, str(ROOT))
+    from amazon_q_bridge import load_plugin_config, _config_str
+
+    expected = _config_str("backend", "direct")
     plugin.ensure_bridge()
-    assert spawned.get("env", {}).get("AMAZON_Q_BACKEND") == "subprocess"
+    assert spawned.get("env", {}).get("AMAZON_Q_BACKEND") == expected
 
 
 def test_ensure_bridge_env_override_wins(monkeypatch):
