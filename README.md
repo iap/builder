@@ -95,8 +95,21 @@ backend is `direct` (pure-HTTP via `q_direct.py`, Bearer Builder ID token):
 - `subprocess` — shells out to the `q chat` CLI, which has native tool use
   (`fs_read`/`fs_write`/`fs_exec`). This is what lets the aws model read,
   write, and edit files. Requires the `q` binary on PATH.
+- `agentic` — **experimental; currently INEFFECTIVE for tool use.** A
+  binary-free ReAct loop: the bridge instructs Q (via the prompt) to emit a
+  `<tool>` block, parses it, and executes the tool locally in Python. The
+  machinery is implemented and unit-tested (parser, sandboxed executor, loop
+  cap). **However, Q's `GenerateAssistantResponse` API refuses to enter
+  agentic mode without the `q chat` CLI setting it client-side** — verified
+  live: adding `agentMode` to the request body has no effect, and Q responds
+  "agentic-coding OFF ... enable agentic-coding mode using the IDE Chat
+  toggle." So `agentic` degrades to plain chat today. Keep it only as a hook
+  for if Amazon exposes agentic mode via the API; for real file edits, use
+  `subprocess` (requires `q`).
 
-### Plugin settings (`config.yaml`)
+> **Bottom line:** tool/file use on aws models requires the `q` CLI
+> (`subprocess` backend). The `direct` and `agentic` backends are chat-only.
+> This is a Q API limitation, not a plugin bug.
 
 Runtime behavior is configured in `aws-build/config.yaml` (the **source of
 truth**), with environment variables as a higher-precedence override.
