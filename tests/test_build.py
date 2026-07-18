@@ -6,45 +6,17 @@ authorization against oidc.us-east-1.amazonaws.com (no credentials needed).
 
 import json
 import os
-from pathlib import Path
+import types
 from unittest import mock
 
 import pytest
 
-PLUGIN_DIR = Path(__file__).resolve().parent.parent
-_HA = Path(__file__).resolve().parent.parent.parent.parent / "hermes-agent"
-
-import importlib.util  # noqa: E402
-import sys  # noqa: E402
-import tempfile  # noqa: E402
-import types  # noqa: E402
-
-sys.path.insert(0, str(_HA))
-os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="build-test-")
-
-
-def _load():  # noqa: ANN
-    ns = "hermes_plugins"
-    if ns not in sys.modules:
-        m = types.ModuleType(ns)
-        m.__path__ = []
-        m.__package__ = ns
-        sys.modules[ns] = m
-    mn = f"{ns}.build"
-    spec = importlib.util.spec_from_file_location(
-        mn, PLUGIN_DIR / "__init__.py", submodule_search_locations=[str(PLUGIN_DIR)]
-    )
-    mod = importlib.util.module_from_spec(spec)
-    mod.__package__ = mn
-    mod.__path__ = [str(PLUGIN_DIR)]
-    sys.modules[mn] = mod
-    spec.loader.exec_module(mod)
-    return mod
+from conftest import load_plugin
 
 
 @pytest.fixture(scope="module")
 def mod():  # noqa: ANN
-    return _load()
+    return load_plugin()
 
 
 def test_register_defines_tools(mod):  # noqa: ANN
