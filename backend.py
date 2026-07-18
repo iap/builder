@@ -86,6 +86,22 @@ def _token_file() -> Path:
         return Path.home() / ".hermes" / "plugins" / "aws-build" / ".q_token.json"
 
 
+def invalidate_q_token() -> None:
+    """Delete a stale `.q_token.json` so a fresh `bid_login` is unambiguous.
+
+    `.q_token.json` is a legacy cache that a *previous* login may have written.
+    If it outlives its replacement it shadows the newer `.bid_token.json` chosen
+    by ``get_token()``. Clearing it on login/logout keeps exactly one active
+    token store. Safe if the file is absent or already gone.
+    """
+    try:
+        _token_file().unlink()
+    except FileNotFoundError:  # noqa: BLE001 - nothing to clear
+        pass
+    except OSError:  # noqa: BLE001 - best-effort
+        pass
+
+
 # --- token storage ---
 # Q's own authenticated session is cached here by the `q` CLI. We reuse it so the
 # direct backend can call the chat API without the CLI binary. A from-scratch
@@ -280,15 +296,23 @@ def _load_sso_token() -> Optional[dict]:
 def get_token() -> dict:
     """Return a valid token.
 
-    The Hermes credential pool (written by `bid_login` / `hermes auth add
-    aws-build`) is the canonical store, so it is consulted first — both auth
-    stacks agree on it as the source of truth. Order:
+    A `bid_login` (the plugin's login tool) writes the fresh token to the
+    Hermes credential pool / `.bid_token.json`, NOT to `.q_token.json`. When
+    both stores hold a valid token we must prefer the *newest* one, otherwise a
+    stale `.q_token.json` from an earlier login shadows a just-completed
+    `bid_login` and the chat keeps using the wrong (e.g. quota-exhausted)
+    account.
+
+    Resolution (newest valid token wins, by `expires_at` as a write-order
+    proxy):
       1. The plugin's BID login store (auth.sso_oidc: Hermes credential pool,
-         falling back to the .bid_token.json mirror), if still valid.
-      2. Our persisted cache (.q_token.json under HERMES_HOME), if still valid.
-      3. If a stored token is present but expired, attempt a silent OIDC
+         falling back to the .bid_token.json mirror).
+      2. Our persisted cache (.q_token.json under HERMES_HOME).
+      3. If any stored token is present but expired, attempt a silent OIDC
          refresh_token exchange (no browser/interaction) before giving up.
       4. Otherwise raise with an actionable message.
+    `bid_logout` / `bid_login` delete the stale `.q_token.json` so the new
+    login is unambiguous.
     """
     candidates = []
     sso_tok = _load_sso_token()
@@ -298,9 +322,12 @@ def get_token() -> dict:
     if tok:
         candidates.append(tok)
 
-    for c in candidates:
-        if c and not _token_expired(c):
-            return c
+    valid = [c for c in candidates if c and not _token_expired(c)]
+    if valid:
+        # Newest write wins: a fresh bid_login carries a later expires_at than
+        # a stale .q_token.json written by an earlier login.
+        valid.sort(key=lambda c: c.get("expires_at") or c.get("expiresAt") or 0, reverse=True)
+        return valid[0]
     # Expired but refreshable -> silent refresh (no interactive device flow).
     for candidate in candidates:
         if candidate and (candidate.get("refresh_token") or candidate.get("refreshToken")):
