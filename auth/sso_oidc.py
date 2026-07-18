@@ -49,7 +49,7 @@ _poll_thread: Optional[threading.Thread] = None
 
 # The Hermes credential pool is the canonical store for the authenticated
 # token. hermes auth add aws-build writes it there; this module reads it first
-# and falls back to the legacy .bid_* mirror only for transient flow state.
+# and uses the local .bid_* mirror for transient flow/poll state.
 POOL_PROVIDER = "aws-build"
 
 
@@ -58,7 +58,7 @@ def _load_pool_token() -> Optional[dict]:
 
     Returns a token-shaped dict compatible with _load_token(), or None.
     Defensive: any failure yields None so the caller falls back to the
-    legacy .bid_* mirror.
+    local .bid_* mirror.
     """
     try:
         from agent.credential_pool import load_pool
@@ -104,28 +104,13 @@ def _home() -> Path:
 
 
 # Canonical mirror directory for this plugin. Matches the plugin's actual
-# directory name (`aws-build`). A legacy `build` directory was used by earlier
-# versions; `_mirror_path()` falls back to it on read so an already-logged-in
-# user isn't logged out by the rename.
+# directory name (`aws-build`).
 _PLUGIN_DIR_NAME = "aws-build"
-_LEGACY_PLUGIN_DIR_NAME = "build"
 
 
 def _mirror_path(filename: str) -> Path:
-    """Return the read path for a mirror file, preferring an existing legacy file.
-
-    Reads prefer the canonical `plugins/aws-build/` path but transparently fall
-    back to the legacy `plugins/build/` location if only that exists, so a token
-    written by an older version is still found. Writes should use
-    `_canonical_path()` so state always migrates to the canonical directory.
-    """
-    canonical = _canonical_path(filename)
-    if canonical.exists():
-        return canonical
-    legacy = _home() / "plugins" / _LEGACY_PLUGIN_DIR_NAME / filename
-    if legacy.exists():
-        return legacy
-    return canonical
+    """Return the read path for a mirror file (always the canonical location)."""
+    return _canonical_path(filename)
 
 
 def _canonical_path(filename: str) -> Path:
@@ -430,8 +415,8 @@ def ensure_valid() -> bool:
     """Refresh the token in place if expired and a refresh token exists.
 
     Reads the canonical Hermes credential pool first (falling back to the
-    legacy .bid_token.json mirror) so a token that lives only in the pool
-    is still considered valid instead of triggering a needless refresh.
+    .bid_token.json mirror) so a token that lives only in the pool is still
+    considered valid instead of triggering a needless refresh.
     """
     tok = _load_pool_token() or _load_token()
     if not tok:
@@ -528,8 +513,8 @@ def show_identity() -> dict:
 def logout() -> None:
     """Stop polling and delete all stored secrets.
 
-    Clears both the canonical Hermes credential pool entry and the legacy
-    .bid_* mirror files
+    Clears both the canonical Hermes credential pool entry and the
+    .bid_* mirror files.
     """
     _stop.set()
     global _poll_thread
@@ -538,13 +523,9 @@ def logout() -> None:
     if thread is not None and thread.is_alive():
         thread.join(timeout=2.0)
     _clear_pool()
-    # Delete mirror files in BOTH the canonical (aws-build) and legacy (build)
-    # directories so a rename never leaves an orphaned token behind.
+    # Delete mirror files in the canonical plugin directory.
     filenames = (".bid_token.json", ".bid_registration.json", ".bid_flow.json")
-    dirs = (
-        _home() / "plugins" / _PLUGIN_DIR_NAME,
-        _home() / "plugins" / _LEGACY_PLUGIN_DIR_NAME,
-    )
+    dirs = (_home() / "plugins" / _PLUGIN_DIR_NAME,)
     for d in dirs:
         for name in filenames:
             p = d / name

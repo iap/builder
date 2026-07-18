@@ -29,7 +29,7 @@ def main() -> int:
 
     ctx = types.SimpleNamespace(register_tool=reg_tool, register_hook=lambda *a, **k: None)
     mod.register(ctx)
-    expected = {"ask_q", "bid_login", "bid_status", "bid_show_identity", "bid_logout", "models"}
+    expected = {"ask_q", "bid_login", "bid_status", "bid_show_identity", "bid_logout", "models", "tags"}
     check(expected.issubset(set(captured)), f"all tools registered: {sorted(captured)}")
 
     for name, spec in captured.items():
