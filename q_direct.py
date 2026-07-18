@@ -105,7 +105,6 @@ TOKEN_FILE = Path(__file__).resolve().parent / ".q_token.json"
 # REST/JSON endpoints (/client/register unsigned, /device_authorization, /token)
 # that need NO SigV4 and NO AWS IAM credentials — verified live this session.
 # The `q` CLI uses AWS's published public OIDC client (CLIENT_ID below).
-Q_SQLITE = Path.home() / "Library" / "Application Support" / "amazon-q" / "data.sqlite3"
 
 
 def _load_token() -> Optional[dict]:
@@ -116,29 +115,6 @@ def _load_token() -> Optional[dict]:
         except Exception:
             return None
     return None
-
-
-def _load_q_sqlite_token() -> Optional[dict]:
-    """Reuse Q's existing authenticated session (no binary needed for chat)."""
-    if not Q_SQLITE.exists():
-        return None
-    try:
-        import sqlite3
-
-        db = sqlite3.connect(str(Q_SQLITE))
-        row = db.execute(
-            "SELECT value FROM auth_kv WHERE key='codewhisperer:odic:token'"
-        ).fetchone()
-        if not row:
-            return None
-        tok = json.loads(row[0])
-        # normalize key names to what chat() expects
-        tok.setdefault("access_token", tok.get("accessToken"))
-        tok.setdefault("refresh_token", tok.get("refreshToken"))
-        tok.setdefault("region", tok.get("region", REGION))
-        return tok
-    except Exception:
-        return None
 
 
 def _save_token(tok: dict) -> None:
@@ -298,7 +274,7 @@ def _load_sso_token() -> Optional[dict]:
 
     `bid_login` (the plugin's login tool) writes here, not to .q_token.json.
     Without this, a user who authenticates via the tool cannot chat because
-    get_token() only looked at .q_token.json / Q's sqlite. Lazy-import to
+    get_token() only looked at .q_token.json. Lazy-import to
     avoid pulling botocore at module load and to dodge circular imports.
     """
     try:
@@ -323,11 +299,9 @@ def get_token() -> dict:
       1. The plugin's BID login store (auth.sso_oidc: Hermes credential pool,
          falling back to the .bid_token.json mirror), if still valid.
       2. Our persisted cache (.q_token.json under HERMES_HOME), if still valid.
-      3. Q's existing authenticated session cached in its sqlite (reused so the
-         direct backend works without the CLI binary for chat).
-      4. If a stored token is present but expired, attempt a silent OIDC
+      3. If a stored token is present but expired, attempt a silent OIDC
          refresh_token exchange (no browser/interaction) before giving up.
-      5. Otherwise raise with an actionable message.
+      4. Otherwise raise with an actionable message.
     """
     candidates = []
     sso_tok = _load_sso_token()
@@ -336,9 +310,6 @@ def get_token() -> dict:
     tok = _load_token()
     if tok:
         candidates.append(tok)
-    q_tok = _load_q_sqlite_token()
-    if q_tok:
-        candidates.append(q_tok)
 
     for c in candidates:
         if c and not _token_expired(c):
@@ -445,7 +416,7 @@ def chat(
         # ONE retry before giving up — don't nuke a possibly-valid token on a
         # generic 400, and don't require user interaction. (m1/m3)
         if r.status_code in (400, 401) and "invalid" in err.lower():
-            for cand in (_load_token(), _load_q_sqlite_token(), _load_sso_token()):
+            for cand in (_load_token(), _load_sso_token()):
                 if cand and (cand.get("refresh_token") or cand.get("refreshToken")):
                     refreshed = _refresh(cand)
                     if refreshed:
@@ -599,18 +570,99 @@ STATIC_MODELS = [
     "claude-sonnet-4.5",
 ]
 
+_PLUGIN_YAML = Path(__file__).resolve().parent / "plugin.yaml"
+_MODEL_OVERRIDE: Optional[list[str]] = None  # None = not yet loaded
+
+
+def _load_model_override() -> Optional[list[str]]:
+    """Read an optional `models:` list from plugin.yaml.
+
+    Returns the list if present and non-empty, otherwise None so the caller
+    falls back to STATIC_MODELS. Missing pyyaml or file is treated as "no
+    override" rather than an error.
+    """
+    try:
+        import yaml  # type: ignore
+    except ImportError:
+        return None
+    try:
+        with open(_PLUGIN_YAML, "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except (OSError, ValueError):
+        return None
+    models = data.get("models")
+    if isinstance(models, list) and models:
+        return [str(m) for m in models]
+    return None
+
 
 def list_models() -> list[str]:
     """Return available AWS Build models.
 
-    The catalog is the static STATIC_MODELS list. A genuine live
-    ListAvailableModels call is not wired because its Smithy X-Amz-Target prefix
-    lives in the aws-smithy runtime and is not derivable without the service
-    model (live probes 404). Returning the static list directly also avoids
-    requiring a live token at import time (the plugin builds AVAILABLE_MODELS
-    from this at load).
+    Resolution order:
+      1. `models:` override in plugin.yaml (operator-editable, no code change).
+      2. Built-in STATIC_MODELS fallback.
+
+    The override is loaded lazily and cached on first call, so editing
+    plugin.yaml is picked up on the next call without restarting Hermes. A
+    genuine live ListAvailableModels call is not wired because its Smithy
+    X-Amz-Target prefix lives in the aws-smithy runtime and is not derivable
+    without the service model (live probes 404).
     """
-    return list(STATIC_MODELS)
+    global _MODEL_OVERRIDE
+    if _MODEL_OVERRIDE is None:
+        _MODEL_OVERRIDE = _load_model_override()
+    return list(_MODEL_OVERRIDE if _MODEL_OVERRIDE else STATIC_MODELS)
+
+
+STATIC_TAGS = [
+    "aws",
+    "amazon-q",
+    "claude",
+    "chat",
+    "builder-id",
+    "auth",
+]
+
+_TAG_OVERRIDE: Optional[list[str]] = None  # None = not yet loaded
+
+
+def _load_tag_override() -> Optional[list[str]]:
+    """Read an optional `tags:` list from plugin.yaml.
+
+    Returns the list if present and non-empty, otherwise None so the caller
+    falls back to STATIC_TAGS. Missing pyyaml or file is treated as "no
+    override" rather than an error.
+    """
+    try:
+        import yaml  # type: ignore
+    except ImportError:
+        return None
+    try:
+        with open(_PLUGIN_YAML, "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except (OSError, ValueError):
+        return None
+    tags = data.get("tags")
+    if isinstance(tags, list) and tags:
+        return [str(t) for t in tags]
+    return None
+
+
+def load_tags() -> list[str]:
+    """Return free-form tags describing this plugin.
+
+    Resolution order:
+      1. `tags:` override in plugin.yaml (operator-editable).
+      2. Built-in STATIC_TAGS fallback.
+
+    The override is loaded lazily and cached on first call, so editing
+    plugin.yaml is picked up on the next call without restarting Hermes.
+    """
+    global _TAG_OVERRIDE
+    if _TAG_OVERRIDE is None:
+        _TAG_OVERRIDE = _load_tag_override()
+    return list(_TAG_OVERRIDE if _TAG_OVERRIDE else STATIC_TAGS)
 
 
 if __name__ == "__main__":
