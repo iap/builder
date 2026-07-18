@@ -76,26 +76,14 @@ def _token_file() -> Path:
 
     Canonical location is ``HERMES_HOME/plugins/aws-build/.q_token.json`` so
     each Hermes profile gets its own token (per AGENTS.md: never hardcode
-    ~/.hermes; use get_hermes_home()). Falls back to reading the legacy path
-    next to this source file if only that exists, so an existing session
-    isn't lost. Writes always target the canonical location.
+    ~/.hermes; use get_hermes_home()). Writes always target this location.
     """
-    legacy = Path(__file__).resolve().parent / ".q_token.json"
     try:
         from hermes_constants import get_hermes_home
 
-        canonical = Path(get_hermes_home()) / "plugins" / "aws-build" / ".q_token.json"
+        return Path(get_hermes_home()) / "plugins" / "aws-build" / ".q_token.json"
     except Exception:  # noqa: BLE001 - plugin may load outside a Hermes runtime
-        return legacy
-    if canonical.exists():
-        return canonical
-    if legacy.exists():
-        return legacy
-    return canonical
-
-
-# Back-compat module attribute; prefer _token_file() which is profile-safe.
-TOKEN_FILE = Path(__file__).resolve().parent / ".q_token.json"
+        return Path.home() / ".hermes" / "plugins" / "aws-build" / ".q_token.json"
 
 
 # --- token storage ---
@@ -118,8 +106,7 @@ def _load_token() -> Optional[dict]:
 
 
 def _save_token(tok: dict) -> None:
-    # Always write to the canonical profile-safe location, even if a legacy
-    # file was the one read (so state migrates forward on the next refresh).
+    # Always write to the canonical profile-safe location.
     try:
         from hermes_constants import get_hermes_home
 
