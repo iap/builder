@@ -14,6 +14,8 @@ import tempfile
 import types
 from pathlib import Path
 
+import yaml
+
 PLUGIN_DIR = Path(__file__).resolve().parent
 # Plugin lives at <HERMES_HOME>/plugins/aws-build; hermes-agent is at
 # <HERMES_HOME>/hermes-agent, i.e. two levels up from PLUGIN_DIR.
@@ -24,8 +26,23 @@ for p in (str(PLUGIN_DIR), str(HERMES_AGENT_DIR)):
     if Path(p).exists() and p not in sys.path:
         sys.path.insert(0, p)
 
-# A throwaway profile so the plugin's get_hermes_home()-based paths resolve.
-os.environ.setdefault("HERMES_HOME", tempfile.mkdtemp(prefix="build-"))
+# A throwaway profile so plugin discovery exercises the installed-user-plugin
+# path without reading or writing the real Hermes profile.  Discovery scans
+# ``HERMES_HOME/plugins`` and user plugins are opt-in, so the isolated profile
+# must contain both the plugin link and its enabled-config entry.  Without this,
+# tests that import model_tools only prove that an empty profile cannot discover
+# aws-build.
+TEST_HERMES_HOME = Path(tempfile.mkdtemp(prefix="build-"))
+os.environ["HERMES_HOME"] = str(TEST_HERMES_HOME)
+(TEST_HERMES_HOME / "plugins").mkdir(parents=True)
+(TEST_HERMES_HOME / "plugins" / "aws-build").symlink_to(
+    PLUGIN_DIR,
+    target_is_directory=True,
+)
+(TEST_HERMES_HOME / "config.yaml").write_text(
+    yaml.safe_dump({"plugins": {"enabled": ["aws-build"]}}),
+    encoding="utf-8",
+)
 
 
 def load_plugin(slug: str = "build") -> types.ModuleType:
