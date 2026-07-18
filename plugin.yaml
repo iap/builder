@@ -3,16 +3,34 @@ version: 1.0.0
 description: "Self-contained Amazon Builder ID auth for Hermes Agent."
 author: iap
 kind: standalone
+# Optional override of the model catalog. If present and non-empty, list_models()
+# returns these instead of the built-in STATIC_MODELS. Lets operators add/remove
+# models without editing plugin code. Q selects the actual model server-side.
+models:
+  - claude-haiku-4.5
+  - claude-sonnet-4
+  - claude-sonnet-4.5
+# Optional free-form tags describing this plugin. Read at runtime by load_tags()
+# and exposed via the `tags` tool so the agent/user can see the plugin's identity
+# without reading plugin.yaml. Falls back to STATIC_TAGS when omitted.
+tags:
+  - aws
+  - amazon-q
+  - claude
+  - chat
+  - builder-id
+  - auth
+# Standard Hermes manifest field: list of tool-name strings (per the plugin
+# standard in hermes_cli/plugins.py:PluginManifest). The loader iterates this
+# as strings, so rich descriptions live in the tool schemas registered in
+# __init__.py, NOT here. Custom fields below (models/tags) are NOT part of the
+# standard manifest — they're read at runtime by q_direct.py, ignored by the
+# loader.
 provides_tools:
-  - name: ask_q
-    description: "Self-contained Amazon Builder ID auth for Hermes Agent."
-  - name: bid_login
-    description: "Self-contained Amazon Builder ID auth for Hermes Agent."
-  - name: bid_status
-    description: "Self-contained Amazon Builder ID auth for Hermes Agent."
-  - name: bid_show_identity
-    description: "Self-contained Amazon Builder ID auth for Hermes Agent."
-  - name: bid_logout
-    description: "Self-contained Amazon Builder ID auth for Hermes Agent."
-  - name: models
-    description: "Self-contained Amazon Builder ID auth for Hermes Agent."
+  - ask_q
+  - bid_login
+  - bid_status
+  - bid_show_identity
+  - bid_logout
+  - models
+  - tags
