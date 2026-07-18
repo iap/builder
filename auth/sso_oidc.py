@@ -24,7 +24,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -103,16 +103,46 @@ def _home() -> Path:
     return Path(get_hermes_home())
 
 
+# Canonical mirror directory for this plugin. Matches the plugin's actual
+# directory name (`aws-build`). A legacy `build` directory was used by earlier
+# versions; `_mirror_path()` falls back to it on read so an already-logged-in
+# user isn't logged out by the rename.
+_PLUGIN_DIR_NAME = "aws-build"
+_LEGACY_PLUGIN_DIR_NAME = "build"
+
+
+def _mirror_path(filename: str) -> Path:
+    """Return the read path for a mirror file, preferring an existing legacy file.
+
+    Reads prefer the canonical `plugins/aws-build/` path but transparently fall
+    back to the legacy `plugins/build/` location if only that exists, so a token
+    written by an older version is still found. Writes should use
+    `_canonical_path()` so state always migrates to the canonical directory.
+    """
+    canonical = _canonical_path(filename)
+    if canonical.exists():
+        return canonical
+    legacy = _home() / "plugins" / _LEGACY_PLUGIN_DIR_NAME / filename
+    if legacy.exists():
+        return legacy
+    return canonical
+
+
+def _canonical_path(filename: str) -> Path:
+    """Return the canonical mirror path (always `plugins/aws-build/`)."""
+    return _home() / "plugins" / _PLUGIN_DIR_NAME / filename
+
+
 def _reg_path() -> Path:
-    return _home() / "plugins" / "build" / ".bid_registration.json"
+    return _mirror_path(".bid_registration.json")
 
 
 def _token_path() -> Path:
-    return _home() / "plugins" / "build" / ".bid_token.json"
+    return _mirror_path(".bid_token.json")
 
 
 def _flow_path() -> Path:
-    return _home() / "plugins" / "build" / ".bid_flow.json"
+    return _mirror_path(".bid_flow.json")
 
 
 def _write_secret(path: Path, data: dict) -> None:
@@ -192,7 +222,7 @@ def _register() -> dict:
         "client_secret_expires_at": out.get("clientSecretExpiresAt"),
         "scopes": SCOPES,
     }
-    _write_secret(_reg_path(), data)
+    _write_secret(_canonical_path(".bid_registration.json"), data)
     return data
 
 
@@ -206,7 +236,7 @@ def _save_token(out: dict, reg: dict) -> None:
         "token_type": out.get("tokenType"),
         "scopes": reg.get("scopes"),
     }
-    _write_secret(_token_path(), data)
+    _write_secret(_canonical_path(".bid_token.json"), data)
 
 
 def _load_token() -> Optional[dict]:
@@ -215,7 +245,7 @@ def _load_token() -> Optional[dict]:
 
 # --- Flow persistence (so any process can complete the poll) ---
 def _save_flow(flow: dict) -> None:
-    _write_secret(_flow_path(), flow)
+    _write_secret(_canonical_path(".bid_flow.json"), flow)
 
 
 def _load_flow() -> Optional[dict]:
@@ -397,8 +427,13 @@ def refresh_token() -> bool:
 
 
 def ensure_valid() -> bool:
-    """Refresh the token in place if expired and a refresh token exists."""
-    tok = _load_token()
+    """Refresh the token in place if expired and a refresh token exists.
+
+    Reads the canonical Hermes credential pool first (falling back to the
+    legacy .bid_token.json mirror) so a token that lives only in the pool
+    is still considered valid instead of triggering a needless refresh.
+    """
+    tok = _load_pool_token() or _load_token()
     if not tok:
         return False
     if tok.get("expires_at", 0) > time.time():
@@ -503,9 +538,18 @@ def logout() -> None:
     if thread is not None and thread.is_alive():
         thread.join(timeout=2.0)
     _clear_pool()
-    for p in (_token_path(), _reg_path(), _flow_path()):
-        try:
-            if p.exists():
-                p.unlink()
-        except OSError:  # noqa: BLE001
-            pass
+    # Delete mirror files in BOTH the canonical (aws-build) and legacy (build)
+    # directories so a rename never leaves an orphaned token behind.
+    filenames = (".bid_token.json", ".bid_registration.json", ".bid_flow.json")
+    dirs = (
+        _home() / "plugins" / _PLUGIN_DIR_NAME,
+        _home() / "plugins" / _LEGACY_PLUGIN_DIR_NAME,
+    )
+    for d in dirs:
+        for name in filenames:
+            p = d / name
+            try:
+                if p.exists():
+                    p.unlink()
+            except OSError:  # noqa: BLE001
+                pass

@@ -1,319 +1,156 @@
-# Build Plugin — Amazon BID (Build ID) Device Login
+# aws-build Plugin — Amazon Q / Claude for Hermes (binary-free)
 
 ## Overview
 
-The build plugin provides headless SSO-OIDC device authorization (RFC 8628) for
-Amazon BID (Amazon Build ID). It allows the Hermes Agent to start a device login
-flow, report the user code and verification URL to the human, poll for the token
-in the background, and surface auth status, identity metadata, and logout.
+The `aws-build` plugin lets the Hermes Agent talk to **Amazon Q Developer
+(Claude models)** over pure HTTPS — **no `amazon-q-developer-cli` (`q`) binary
+required**. Hermes drives the agentic loop; this plugin exposes Q as a single
+chat tool:
 
-No AWS credentials are required on the client side. The OIDC server at
-`oidc.us-east-1.amazonaws.com` accepts the public client registration
-anonymously.
+```
+ask_q(prompt, model?, conversation_id?) -> answer
+```
+
+It also provides Amazon Builder ID (BID) device-login auth tools so you can
+authenticate headlessly (RFC 8628 device flow), and a `models` tool that lists
+the available Claude variants.
+
+There is **no HTTP bridge and no subprocess/agentic backend** — the plugin
+calls Q's `GenerateAssistantResponse` API directly via `q_direct.py`.
+
+---
+
+## Tools
+
+| Tool | Purpose |
+|------|---------|
+| `ask_q` | Send a prompt to Amazon Q (Claude) and return the answer. Optional `model` and `conversation_id`. |
+| `bid_login` | Start an Amazon BID device login; returns a `user_code` + verification URL to approve in a browser. |
+| `bid_status` | Report current auth / device-login state (polls once if a flow is pending). Never returns the raw token. |
+| `bid_show_identity` | Return token identity metadata (type, scopes, expiry) — no raw token. |
+| `bid_logout` | Stop polling and delete all stored secrets (pool entry + legacy mirror files). |
+| `models` | List available AWS Build models (`q_direct.list_models()`). |
 
 ---
 
 ## Architecture
 
 ```
-__init__.py              wires 5 tools via ctx.register_tool
-  │
-  └── auth/__init__.py   re-exports public API from sso_oidc.py
-        │
-        └── auth/sso_oidc.py   RFC 8628 device authorization (botocore)
+__init__.py            registers tools via ctx.register_tool
+  ├── q_direct.py      direct HTTPS chat with Amazon Q (ask_q, models)
+  └── auth/
+        ├── __init__.py    re-exports the public auth API
+        └── sso_oidc.py    RFC 8628 device authorization (botocore, anonymous)
 ```
 
-### `auth/sso_oidc.py`
+### `q_direct.py` — chat backend
+
+Pure-HTTP calls to Amazon Q's chat API, authenticated with an AWS Builder ID
+OIDC access token (Bearer only — **no SigV4**, verified via live capture of the
+`q chat` CLI).
+
+- **Endpoint:** `POST https://q.us-east-1.amazonaws.com/`
+  with `x-amz-target: AmazonCodeWhispererStreamingService.GenerateAssistantResponse`.
+- **Request body:** `conversationState.currentMessage.userInputMessage`, with
+  `chatTriggerType: "MANUAL"`.
+- **Response:** an AWS event-stream (binary-framed `assistantResponseEvent`
+  payloads: `{"content": ..., "modelId": ...}`). `q_direct` decodes these with
+  an escape/brace-aware parser so code containing unbalanced braces/quotes in
+  the answer is never mis-split.
+- **Multi-turn:** Q may return a `conversationId`; `chat()` surfaces it so the
+  caller can thread it back via `conversation_id` for server-side memory. When
+  the account doesn't emit one, callers just re-send context in the prompt.
+
+**Token resolution order** (`get_token()`):
+
+1. `.q_token.json` (this plugin's persisted token), if valid.
+2. Q's own sqlite session (`~/Library/Application Support/amazon-q/data.sqlite3`),
+   reused so chat works even if you authenticated via the `q` CLI.
+3. The Hermes credential pool / `.bid_token.json` written by `bid_login`.
+4. If a stored token is expired but has a refresh token, a silent OIDC
+   `refresh_token` exchange is attempted (no browser).
+5. Otherwise `RuntimeError` with an actionable message (run `bid_login`).
+
+### `auth/sso_oidc.py` — headless device login
 
 Wraps the `sso-oidc` botocore service against `oidc.us-east-1.amazonaws.com`
-with an anonymous public client (no signing). Implements:
+with an anonymous public client (unsigned — no AWS credentials needed):
 
-- **Client registration** — cached to `.bid_registration.json` under
-  HERMES_HOME. The OIDC server issues a client ID + secret; no AWS credentials
-  exchanged.
-- **Device authorization** — `start_device_authorization` returns a
-  `device_code`, `user_code`, and `verification_uri_complete`. The flow state
-  is persisted to `.bid_flow.json` so any process (not just the one that
-  started the flow) can complete polling.
-- **Token polling** — a daemon thread polls `create_token` in the background
-  for long-lived agent sessions. `get_status` also performs a single poll pass,
-  enabling cross-process completion.
-- **Token refresh** — `refresh_token()` uses the stored refresh token to obtain
-  a new access token before expiry.
-
-### `auth/__init__.py`
-
-Re-exports the public functions from `sso_oidc.py` so plugin code and tests can
-write `from .auth import start_login, get_status, ...`.
-
-### `__init__.py`
-
-Defines five tool handlers (`_handle_bid_*` plus `models`) and a `register(ctx)`
-function that calls `ctx.register_tool` for each tool in the `aws-build` toolset.
-Each tool has a `check_fn` that verifies `boto3` is importable.
+- **Client registration** cached under `HERMES_HOME`.
+- **Device authorization** persisted to a flow file so any process can complete
+  polling; a daemon thread polls `create_token` in the background.
+- **Token refresh** via the stored refresh token.
+- **Canonical store:** the Hermes credential pool (`aws-build` provider) is the
+  source of truth; legacy `.bid_*` files are a mirror. Secrets are written
+  chmod 600 and never returned by a tool handler.
 
 ---
 
-## Usage — `hermes auth`
+## Model catalog
 
-The recommended path is the `hermes auth` CLI, which stores the credential in
-the canonical Hermes credential pool (under `HERMES_HOME`, chmod 600):
+The served catalog is the static list in `q_direct.STATIC_MODELS`
+(verified against what Amazon Q accepts):
+
+- `claude-haiku-4.5`
+- `claude-sonnet-4`
+- `claude-sonnet-4.5`
+
+> `claude-opus-*` is **not** offered — Amazon Q rejects it ("Model does not
+> exist").
+
+`ask_q` defaults to `claude-sonnet-4`. An unknown `model` name is passed through
+to `q_direct.chat`, which accepts it for API compatibility (Q selects the model
+server-side).
+
+---
+
+## Usage — authentication
+
+Recommended path is the `hermes auth` CLI (stores the credential in the
+canonical Hermes credential pool):
 
 ```bash
-# Start a device flow; approve the user_code in Brave (signed into Google)
-hermes auth add aws-build
-
-# Show stored credential / logged-in state
+hermes auth add aws-build      # device flow; approve the user_code in a browser
 hermes auth status aws-build
-hermes auth list aws-build
-
-# Clear the stored credential (also wipes plugin mirror files)
-hermes auth logout aws-build
+hermes auth logout aws-build   # clears pool entry + mirror files
 ```
 
-`bid_status`,
-`bid_show_identity`, and `bid_logout` read and clear that same pool entry, so
-there is a single source of truth. Naming in docs and code uses "Amazon BID" /
-"Amazon Build ID" only.
-
-### Legacy plugin tools
-
-The plugin also exposes agent tools (`bid_login`, `bid_status`,
-`bid_show_identity`, `bid_logout`) for in-conversation use. `bid_status` reads
-the same pool credential as `hermes auth status aws-build`.
+The in-conversation tools (`bid_login`, `bid_status`, `bid_show_identity`,
+`bid_logout`) read and clear the same pool entry, so there is a single source of
+truth.
 
 ---
 
-## Runtime — backend
+## Tool use & local file/context access — important
 
-The bridge connects to Amazon Q with **no `q` CLI build required**. Default
-backend is `direct` (pure-HTTP via `q_direct.py`, Bearer Builder ID token):
+`ask_q` is **chat/reasoning only**. Amazon Q's `GenerateAssistantResponse` is a
+chat-completion stream that rejects a `tools` field, so the model **cannot
+execute Hermes tools** (write files, run commands) through this plugin — it will
+narrate an action rather than perform it.
 
-- `direct` (default) — no `amazon-q-developer-cli` binary; satisfies "AWS Build
-  connects to Q's server models without building q_cli". Chat-only: Q's API
-  rejects `tools`, so the model narrates instead of acting on files.
-- `subprocess` — shells out to the `q chat` CLI, which has native tool use
-  (`fs_read`/`fs_write`/`fs_exec`). This is what lets the aws model read,
-  write, and edit files. Requires the `q` binary on PATH.
-- `agentic` — **binary-free ReAct loop with Hermes as the executor.** The
-  bridge instructs Q (via the prompt) to emit a tool block, parses it, and
-  sends the call over a Unix socket to an executor owned by the **plugin
-  process**. That executor calls `ctx.dispatch_tool(...)` — Hermes's own
-  registered tools (`write_file`, `read_file`, `terminal`, …) running inside
-  the live Hermes session — and returns the result to Q. So Q reasons, Hermes
-  acts. The detached bridge is a client only; it cannot import Hermes
-  `model_tools` and does not execute tools. No Hermes-core change.
+Hermes remains the agent: use Hermes's own tools for file edits, commands, and
+context. Use `ask_q` when you want Claude-via-Q's reasoning/answers.
 
-  **How agentic mode is enabled (verified live):** it is NOT a plan/Pro gate.
-  Q's `GenerateAssistantResponse` enters agentic mode when the request carries
-  `currentMessage.userInputMessage.origin = "CLI"` **and** advertises the
-  executable tools via `userInputMessageContext.tools` (the exact
-  `toolSpecification`/`inputSchema`/`json` shape the `q chat` CLI sends,
-  confirmed against the open-source amazon-q-developer-cli serializer). Without
-  those two fields Q replies "agentic-coding OFF". With them, Q emits native
-  `<function_calls><invoke name=...>` blocks that the bridge parses and routes
-  to the Hermes executor.
+---
 
-  Verified transport: plugin `register(ctx)` starts the socket server and wires
-  `ctx` in as the executor; `ensure_bridge()` passes the socket path to the
-  detached bridge via `AMAZON_Q_TOOL_SOCKET`. The bridge refuses to run
-  agentic tools when that env var is unset.
+## Secrets
 
-  Caveat: agentic mode is enabled by `origin:"CLI"` + `tools` (verified
-  live — Q stops saying "agentic-coding OFF" and accepts the tool loop, and
-  `toolResults` is wired back so the loop continues). The executor path is
-  proven end-to-end (Q block → parse → socket → `ctx.dispatch_tool` → real
-  file written, via simulated native blocks + unit/HTTP tests). However, over
-  the bare streaming API Q's hosted model will not *emit* a tool block for an
-  injected instruction — it reads the directive as prompt-injection and replies
-  in chat or refuses. The `q chat` CLI satisfies this via its client agentic
-  context (history/system prompt). For guaranteed live tool use, run the
-  `subprocess` backend (requires the `q` binary), which drives the same loop
-  with full client context.
+These files hold live credentials and are **gitignored** (never commit them):
 
-> **Bottom line:** the `agentic` backend is the correct, tested, plugin-local
-> Hermes-as-executor transport (gated only by Q's model choosing to emit a
-> block over the bare API). For guaranteed live tool use, the `subprocess`
-> backend (`q` CLI) drives the same loop with full client context. The `direct`
-> backend is chat-only.
+- `.q_token.json`, `.bid_token.json`, `.bid_registration.json`, `.bid_flow.json`
+- `auth/oidc_client_secret.json`
 
-Runtime behavior is configured in `aws-build/config.yaml` (the **source of
-truth**), with environment variables as a higher-precedence override.
+To rotate: `bid_logout` (or `hermes auth logout aws-build`) and re-authenticate.
 
-**The bridge auto-starts when the plugin loads** (`ensure_bridge()` in
-`__init__.py`, called from `register()`). It reads `backend` from
-`config.yaml` (env `AMAZON_Q_BACKEND` wins) and spawns `amazon_q_bridge.py`
-detached on `127.0.0.1:8088`. No launchd plist / system daemon is required —
-the plugin is the sole owner of the bridge lifecycle. A launchd plist, if
-present, is redundant and can be removed (the plugin already starts the
-bridge with the correct backend from `config.yaml`).
+---
 
-```yaml
-backend: direct            # direct | subprocess  (env: AMAZON_Q_BACKEND)
-                           # direct  = pure-HTTP, no q CLI, chat-only (default)
-                           # subprocess = shells out to `q chat`, enables file/tool use
-default_model: claude-haiku-4.5   # env: AMAZON_Q_DEFAULT_MODEL
-extra_models:              # appended to /v1/models + validation (env: AMAZON_Q_EXTRA_MODELS, comma-sep)
-  []                        # only add models `q chat --model` accepts (see below)
-debug: false               # verbose /tmp/q_raw_<pid>.log dump (env: AMAZON_Q_DEBUG)
-```
-
-Env var → config key mapping (env always wins):
-
-| Env var | config.yaml key | Effect |
-|---------|----------------|--------|
-| `AMAZON_Q_BACKEND` | `backend` | `direct` or `subprocess` |
-| `AMAZON_Q_DEFAULT_MODEL` | `default_model` | model used when none/unknown sent |
-| `AMAZON_Q_EXTRA_MODELS` | `extra_models` | extra catalog entries (comma-sep) |
-| `AMAZON_Q_DEBUG` | `debug` | transcript dump |
-
-PyYAML is used when available; a minimal built-in parser handles this flat
-config if PyYAML is missing, so a missing dependency never crashes startup.
-A missing or broken `config.yaml` falls back to built-in defaults + env vars.
-
-Launch: `python3 amazon_q_bridge.py --host 127.0.0.1 --port 8088`
-(backend/model/catalog now come from `config.yaml`, not flags.)
-
-### Multi-turn context (chat history across turns)
-
-Two layers keep a conversation coherent across turns:
-
-1. **Prompt flattening (always on, OpenAI route).** The OpenAI-compatible
-   `/v1/chat/completions` handler (`amazon_q_bridge.py`) previously took only the
-   *last* user message as the prompt, discarding all prior turns — so the second
-   turn lost context. It now flattens the full request via
-   `_flatten_openai_messages()`: `system` plus every `user`/`assistant` turn,
-   joined with `role:` labels. This matches what the Anthropic
-   `/v1/anthropic/messages` route already did via `_extract_anthropic_prompt`.
-   Hermes sends the complete `messages` array on every turn, so nothing is lost
-   on the agent side.
-
-2. **Server-side conversation memory (optional, `direct` backend).** Q's
-   `GenerateAssistantResponse` returns a `conversationId` in its stream. The
-   bridge threads it through an `X-Hermes-Conversation-Id` HTTP header:
-
-   - The client may send `X-Hermes-Conversation-Id: <id>` on a request to link
-     the turn to an existing Q conversation (native multi-turn memory by Q, not
-     re-flattened history).
-   - The bridge returns the (possibly new) `conversationId` in the same response
-     header so the client can persist it and pass it back on the next turn.
-
-   Example end-to-end threading:
-
-   ```text
-   # Turn 1 — no inbound id; Q assigns one
-   POST /v1/chat/completions  (X-Hermes-Conversation-Id: absent)
-        -> 200, header X-Hermes-Conversation-Id: conv-srv-1
-
-   # Turn 2 — echo the id back; Q continues the same conversation
-   POST /v1/chat/completions  (X-Hermes-Conversation-Id: conv-srv-1)
-        -> 200, header X-Hermes-Conversation-Id: conv-srv-1
-   ```
-
-   **Observed behavior:** this account's Q responses did **not** emit a
-   `conversationId` in the stream, so the bridge returns no
-   `X-Hermes-Conversation-Id` header and Layer 2 stays inactive. That's fine —
-   Layer 1 (prompt flattening) carries multi-turn context on its own. Layer 2
-   only engages when the upstream Q account actually returns the id.
-
-   The `subprocess` backend has no native conversation threading, so it returns
-   `None` for the header (prompt flattening still carries history).
-
-### Model catalog & calibration
-
-The bridge serves an OpenAI-compatible `/v1/models` list and validates the
-`model` field on each `/v1/chat/completions` request. Calibration rules:
-
-- **Provider-prefix stripping.** Hermes may send `aws-build/claude-haiku-4.5`
-  (or any `provider/name` form). The bridge strips the prefix before matching,
-  so both `claude-haiku-4.5` and `aws-build/claude-haiku-4.5` resolve correctly.
-- **Aliases.** Short forms and dash/dot variants map to catalog entries:
-  `haiku`/`haiku45` → `claude-haiku-4.5`, `sonnet`/`sonnet45` → `claude-sonnet-4.5`,
-  `claude-sonnet-4-5` → `claude-sonnet-4.5`, etc. (No `claude-opus-*` aliases —
-  `q chat` rejects those models with "Model does not exist".)
-- **No hard 400 on unknown names.** A model that isn't in the catalog (typo,
-  brand-new Q variant) **falls back to `DEFAULT_MODEL`** (`claude-haiku-4.5`,
-  aligned with `~/.hermes/config.yaml` aws-build `default`) and logs a warning —
-  the turn still succeeds instead of erroring out. Valid catalog
-  (verified via `q chat --model`): `claude-haiku-4.5`, `claude-sonnet-4`,
-  `claude-sonnet-4.5`.
-  - **Runtime catalog extension.** Set `AMAZON_Q_EXTRA_MODELS` (comma-separated)
-  or the `extra_models` key in `config.yaml` to add models Q has shipped
-  without editing code — but only list names `q chat --model` actually accepts,
-  or the turn will 502 (q chat exits 1). Example:
-
-  ```bash
-  AMAZON_Q_EXTRA_MODELS="claude-sonnet-4" python3 amazon_q_bridge.py --host 127.0.0.1 --port 8088
-  ```
-  (preferred: add `extra_models: [claude-sonnet-4]` to `config.yaml`).
-
-  The `models` plugin tool (`bid_login` toolset) reports the same catalog via
-  `q_direct.list_models()`.
-
-### Tool use & file/context access — IMPORTANT
-
-AWS Build is **chat/reasoning only on the `direct` backend**. This is a hard
-constraint of Q's API, not a missing feature:
-
-- Q's `GenerateAssistantResponse` is a chat-completion stream. It **rejects a
-  `tools` field in the request** (`ValidationException` / `REQUEST_BODY_INVALID`),
-  and the `direct` bridge forwards only `messages` — it has no tool-execution
-  layer. So when Hermes sends a tool-enabled request, the tool spec is dropped,
-  Q cannot emit a `tool_call`, and the model **narrates the action instead of
-  executing it** (`tool_turns=0`, no file written).
-- Hermes's own tools (write_file, read_file, bash, delegation, skills) are NOT
-  reachable through the `direct` backend. Answers that depend on reading your
-  local files or running commands will be guesses — the model has no context.
-- Verified behavior: easy chat and format-following replies work; tool-driven
-  tasks (e.g. "create index.html") and context-aware answers about local code do
-  not execute through `direct`.
-
-**To get tool/context use through AWS Build**, switch to the `subprocess`
-backend, which calls `q chat` — that binary has native tool use (its stream
-emits `toolUse` events it executes locally):
+## Tests
 
 ```bash
-AMAZON_Q_BACKEND=subprocess python3 amazon_q_bridge.py --host 127.0.0.1 --port 8088
+python3 -m pytest tests/ -q
 ```
 
-Cost: requires the `amazon-q-developer-cli` binary (the thing `direct` exists
-to avoid). Choose `direct` for binary-free chat; choose `subprocess` when a task
-needs tools or local file/context access.
-
-### Agentic IPC — Hermes as the executor (no `q` binary)
-
-The `agentic` backend gives Q tool use **without** the `q` CLI by routing tool
-execution through Hermes itself:
-
-```
-Q model (reasoning)                Hermes plugin process (executor)
-──────────────────                 ───────────────────────────────
-  emits <tool> block  ──HTTP──▶  bridge (q_direct client loop)
-                                    │ parses <tool>
-                                    │ sends JSON over Unix socket
-                                    ▼
-                              hermes_tool_adapter server
-                                → ctx.dispatch_tool(name, args)
-                                → write_file / read_file / terminal
-                                    │ result JSON over socket
-                                    ▼
-                                  bridge feeds result back to Q
-```
-
-Ownership rules (verified):
-
-- The **plugin process** starts the Unix socket server in `register(ctx)` and
-  wires the live `ctx` in as the executor. Tool handlers therefore run inside
-  the live Hermes session with full tool context (approvals, sandbox checks,
-  cwd). This is why the bridge must NOT import `model_tools` or execute tools
-  itself — those calls fail outside the agent session.
-- The **detached bridge** is a client only. `ensure_bridge()` injects the
-  socket path via `AMAZON_Q_TOOL_SOCKET` into the bridge's environment. If that
-  var is unset, `run_agentic` refuses to run agentic tools instead of silently
-  falling back to an unsafe local executor.
-- Tool mapping: `fs_write → write_file`, `fs_read → read_file`,
-  `bash → terminal`. Paths are sandboxed to `agentic_root` (empty = isolated
-  temp dir) before dispatch.
-
-This keeps Hermes as the action endpoint and Q as the reasoner, with no change
-to Hermes core.
+Offline unit tests cover the event-stream parser, token expiry/refresh logic,
+sqlite/pool token loading, the static model catalog, and tool registration.
+`python3 verify.py` sanity-checks that all tools register and that no handler
+leaks a secret.

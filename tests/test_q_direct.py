@@ -6,7 +6,7 @@ Builder ID session:
     (verified live: assistantResponseEvent payload is {"content":...,"modelId":...}).
   * _token_expired — correct expiry detection for epoch and ISO timestamps.
   * _load_q_sqlite_token — key normalization (accessToken -> access_token).
-  * _sign_request — Bearer-only auth (no SigV4; verified via mitmproxy capture of q chat).
+  * _sign_request — Bearer-only auth (no SigV4; the OIDC access_token is the chat bearer).
 """
 
 import importlib.util
@@ -96,6 +96,14 @@ def test_extract_answer_empty_stream():
     assert q_direct._extract_answer(_FakeResp(["", "   "])) == "(no response)"
 
 
+def test_extract_answer_surfaces_error_envelope():
+    # A mid-stream error envelope (no content/modelId) must be surfaced as a
+    # "(Q error: <type>)" string instead of silently returning "(no response)".
+    payload = '{"__type":"ThrottlingException","message":"slow down"}'
+    out = q_direct._extract_answer(_FakeResp([payload]))
+    assert out == "(Q error: ThrottlingException)"
+
+
 def test_extract_answer_unbalanced_brace_in_content():
     # Regression: assistant text containing an unbalanced '}' must NOT be
     # dropped. The old brace-scanner mis-split the JSON and returned "(no response)".
@@ -163,3 +171,115 @@ def test_load_q_sqlite_token_normalizes_keys(tmp_path, monkeypatch):
     assert loaded is not None
     assert loaded["access_token"] == "abc"
     assert loaded["refresh_token"] == "rt"
+
+
+# --- conversation id / tool_use_id extraction (from the response stream) ---
+
+
+def test_extract_conversation_id_from_stream():
+    # A realistic assistantResponseEvent payload with conversationId.
+    payload = '{"content":"hi","modelId":"auto","conversationId":"conv-abc-123"}'
+    assert q_direct._extract_conversation_id(payload) == "conv-abc-123"
+
+
+def test_extract_conversation_id_absent_returns_none():
+    payload = '{"content":"hi","modelId":"auto"}'
+    assert q_direct._extract_conversation_id(payload) is None
+
+
+def test_chat_returns_tuple_with_conversation_id(monkeypatch):
+    class _FakeResp:
+        status_code = 200
+
+        def iter_content(self, chunk_size=1024):
+            # assistantResponseEvent with a conversationId; Q also emits it
+            yield b'{"content":"answer","modelId":"auto","conversationId":"conv-xyz"}'
+
+    monkeypatch.setattr(q_direct, "get_token", lambda: {"access_token": "tok"})
+    monkeypatch.setattr(q_direct.requests, "post", lambda *a, **k: _FakeResp())
+
+    answer, cid, tool_use_id = q_direct.chat("hi", model="claude-sonnet-4")
+    assert answer == "answer"
+    assert cid == "conv-xyz"
+    assert tool_use_id is None
+
+
+def test_chat_extracts_tool_use_id(monkeypatch):
+    """A toolUseEvent in the stream must surface its toolUseId."""
+    class _FakeResp:
+        status_code = 200
+
+        def iter_content(self, chunk_size=1024):
+            yield (b'{"content":"<function_calls><invoke name=\\"fs_write\\">'
+                   b'<parameter name=\\"path\\">a.txt</parameter>'
+                   b'<parameter name=\\"content\\">x</parameter></invoke>'
+                   b'</function_calls>","modelId":"auto","conversationId":"c1"}')
+            yield b'{"toolUseId":"tu-9","name":"fs_write","input":{"path":"a.txt","content":"x"}}'
+
+    monkeypatch.setattr(q_direct, "get_token", lambda: {"access_token": "tok"})
+    monkeypatch.setattr(q_direct.requests, "post", lambda *a, **k: _FakeResp())
+
+    answer, cid, tool_use_id = q_direct.chat("hi", model="claude-sonnet-4")
+    assert "fs_write" in answer
+    assert tool_use_id == "tu-9"
+
+
+def test_list_models_static_catalog():
+    models = q_direct.list_models()
+    assert "claude-sonnet-4" in models
+    assert "claude-haiku-4.5" in models
+    # Q's chat endpoint rejects claude-opus-*; the catalog must not advertise it.
+    assert not any("opus" in m for m in models)
+
+
+# --- token file path resolution (profile-safe + legacy fallback) --------------
+
+
+def test_token_file_prefers_hermes_home(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    canonical = tmp_path / "plugins" / "aws-build" / ".q_token.json"
+    canonical.parent.mkdir(parents=True)
+    canonical.write_text("{}")
+    assert q_direct._token_file() == canonical
+
+
+def test_token_file_falls_back_to_legacy(monkeypatch, tmp_path):
+    # HERMES_HOME canonical path absent -> fall back to the source-dir legacy
+    # file only if it exists; otherwise return the (non-existent) canonical.
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    legacy = Path(q_direct.__file__).resolve().parent / ".q_token.json"
+    resolved = q_direct._token_file()
+    if legacy.exists():
+        assert resolved == legacy
+    else:
+        assert resolved == tmp_path / "plugins" / "aws-build" / ".q_token.json"
+
+
+# --- get_token() ordering: credential pool (sso) is canonical, read first ---
+
+
+def test_get_token_prefers_pool_over_cache(monkeypatch):
+    future = 9_999_999_999
+    pool_tok = {"access_token": "POOL", "expires_at": future}
+    cache_tok = {"access_token": "CACHE", "expires_at": future}
+    monkeypatch.setattr(q_direct, "_load_sso_token", lambda: pool_tok)
+    monkeypatch.setattr(q_direct, "_load_token", lambda: cache_tok)
+    monkeypatch.setattr(q_direct, "_load_q_sqlite_token", lambda: None)
+    assert q_direct.get_token()["access_token"] == "POOL"
+
+
+def test_get_token_falls_back_to_cache_when_no_pool(monkeypatch):
+    future = 9_999_999_999
+    cache_tok = {"access_token": "CACHE", "expires_at": future}
+    monkeypatch.setattr(q_direct, "_load_sso_token", lambda: None)
+    monkeypatch.setattr(q_direct, "_load_token", lambda: cache_tok)
+    monkeypatch.setattr(q_direct, "_load_q_sqlite_token", lambda: None)
+    assert q_direct.get_token()["access_token"] == "CACHE"
+
+
+def test_get_token_raises_when_no_credentials(monkeypatch):
+    monkeypatch.setattr(q_direct, "_load_sso_token", lambda: None)
+    monkeypatch.setattr(q_direct, "_load_token", lambda: None)
+    monkeypatch.setattr(q_direct, "_load_q_sqlite_token", lambda: None)
+    with pytest.raises(RuntimeError):
+        q_direct.get_token()
