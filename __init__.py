@@ -1,133 +1,27 @@
 """AWS Build plugin — Amazon Q Developer for Hermes Agent (binary-free).
 
-Two capabilities, both pure-Python (no `amazon-q-developer-cli` build):
+Hermes drives the agentic loop. This plugin exposes Q as a single tool:
+`ask_q(prompt)` → calls q_direct.chat() and returns the answer.
 
-1. Amazon BID (Build ID) device login — headless SSO-OIDC so the agent can
-   start a login, report the user_code + verification URL, poll for the token
-   in the background, and report auth status / identity / logout. No AWS
-   credentials required on the client.
-
-2. Chat provider — AWS Build is exposed to Hermes as the `aws-build` custom
-   provider (config.yaml) -> the auto-started OpenAI-compatible bridge on
-   :8088 -> pure-Python `q_direct` (Bearer Builder ID token). All secrets live
-   under HERMES_HOME (chmod 600); tool handlers never return them.
+Auth tools (bid_login / bid_status / bid_show_identity / bid_logout) and
+model listing are also registered.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 from typing import Any
 
 try:
     from .auth import get_status, logout, show_identity, start_login
-    from .q_direct import list_models
+    from .q_direct import chat, list_models
 except ImportError:
-    # Allow loading as a flat module under pytest (conftest.py puts the
-    # plugin dir on sys.path without a package parent).
     from auth import get_status, logout, show_identity, start_login
-    from q_direct import list_models
+    from q_direct import chat, list_models
 
-# Model catalog sourced from the direct backend (q_direct.list_models), which
-# serves a static catalog matching config.yaml aws-build.models. No `q chat
-# --model help` subprocess probing needed.
 AVAILABLE_MODELS = list(list_models())
-
 logger = logging.getLogger(__name__)
-
-
-def _ensure_tool_server(ctx=None) -> str | None:
-    """Start the Hermes-owned tool IPC server in the plugin process.
-
-    If ``ctx`` (the Hermes PluginContext) is provided, it is wired in as the
-    executor so tool calls are dispatched through the live Hermes runtime.
-    """
-    try:
-        try:
-            from .hermes_tool_adapter import start_tool_server, set_executor
-        except ImportError:
-            from hermes_tool_adapter import start_tool_server, set_executor
-        path = start_tool_server()
-        if ctx is not None:
-            set_executor(lambda name, args: ctx.dispatch_tool(name, args))
-        return path
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("aws-build tool server not started: %s", exc)
-        return None
-
-
-def ensure_bridge(host: str = "127.0.0.1", port: int = 8088) -> None:
-    """Auto-start the OpenAI-compatible bridge if it isn't already listening.
-
-    Lets AWS Build work with no manual `python3 amazon_q_bridge.py` launch:
-    Hermes calls ``register()`` on plugin load, which spawns the bridge once
-    (it's a server — only start if the port is free).
-
-    The backend (direct | subprocess) is read from the plugin's ``config.yaml``
-    (the same source of truth the bridge uses), with the ``AMAZON_Q_BACKEND``
-    env var as a higher-precedence override. This keeps the bridge's behavior
-    owned by the repo-tracked config, not hardcoded here — so the launchd
-    plist (if any) is redundant and can be removed. No Hermes-core change.
-
-    Failures are non-fatal: if the bridge can't start, chat requests will fail
-    with a clear upstream error rather than crashing plugin registration.
-    """
-    import os
-    import socket
-    import subprocess
-    import sys
-
-    # Already listening? Leave it alone (don't double-spawn a server).
-    try:
-        with socket.create_connection((host, port), timeout=1):
-            logger.info("aws-build bridge already listening on %s:%s", host, port)
-            return
-    except OSError:
-        pass
-
-    here = os.path.dirname(os.path.abspath(__file__))
-    bridge = os.path.join(here, "amazon_q_bridge.py")
-    if not os.path.exists(bridge):
-        logger.warning("aws-build bridge not found at %s; skipping auto-start", bridge)
-        return
-
-    # Start the Hermes-owned executor before the detached bridge. The bridge
-    # must be a client only; it cannot import Hermes model_tools reliably.
-    tool_socket = _ensure_tool_server()
-
-    # Backend: env AMAZON_Q_BACKEND wins, else config.yaml `backend`, else direct.
-    backend = os.environ.get("AMAZON_Q_BACKEND")
-    if not backend:
-        try:
-            sys.path.insert(0, here)
-            from amazon_q_bridge import load_plugin_config, _config_str
-
-            backend = _config_str("backend", "direct")
-        except Exception:
-            backend = "direct"
-    backend = backend.lower()
-
-    try:
-        # Detached so it survives this process and isn't reaped on exit.
-        child_env = {**os.environ, "AMAZON_Q_BACKEND": backend}
-        if tool_socket:
-            child_env["AMAZON_Q_TOOL_SOCKET"] = tool_socket
-        subprocess.Popen(
-            [sys.executable, bridge, "--host", host, "--port", str(port)],
-            env=child_env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        logger.info(
-            "aws-build bridge auto-started on %s:%s (%s backend)",
-            host,
-            port,
-            backend,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("aws-build bridge auto-start failed: %s", exc)
 
 
 def _success(data: dict[str, Any]) -> str:
@@ -140,39 +34,52 @@ def _error(message: str, code: str = "error") -> str:
 
 def _check_available() -> bool:
     try:
-        import boto3  # noqa: F401
-
+        from .auth import get_status  # noqa: F401
         return True
-    except Exception:  # noqa: BLE001
-        return False
+    except ImportError:
+        try:
+            from auth import get_status  # noqa: F401
+            return True
+        except ImportError:
+            return False
+
+
+# --- tool handlers ---
+
+def _handle_ask_q(args: dict[str, Any], **kwargs: Any) -> str:
+    """Send a prompt to AWS Build (Q) and return the answer."""
+    prompt = args.get("prompt", "")
+    if not prompt:
+        return _error("prompt is required", code="missing_prompt")
+    model = args.get("model", "claude-sonnet-4")
+    conversation_id = args.get("conversation_id")
+    try:
+        answer, _cid, _tool_use_id = chat(prompt, model=model, conversation_id=conversation_id)
+        result: dict[str, Any] = {"answer": answer}
+        if _cid:
+            result["conversation_id"] = _cid
+        return _success(result)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("ask_q failed")
+        return _error(str(exc), code="chat_failed")
 
 
 def _handle_bid_login(args: dict[str, Any], **kwargs: Any) -> str:
-    """Start an Amazon BID (Build ID) device login.
-
-    Returns the user_code and verification URL for the human to approve in
-    their browser (e.g. Brave, already signed in to their Google account).
-    The plugin polls for the token in the background; check bid_status.
-    """
     try:
         info = start_login()
-        return _success(
-            {
-                "message": (
-                    "Open the verification URL in your browser and enter the "
-                    "user_code to approve. The agent polls in the background; "
-                    "call bid_status to check completion."
-                ),
-                **info,
-            }
-        )
+        return _success({
+            "message": (
+                "Open the verification URL in your browser and enter the "
+                "user_code to approve. Call bid_status to check completion."
+            ),
+            **info,
+        })
     except Exception as exc:  # noqa: BLE001
         logger.exception("bid_login failed")
         return _error(str(exc), code="login_failed")
 
 
 def _handle_bid_status(args: dict[str, Any], **kwargs: Any) -> str:
-    """Return the current Amazon BID auth / flow state."""
     try:
         return _success(get_status())
     except Exception as exc:  # noqa: BLE001
@@ -181,7 +88,6 @@ def _handle_bid_status(args: dict[str, Any], **kwargs: Any) -> str:
 
 
 def _handle_bid_show_identity(args: dict[str, Any], **kwargs: Any) -> str:
-    """Return Amazon BID token identity metadata (no raw token)."""
     try:
         return _success(show_identity())
     except Exception as exc:  # noqa: BLE001
@@ -190,7 +96,6 @@ def _handle_bid_show_identity(args: dict[str, Any], **kwargs: Any) -> str:
 
 
 def _handle_bid_logout(args: dict[str, Any], **kwargs: Any) -> str:
-    """Log out: stop polling and delete stored secrets."""
     try:
         logout()
         return _success({"message": "Logged out; secrets cleared."})
@@ -200,20 +105,49 @@ def _handle_bid_logout(args: dict[str, Any], **kwargs: Any) -> str:
 
 
 def _handle_bid_models(args: dict[str, Any], **kwargs: Any) -> str:
-    """List available AWS Build models."""
     return _success({"models": AVAILABLE_MODELS})
 
 
+# --- tool registry ---
+
 _TOOLS = (
+    (
+        "ask_q",
+        {
+            "name": "ask_q",
+            "description": (
+                "Send a prompt to AWS Build (Amazon Q / Claude) and return the answer. "
+                "Hermes drives the agentic loop; Q answers single prompts. "
+                "Optionally pass conversation_id to continue a prior Q conversation."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "The prompt to send to Q."},
+                    "model": {
+                        "type": "string",
+                        "description": "Model to use (default: claude-sonnet-4).",
+                        "enum": AVAILABLE_MODELS,
+                    },
+                    "conversation_id": {
+                        "type": "string",
+                        "description": "Optional Q conversation ID for multi-turn context.",
+                    },
+                },
+                "required": ["prompt"],
+            },
+        },
+        _handle_ask_q,
+        _check_available,
+        "🤖",
+    ),
     (
         "bid_login",
         {
             "name": "bid_login",
             "description": (
                 "Start an Amazon BID (Build ID) device login. Returns a "
-                "user_code and verification URL to approve in your browser "
-                "(Brave, already signed in to Google). Polling runs in the "
-                "background; use bid_status to check completion."
+                "user_code and verification URL to approve in your browser."
             ),
             "parameters": {"type": "object", "properties": {}},
         },
@@ -225,10 +159,7 @@ _TOOLS = (
         "bid_status",
         {
             "name": "bid_status",
-            "description": (
-                "Return current Amazon BID device-login / auth state: phase, "
-                "user_code, verification URL, authenticated flag, and expiry."
-            ),
+            "description": "Return current Amazon BID device-login / auth state.",
             "parameters": {"type": "object", "properties": {}},
         },
         _handle_bid_status,
@@ -239,10 +170,7 @@ _TOOLS = (
         "bid_show_identity",
         {
             "name": "bid_show_identity",
-            "description": (
-                "Return Amazon BID token identity metadata (type, scopes, "
-                "expiry, has_refresh_token) without exposing the raw token."
-            ),
+            "description": "Return Amazon BID token identity metadata (no raw token).",
             "parameters": {"type": "object", "properties": {}},
         },
         _handle_bid_show_identity,
@@ -275,14 +203,7 @@ _TOOLS = (
 
 
 def register(ctx) -> None:
-    """Register all build plugin tools (and auto-start the bridge)."""
-    # The plugin process owns Hermes tool execution. The detached bridge is
-    # only Q inference and connects to this server over Unix IPC. Wire the live
-    # Hermes PluginContext in as the executor so tool calls run in-process.
-    _ensure_tool_server(ctx=ctx)
-    # Auto-start the OpenAI-compatible bridge so AWS Build works without a
-    # manual launch — no Hermes-core fork, pure-Python direct backend.
-    ensure_bridge()
+    """Register all aws-build plugin tools."""
     for name, schema, handler, check_fn, emoji in _TOOLS:
         ctx.register_tool(
             name=name,

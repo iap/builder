@@ -1,43 +1,35 @@
-"""Direct Amazon Q Developer chat backend — no `amazon-q-developer-cli` binary.
+"""Direct AWS Build chat backend — no `amazon-q-developer-cli` binary.
 
-This replaces the `q chat` subprocess with pure-HTTP calls to Amazon Q's
-chat API, authenticated via an AWS Builder ID device-login (OAuth RFC 8628).
-It is the "no-build" path: Hermes can use Claude-via-Q without compiling the
-Rust CLI.
+Pure-HTTP calls to AWS Build's chat API, authenticated via an AWS Builder ID
+device-login (OAuth RFC 8628). Hermes drives the agentic loop and calls this as
+a plain reasoning tool (`ask_q`); there is no `q` CLI, no subprocess, and no
+local HTTP bridge — just `requests` to Q's HTTPS endpoint.
 
-Wire protocol reverse-engineered from the `amazon-q-developer-cli` source
-(file:line references in comments):
+Wire protocol (verified live against Amazon Q's endpoints):
 
   OIDC (device flow):  https://oidc.us-east-1.amazonaws.com
-    register_client  -> client_name="Amazon Q Developer for command line",
-                         client_type="public",
+    register_client  -> client_type="public",
                          scopes=codewhisperer:completions,analysis,conversations,
                          start_url=https://view.awsapps.com/start
-                         (chat-cli/src/auth/consts.rs, constants.rs)
     start_device_authorization, create_token (device grant)
   Chat:  POST https://q.us-east-1.amazonaws.com/
     Headers: Content-Type application/x-amz-json-1.0,
              x-amz-target AmazonCodeWhispererStreamingService.GenerateAssistantResponse,
              Authorization: Bearer <access_token>
-    Body:    {"conversationState": {"currentMessage": {...}, "chatTriggerType":"CHAT"},
-              "profileArn"?, "agentMode"?}
-    (operation/generate_assistant_response.rs:241 x-amz-target;
-     protocol_serde/shape_conversation_state.rs body shape)
-    SigV4 signed (bearer kept in Authorization; signature in X-Amz-*).
+    Body:    {"conversationState": {"currentMessage": {...},
+              "chatTriggerType": "MANUAL"}}
+    Auth is Bearer-only (no SigV4; verified via live capture).
 
-Token is persisted locally (not in git / not in ~/.hermes/.env) so the
-device-login survives across bridge restarts and is refreshable.
+Token is persisted locally (gitignored, under HERMES_HOME) so the device-login
+survives across restarts and is refreshable.
 """
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import os
 import re
 import time
-import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -79,6 +71,30 @@ def _load_oidc_secret() -> str:
     return ""
 
 
+def _token_file() -> Path:
+    """Return the profile-safe cache path for the direct-backend token.
+
+    Canonical location is ``HERMES_HOME/plugins/aws-build/.q_token.json`` so
+    each Hermes profile gets its own token (per AGENTS.md: never hardcode
+    ~/.hermes; use get_hermes_home()). Falls back to reading the legacy path
+    next to this source file if only that exists, so an existing session
+    isn't lost. Writes always target the canonical location.
+    """
+    legacy = Path(__file__).resolve().parent / ".q_token.json"
+    try:
+        from hermes_constants import get_hermes_home
+
+        canonical = Path(get_hermes_home()) / "plugins" / "aws-build" / ".q_token.json"
+    except Exception:  # noqa: BLE001 - plugin may load outside a Hermes runtime
+        return legacy
+    if canonical.exists():
+        return canonical
+    if legacy.exists():
+        return legacy
+    return canonical
+
+
+# Back-compat module attribute; prefer _token_file() which is profile-safe.
 TOKEN_FILE = Path(__file__).resolve().parent / ".q_token.json"
 
 
@@ -93,9 +109,10 @@ Q_SQLITE = Path.home() / "Library" / "Application Support" / "amazon-q" / "data.
 
 
 def _load_token() -> Optional[dict]:
-    if TOKEN_FILE.exists():
+    path = _token_file()
+    if path.exists():
         try:
-            return json.loads(TOKEN_FILE.read_text())
+            return json.loads(path.read_text())
         except Exception:
             return None
     return None
@@ -125,8 +142,17 @@ def _load_q_sqlite_token() -> Optional[dict]:
 
 
 def _save_token(tok: dict) -> None:
-    TOKEN_FILE.write_text(json.dumps(tok, indent=2))
-    os.chmod(TOKEN_FILE, 0o600)
+    # Always write to the canonical profile-safe location, even if a legacy
+    # file was the one read (so state migrates forward on the next refresh).
+    try:
+        from hermes_constants import get_hermes_home
+
+        path = Path(get_hermes_home()) / "plugins" / "aws-build" / ".q_token.json"
+    except Exception:  # noqa: BLE001
+        path = _token_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(tok, indent=2))
+    os.chmod(path, 0o600)
 
 
 def _token_expired(tok: dict, skew: int = 120) -> bool:
@@ -291,27 +317,28 @@ def _load_sso_token() -> Optional[dict]:
 def get_token() -> dict:
     """Return a valid token.
 
-    Order:
-      1. Our persisted token (TOKEN_FILE, from a successful device_login()), if still valid.
-      2. Q's existing authenticated session cached in its sqlite (reused so the
+    The Hermes credential pool (written by `bid_login` / `hermes auth add
+    aws-build`) is the canonical store, so it is consulted first — both auth
+    stacks agree on it as the source of truth. Order:
+      1. The plugin's BID login store (auth.sso_oidc: Hermes credential pool,
+         falling back to the .bid_token.json mirror), if still valid.
+      2. Our persisted cache (.q_token.json under HERMES_HOME), if still valid.
+      3. Q's existing authenticated session cached in its sqlite (reused so the
          direct backend works without the CLI binary for chat).
-      3. The plugin's BID login store (auth.sso_oidc: Hermes credential pool or
-         .bid_token.json), written by the `bid_login` tool — so that login
-         actually enables chat.
       4. If a stored token is present but expired, attempt a silent OIDC
          refresh_token exchange (no browser/interaction) before giving up.
       5. Otherwise raise with an actionable message.
     """
     candidates = []
+    sso_tok = _load_sso_token()
+    if sso_tok:
+        candidates.append(sso_tok)
     tok = _load_token()
     if tok:
         candidates.append(tok)
     q_tok = _load_q_sqlite_token()
     if q_tok:
         candidates.append(q_tok)
-    sso_tok = _load_sso_token()
-    if sso_tok:
-        candidates.append(sso_tok)
 
     for c in candidates:
         if c and not _token_expired(c):
@@ -330,11 +357,11 @@ def get_token() -> dict:
     )
 
 # --- request auth (Bearer only) ---
-# Verified live via mitmproxy capture of `q chat`: the CodeWhisperer
-# GenerateAssistantResponse call sends `Authorization: Bearer <OIDC accessToken>`
-# with x-amz-target + Content-Type, and NO SigV4 signed-headers. The OIDC
-# access_token from device_login() IS the chat bearer. (Earlier dual-auth
-# SigV4 attempt was wrong — Q rejected the extra X-Amz-* signed headers.)
+# Verified live: the CodeWhisperer GenerateAssistantResponse call sends
+# `Authorization: Bearer <OIDC accessToken>` with x-amz-target + Content-Type,
+# and NO SigV4 signed-headers. The OIDC access_token from device_login() IS the
+# chat bearer. (An earlier dual-auth SigV4 attempt was wrong — Q rejected the
+# extra X-Amz-* signed headers.)
 def _sign_request(method: str, url: str, bearer: str) -> dict:
     return {
         "Content-Type": "application/x-amz-json-1.0",
@@ -354,9 +381,9 @@ def chat(
 ) -> tuple[str, Optional[str], Optional[str]]:
     """Send `prompt` to Q's GenerateAssistantResponse and return (answer, conversation_id, tool_use_id).
 
-    `model` is accepted for API compatibility with the subprocess backend but is
-    not sent to Q's chat API (Q selects the model server-side); it is ignored
-    here to avoid sending an unknown field.
+    `model` is accepted for API compatibility but is not sent to Q's chat API
+    (Q selects the model server-side); it is ignored here to avoid sending an
+    unknown field.
 
     `conversation_id` (optional) links the turn to an existing Q conversation so
     multi-turn context is preserved server-side by Q rather than flattened into
@@ -364,27 +391,18 @@ def chat(
     via the `conversationId` field in the response stream; that id is extracted
     and returned so the caller can thread it through subsequent turns.
 
-    `tools` (optional) is a list of tool specifications the client can execute
-    (name/description/input_schema). Advertising tools + `origin: "CLI"` is what
-    flips Q's agentic mode ON — without it Q replies "agentic-coding OFF". This
-    is the field the `q chat` CLI sends; verified live.
-
-    `tool_results` (optional) carries the executed results of prior tool calls
-    back to Q so its agentic loop can continue. Each entry is
-    {"toolUseId": str, "content": [{"text": str}], "status": "SUCCESS"} — the
-    exact shape Q's `userInputMessageContext.toolResults` expects (verified
-    against the open-source amazon-q-developer-cli serializer). When present,
-    Q emits the next assistant turn (a final answer or another tool call)
-    instead of stalling on turn 1.
+    `tools` / `tool_results` (optional) exist for wire-protocol completeness.
+    Hermes drives the agentic loop and executes tools itself, so `ask_q` never
+    passes these — Q is used as a chat/reasoning endpoint only. They are kept so
+    the request-body shape stays faithful to Q's `userInputMessageContext`.
 
     `history` (optional) is a list of prior ChatMessage objects, used to give Q
     full conversational context across turns.
 
     NOTE: the OIDC access_token from device_login() is the chat bearer (verified
-    live via mitmproxy capture of `q chat` — no SigV4, no token-exchange). This
-    call reuses Q's existing authenticated session if present, or a fresh token
-    from device_login(). If no valid token is available, get_token() raises a
-    clear RuntimeError.
+    live — no SigV4, no token-exchange). This call reuses an existing
+    authenticated session if present, or a fresh token from device_login(). If
+    no valid token is available, get_token() raises a clear RuntimeError.
     """
     tok = get_token()
     access = tok.get("access_token") or tok.get("accessToken")
@@ -396,6 +414,8 @@ def chat(
         ctx["tools"] = tools
     if tool_results:
         ctx["toolResults"] = tool_results
+    # `origin` is a required wire-protocol string in Q's request body (not a
+    # reference to any local CLI); "CLI" is the value Q's API expects here.
     user_msg: dict = {"content": prompt, "origin": "CLI"}
     if ctx:
         user_msg["userInputMessageContext"] = ctx
@@ -485,42 +505,12 @@ def _match_brace(text: str, start: int) -> int:
 def _extract_answer(response: requests.Response) -> str:
     """Decode Q's AWS event-stream response and return the assistant text.
 
-    The streaming service returns binary-framed events (`:event-type`,
-    `:content-type`, `:message-type` headers, then a JSON payload), not
-    newline-delimited Coral JSON. Each `assistantResponseEvent` payload is
-    `{"content": "...", "modelId": "..."}` where the text may contain code with
-    unbalanced braces/brackets/quotes/backslashes.
-
-    We pull `content` from every payload that also carries `modelId` (so
-    non-assistant event types are ignored). The `content` value is matched as a
-    JSON string — escape-aware — so its own braces never mis-split the JSON.
+    Thin wrapper over `_extract_answer_with_conversation_id` (the canonical
+    parser) that discards the conversation/tool-use ids. Kept for the tests and
+    any caller that only needs the text.
     """
-    raw = b""
-    for chunk in response.iter_content(chunk_size=4096):
-        raw += chunk
-    text = raw.decode("utf-8", "replace")
-    parts: list[str] = []
-    for m in _CONTENT_RE.finditer(text):
-        # Bound the enclosing object so we can confirm it's an assistant event.
-        obj_start = text.rfind("{", 0, m.start())
-        if obj_start == -1:
-            continue
-        obj_end = _match_brace(text, obj_start)
-        if '"modelId"' not in text[obj_start : obj_end + 1]:
-            continue
-        try:
-            parts.append(json.loads(m.group(1)))
-        except Exception:
-            continue
-    text = "".join(parts).strip()
-    # Mid-stream auth/upstream error can arrive as a JSON error envelope after
-    # 200 headers (m3). Surface it instead of silently returning "(no response)".
-    if not text:
-        err = re.search(r'"__type"\s*:\s*"([^"]+)"', raw.decode("utf-8", "replace"))
-        if err:
-            return f"(Q error: {err.group(1)})"
-        return "(no response)"
-    return text
+    answer, _cid, _tool_use_id = _extract_answer_with_conversation_id(response)
+    return answer
 
 
 def _extract_conversation_id(text: str) -> Optional[str]:
@@ -598,13 +588,11 @@ def _extract_answer_with_conversation_id(response: requests.Response) -> tuple[s
     return answer, _extract_conversation_id(text), _extract_tool_use_id(text)
 
 
-# Static catalog — single source of truth (matches config.yaml aws-build.models).
-# `q chat --model help` used to provide this live, but that requires the `q`
-# binary (removed). The dedicated ListAvailableModels Smithy API exists
-# (chat-cli/src/api_client/mod.rs:277) but its X-Amz-Target prefix lives in the
-# aws-smithy runtime and is not derivable without the service model; live probes
-# of `AmazonCodeWhisperer(ListAvailableModels)` on the chat endpoint return 404.
-# So we keep the static list and treat any live fetch as a best-effort override.
+# Static catalog — single source of truth for the served model list.
+# A dedicated live ListAvailableModels Smithy API exists, but its X-Amz-Target
+# prefix lives in the aws-smithy runtime and is not derivable without the
+# service model (live probes return 404). So we keep this static list and treat
+# any future live fetch as a best-effort override.
 STATIC_MODELS = [
     "claude-haiku-4.5",
     "claude-sonnet-4",
@@ -615,12 +603,12 @@ STATIC_MODELS = [
 def list_models() -> list[str]:
     """Return available AWS Build models.
 
-    The catalog is the static STATIC_MODELS list (matches config.yaml
-    aws-build.models). A genuine live ListAvailableModels call is not wired
-    because its Smithy X-Amz-Target prefix lives in the aws-smithy runtime and
-    is not derivable without the service model (live probes 404). Returning the
-    static list directly also avoids requiring a live token at import time
-    (the plugin builds AVAILABLE_MODELS from this at load).
+    The catalog is the static STATIC_MODELS list. A genuine live
+    ListAvailableModels call is not wired because its Smithy X-Amz-Target prefix
+    lives in the aws-smithy runtime and is not derivable without the service
+    model (live probes 404). Returning the static list directly also avoids
+    requiring a live token at import time (the plugin builds AVAILABLE_MODELS
+    from this at load).
     """
     return list(STATIC_MODELS)
 
@@ -628,5 +616,5 @@ def list_models() -> list[str]:
 if __name__ == "__main__":
     import sys
     p = sys.argv[1] if len(sys.argv) > 1 else "reply with exactly: DIRECT_OK"
-    answer, _cid = chat(p)
+    answer, _cid, _tool_use_id = chat(p)
     print(answer)

@@ -4,6 +4,8 @@ description: "Self-contained Amazon Builder ID auth for Hermes Agent."
 author: iap
 kind: standalone
 provides_tools:
+  - name: ask_q
+    description: "Self-contained Amazon Builder ID auth for Hermes Agent."
   - name: bid_login
     description: "Self-contained Amazon Builder ID auth for Hermes Agent."
   - name: bid_status
