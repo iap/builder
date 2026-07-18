@@ -1,22 +1,23 @@
-# aws-build Plugin — Amazon Q / Claude for Hermes (binary-free)
+# aws-build Plugin — Amazon Q / Claude for Hermes (direct HTTPS chat)
 
 ## Overview
 
 The `aws-build` plugin lets the Hermes Agent talk to **Amazon Q Developer
-(Claude models)** over pure HTTPS — **no `amazon-q-developer-cli` (`q`) binary
-required**. Hermes drives the agentic loop; this plugin exposes Q as a single
-chat tool:
+(Claude models)** through a **direct HTTPS backend** — `q_direct.py` calls
+Amazon Q's `GenerateAssistantResponse` API straight over the wire, with no
+HTTP bridge and no subprocess. Hermes drives the agentic loop; this plugin
+exposes Q as a single chat tool:
 
 ```
 ask_q(prompt, model?, conversation_id?) -> answer
 ```
 
 It also provides Amazon Builder ID (BID) device-login auth tools so you can
-authenticate headlessly (RFC 8628 device flow), and a `models` tool that lists
-the available Claude variants.
+authenticate headlessly (RFC 8628 device flow), plus `models` and `tags` tools
+that describe the available Claude variants and the plugin itself.
 
-There is **no HTTP bridge and no subprocess/agentic backend** — the plugin
-calls Q's `GenerateAssistantResponse` API directly via `q_direct.py`.
+Authentication is **Bearer-only (no SigV4) and needs no AWS IAM credentials** —
+the device-flow access token is the chat bearer.
 
 ---
 
@@ -29,7 +30,8 @@ calls Q's `GenerateAssistantResponse` API directly via `q_direct.py`.
 | `bid_status` | Report current auth / device-login state (polls once if a flow is pending). Never returns the raw token. |
 | `bid_show_identity` | Return token identity metadata (type, scopes, expiry) — no raw token. |
 | `bid_logout` | Stop polling and delete all stored secrets (pool entry + legacy mirror files). |
-| `models` | List available AWS Build models (`q_direct.list_models()`). |
+| `models` | List available AWS Build models (`q_direct.list_models()`) and plugin tags. |
+| `tags` | List free-form tags describing the plugin (`q_direct.load_tags()`). |
 
 ---
 
@@ -46,8 +48,7 @@ __init__.py            registers tools via ctx.register_tool
 ### `q_direct.py` — chat backend
 
 Pure-HTTP calls to Amazon Q's chat API, authenticated with an AWS Builder ID
-OIDC access token (Bearer only — **no SigV4**, verified via live capture of the
-`q chat` CLI).
+OIDC access token (Bearer only — **no SigV4**, verified live).
 
 - **Endpoint:** `POST https://q.us-east-1.amazonaws.com/`
   with `x-amz-target: AmazonCodeWhispererStreamingService.GenerateAssistantResponse`.
@@ -63,13 +64,12 @@ OIDC access token (Bearer only — **no SigV4**, verified via live capture of th
 
 **Token resolution order** (`get_token()`):
 
-1. `.q_token.json` (this plugin's persisted token), if valid.
-2. Q's own sqlite session (`~/Library/Application Support/amazon-q/data.sqlite3`),
-   reused so chat works even if you authenticated via the `q` CLI.
-3. The Hermes credential pool / `.bid_token.json` written by `bid_login`.
-4. If a stored token is expired but has a refresh token, a silent OIDC
+1. The Hermes credential pool / `.bid_token.json` written by `bid_login`
+   (canonical store).
+2. `.q_token.json` (this plugin's persisted cache), if valid.
+3. If a stored token is expired but has a refresh token, a silent OIDC
    `refresh_token` exchange is attempted (no browser).
-5. Otherwise `RuntimeError` with an actionable message (run `bid_login`).
+4. Otherwise `RuntimeError` with an actionable message (run `bid_login`).
 
 ### `auth/sso_oidc.py` — headless device login
 
@@ -88,19 +88,27 @@ with an anonymous public client (unsigned — no AWS credentials needed):
 
 ## Model catalog
 
-The served catalog is the static list in `q_direct.STATIC_MODELS`
-(verified against what Amazon Q accepts):
+The served catalog is resolved by `q_direct.list_models()` (verified against
+what Amazon Q accepts):
 
-- `claude-haiku-4.5`
-- `claude-sonnet-4`
-- `claude-sonnet-4.5`
+1. An optional `models:` override in `plugin.yaml` (operator-editable — add or
+   remove variants without touching code).
+2. The built-in `q_direct.STATIC_MODELS` fallback:
+
+   - `claude-haiku-4.5`
+   - `claude-sonnet-4`
+   - `claude-sonnet-4.5`
 
 > `claude-opus-*` is **not** offered — Amazon Q rejects it ("Model does not
 > exist").
 
-`ask_q` defaults to `claude-sonnet-4`. An unknown `model` name is passed through
-to `q_direct.chat`, which accepts it for API compatibility (Q selects the model
-server-side).
+`ask_q` defaults to `claude-sonnet-4`. The `models` tool reads the catalog
+lazily, so an edit to `plugin.yaml` takes effect on the next call without
+restarting Hermes. An unknown `model` name is still passed through to
+`q_direct.chat` for API compatibility (Q selects the model server-side).
+
+Free-form **tags** are likewise read from `plugin.yaml` (`tags:`) with a
+`STATIC_TAGS` fallback, and exposed via the `tags` tool.
 
 ---
 
@@ -151,6 +159,6 @@ python3 -m pytest tests/ -q
 ```
 
 Offline unit tests cover the event-stream parser, token expiry/refresh logic,
-sqlite/pool token loading, the static model catalog, and tool registration.
-`python3 verify.py` sanity-checks that all tools register and that no handler
-leaks a secret.
+credential-pool / cache token loading, the dynamic model catalog, tag loading,
+and tool registration. `python3 verify.py` sanity-checks that all tools register
+and that no handler leaks a secret.

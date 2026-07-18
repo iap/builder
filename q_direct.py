@@ -1,9 +1,9 @@
-"""Direct AWS Build chat backend — no `amazon-q-developer-cli` binary.
+"""Direct AWS Build chat backend.
 
 Pure-HTTP calls to AWS Build's chat API, authenticated via an AWS Builder ID
 device-login (OAuth RFC 8628). Hermes drives the agentic loop and calls this as
-a plain reasoning tool (`ask_q`); there is no `q` CLI, no subprocess, and no
-local HTTP bridge — just `requests` to Q's HTTPS endpoint.
+a plain reasoning tool (`ask_q`); the plugin is a direct backend — just
+`requests` to Q's HTTPS endpoint, with no subprocess and no local HTTP bridge.
 
 Wire protocol (verified live against Amazon Q's endpoints):
 
@@ -18,7 +18,7 @@ Wire protocol (verified live against Amazon Q's endpoints):
              Authorization: Bearer <access_token>
     Body:    {"conversationState": {"currentMessage": {...},
               "chatTriggerType": "MANUAL"}}
-    Auth is Bearer-only (no SigV4; verified via live capture).
+    Auth is Bearer-only (no SigV4; verified live).
 
 Token is persisted locally (gitignored, under HERMES_HOME) so the device-login
 survives across restarts and is refreshable.
@@ -321,10 +321,10 @@ def get_token() -> dict:
             if refreshed:
                 return refreshed
     raise RuntimeError(
-        "No valid Amazon Q token available. AWS Build is binary-free: authenticate "
-        "via the `bid_login` plugin tool (or `hermes auth add aws-build`), which "
-        "performs the SigV4-free OIDC device flow and writes the token the chat "
-        "path reads. Then retry. A refresh is attempted automatically on expiry."
+        "No valid Amazon Q token available. Authenticate via the `bid_login` plugin "
+        "tool (or `hermes auth add aws-build`), which performs the OIDC device flow "
+        "and writes the token the chat path reads. Then retry. A refresh is attempted "
+        "automatically on expiry."
     )
 
 # --- request auth (Bearer only) ---
@@ -422,10 +422,10 @@ def chat(
                     if refreshed:
                         return chat(prompt, model=model, conversation_id=conversation_id)
             raise RuntimeError(
-                "Amazon Q rejected the bearer token (expired/revoked). AWS Build is "
-                "binary-free: re-authenticate via the `bid_login` plugin tool (or "
-                "`hermes auth add aws-build`) — it performs the SigV4-free OIDC "
-                "device flow. A refresh is attempted automatically on expiry."
+                "Amazon Q rejected the bearer token (expired/revoked). Re-authenticate "
+                "via the `bid_login` plugin tool (or `hermes auth add aws-build`) — it "
+                "performs the OIDC device flow. A refresh is attempted automatically "
+                "on expiry."
             )
         raise RuntimeError(f"Q chat HTTP {r.status_code}: {err}")
     return _extract_answer_with_conversation_id(r)
