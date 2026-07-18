@@ -1,10 +1,10 @@
-"""AWS Build plugin — Amazon Q Developer for Hermes Agent (binary-free).
+"""AWS Build plugin — Amazon Q Developer for Hermes Agent (direct HTTPS chat).
 
 Hermes drives the agentic loop. This plugin exposes Q as a single tool:
 `ask_q(prompt)` → calls q_direct.chat() and returns the answer.
 
 Auth tools (bid_login / bid_status / bid_show_identity / bid_logout) and
-model listing are also registered.
+model/tag listing are also registered.
 """
 
 from __future__ import annotations
