@@ -70,16 +70,15 @@ def test_mirror_path_prefers_canonical_aws_build(monkeypatch, tmp_path):
     assert sso_oidc._canonical_path(".bid_token.json") == canonical
 
 
-def test_mirror_path_falls_back_to_legacy_build(monkeypatch, tmp_path):
+def test_mirror_path_ignores_legacy_build_dir(monkeypatch, tmp_path):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    # Only the legacy (build) file exists -> read falls back to it, but writes
-    # still target the canonical aws-build path.
+    # A token left in the old plugins/build dir must NOT be picked up; the
+    # resolved path stays canonical (aws-build) so state lives in one place.
     legacy = tmp_path / "plugins" / "build" / ".bid_token.json"
     legacy.parent.mkdir(parents=True)
     legacy.write_text("{}")
-    assert sso_oidc._token_path() == legacy
-    assert sso_oidc._canonical_path(".bid_token.json") == (
+    assert sso_oidc._token_path() == (
         tmp_path / "plugins" / "aws-build" / ".bid_token.json"
     )

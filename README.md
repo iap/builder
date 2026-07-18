@@ -3,7 +3,7 @@
 ## Overview
 
 The `aws-build` plugin lets the Hermes Agent talk to **Amazon Q Developer
-(Claude models)** through a **direct HTTPS backend** — `q_direct.py` calls
+(Claude models)** through a **direct HTTPS backend** — `backend.py` calls
 Amazon Q's `GenerateAssistantResponse` API straight over the wire, with no
 HTTP bridge and no subprocess. Hermes drives the agentic loop; this plugin
 exposes Q as a single chat tool:
@@ -29,9 +29,9 @@ the device-flow access token is the chat bearer.
 | `bid_login` | Start an Amazon BID device login; returns a `user_code` + verification URL to approve in a browser. |
 | `bid_status` | Report current auth / device-login state (polls once if a flow is pending). Never returns the raw token. |
 | `bid_show_identity` | Return token identity metadata (type, scopes, expiry) — no raw token. |
-| `bid_logout` | Stop polling and delete all stored secrets (pool entry + legacy mirror files). |
-| `models` | List available AWS Build models (`q_direct.list_models()`) and plugin tags. |
-| `tags` | List free-form tags describing the plugin (`q_direct.load_tags()`). |
+| `bid_logout` | Stop polling and delete all stored secrets (pool entry + mirror files). |
+| `models` | List available AWS Build models (`backend.list_models()`) and plugin tags. |
+| `tags` | List free-form tags describing the plugin (`backend.load_tags()`). |
 
 ---
 
@@ -39,13 +39,13 @@ the device-flow access token is the chat bearer.
 
 ```
 __init__.py            registers tools via ctx.register_tool
-  ├── q_direct.py      direct HTTPS chat with Amazon Q (ask_q, models)
+  ├── backend.py       direct HTTPS chat with Amazon Q (ask_q, models)
   └── auth/
         ├── __init__.py    re-exports the public auth API
         └── sso_oidc.py    RFC 8628 device authorization (botocore, anonymous)
 ```
 
-### `q_direct.py` — chat backend
+### `backend.py` — chat backend
 
 Pure-HTTP calls to Amazon Q's chat API, authenticated with an AWS Builder ID
 OIDC access token (Bearer only — **no SigV4**, verified live).
@@ -55,7 +55,7 @@ OIDC access token (Bearer only — **no SigV4**, verified live).
 - **Request body:** `conversationState.currentMessage.userInputMessage`, with
   `chatTriggerType: "MANUAL"`.
 - **Response:** an AWS event-stream (binary-framed `assistantResponseEvent`
-  payloads: `{"content": ..., "modelId": ...}`). `q_direct` decodes these with
+  payloads: `{"content": ..., "modelId": ...}`). `backend` decodes these with
   an escape/brace-aware parser so code containing unbalanced braces/quotes in
   the answer is never mis-split.
 - **Multi-turn:** Q may return a `conversationId`; `chat()` surfaces it so the
@@ -81,19 +81,19 @@ with an anonymous public client (unsigned — no AWS credentials needed):
   polling; a daemon thread polls `create_token` in the background.
 - **Token refresh** via the stored refresh token.
 - **Canonical store:** the Hermes credential pool (`aws-build` provider) is the
-  source of truth; legacy `.bid_*` files are a mirror. Secrets are written
+  source of truth; the local `.bid_*` files are a mirror. Secrets are written
   chmod 600 and never returned by a tool handler.
 
 ---
 
 ## Model catalog
 
-The served catalog is resolved by `q_direct.list_models()` (verified against
+The served catalog is resolved by `backend.list_models()` (verified against
 what Amazon Q accepts):
 
 1. An optional `models:` override in `plugin.yaml` (operator-editable — add or
    remove variants without touching code).
-2. The built-in `q_direct.STATIC_MODELS` fallback:
+2. The built-in `backend.STATIC_MODELS` fallback:
 
    - `claude-haiku-4.5`
    - `claude-sonnet-4`
@@ -105,7 +105,7 @@ what Amazon Q accepts):
 `ask_q` defaults to `claude-sonnet-4`. The `models` tool reads the catalog
 lazily, so an edit to `plugin.yaml` takes effect on the next call without
 restarting Hermes. An unknown `model` name is still passed through to
-`q_direct.chat` for API compatibility (Q selects the model server-side).
+`backend.chat` for API compatibility (Q selects the model server-side).
 
 Free-form **tags** are likewise read from `plugin.yaml` (`tags:`) with a
 `STATIC_TAGS` fallback, and exposed via the `tags` tool.
