@@ -15,12 +15,11 @@ from typing import Any
 
 try:
     from .auth import get_status, logout, show_identity, start_login
-    from .q_direct import chat, list_models
+    from .q_direct import chat, list_models, load_tags
 except ImportError:
     from auth import get_status, logout, show_identity, start_login
-    from q_direct import chat, list_models
+    from q_direct import chat, list_models, load_tags
 
-AVAILABLE_MODELS = list(list_models())
 logger = logging.getLogger(__name__)
 
 
@@ -105,7 +104,11 @@ def _handle_bid_logout(args: dict[str, Any], **kwargs: Any) -> str:
 
 
 def _handle_bid_models(args: dict[str, Any], **kwargs: Any) -> str:
-    return _success({"models": AVAILABLE_MODELS})
+    return _success({"models": list_models(), "tags": load_tags()})
+
+
+def _handle_tags(args: dict[str, Any], **kwargs: Any) -> str:
+    return _success({"tags": load_tags()})
 
 
 # --- tool registry ---
@@ -127,7 +130,7 @@ _TOOLS = (
                     "model": {
                         "type": "string",
                         "description": "Model to use (default: claude-sonnet-4).",
-                        "enum": AVAILABLE_MODELS,
+                        "enum": list(list_models()),
                     },
                     "conversation_id": {
                         "type": "string",
@@ -192,12 +195,23 @@ _TOOLS = (
         "models",
         {
             "name": "models",
-            "description": "List available AWS Build models (Claude variants).",
+            "description": "List available AWS Build models (Claude variants) and plugin tags.",
             "parameters": {"type": "object", "properties": {}},
         },
         _handle_bid_models,
         lambda: True,
         "📋",
+    ),
+    (
+        "tags",
+        {
+            "name": "tags",
+            "description": "List free-form tags describing the AWS Build plugin (aws, amazon-q, claude, chat, builder-id, auth).",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        _handle_tags,
+        lambda: True,
+        "🏷️",
     ),
 )
 

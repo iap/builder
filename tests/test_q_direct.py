@@ -5,7 +5,6 @@ Builder ID session:
   * _extract_answer — decodes Q's AWS event-stream framing into assistant text
     (verified live: assistantResponseEvent payload is {"content":...,"modelId":...}).
   * _token_expired — correct expiry detection for epoch and ISO timestamps.
-  * _load_q_sqlite_token — key normalization (accessToken -> access_token).
   * _sign_request — Bearer-only auth (no SigV4; the OIDC access_token is the chat bearer).
 """
 
@@ -145,34 +144,6 @@ def test_token_expired_missing():
     assert q_direct._token_expired({}) is True
 
 
-def test_load_q_sqlite_token_normalizes_keys(tmp_path, monkeypatch):
-    # write a fake Q sqlite with the OIDC token row
-    import sqlite3
-
-    db = tmp_path / "data.sqlite3"
-    con = sqlite3.connect(str(db))
-    con.execute(
-        "CREATE TABLE auth_kv (key TEXT, value TEXT)"
-    )
-    tok = {
-        "accessToken": "abc",
-        "refreshToken": "rt",
-        "expires_at": "2999-01-01T00:00:00.000000Z",
-        "region": "us-east-1",
-    }
-    con.execute(
-        "INSERT INTO auth_kv VALUES (?, ?)",
-        ("codewhisperer:odic:token", json.dumps(tok)),
-    )
-    con.commit()
-    con.close()
-    monkeypatch.setattr(q_direct, "Q_SQLITE", db)
-    loaded = q_direct._load_q_sqlite_token()
-    assert loaded is not None
-    assert loaded["access_token"] == "abc"
-    assert loaded["refresh_token"] == "rt"
-
-
 # --- conversation id / tool_use_id extraction (from the response stream) ---
 
 
@@ -264,7 +235,6 @@ def test_get_token_prefers_pool_over_cache(monkeypatch):
     cache_tok = {"access_token": "CACHE", "expires_at": future}
     monkeypatch.setattr(q_direct, "_load_sso_token", lambda: pool_tok)
     monkeypatch.setattr(q_direct, "_load_token", lambda: cache_tok)
-    monkeypatch.setattr(q_direct, "_load_q_sqlite_token", lambda: None)
     assert q_direct.get_token()["access_token"] == "POOL"
 
 
@@ -273,13 +243,83 @@ def test_get_token_falls_back_to_cache_when_no_pool(monkeypatch):
     cache_tok = {"access_token": "CACHE", "expires_at": future}
     monkeypatch.setattr(q_direct, "_load_sso_token", lambda: None)
     monkeypatch.setattr(q_direct, "_load_token", lambda: cache_tok)
-    monkeypatch.setattr(q_direct, "_load_q_sqlite_token", lambda: None)
     assert q_direct.get_token()["access_token"] == "CACHE"
 
 
 def test_get_token_raises_when_no_credentials(monkeypatch):
     monkeypatch.setattr(q_direct, "_load_sso_token", lambda: None)
     monkeypatch.setattr(q_direct, "_load_token", lambda: None)
-    monkeypatch.setattr(q_direct, "_load_q_sqlite_token", lambda: None)
     with pytest.raises(RuntimeError):
         q_direct.get_token()
+
+
+def test_list_models_uses_static_fallback_when_no_override(monkeypatch):
+    monkeypatch.setattr(q_direct, "_MODEL_OVERRIDE", None)
+    monkeypatch.setattr(q_direct, "_load_model_override", lambda: None)
+    assert q_direct.list_models() == q_direct.STATIC_MODELS
+
+
+def test_list_models_uses_plugin_yaml_override(monkeypatch):
+    monkeypatch.setattr(q_direct, "_MODEL_OVERRIDE", None)
+    monkeypatch.setattr(
+        q_direct, "_load_model_override", lambda: ["custom-model-a", "custom-model-b"]
+    )
+    assert q_direct.list_models() == ["custom-model-a", "custom-model-b"]
+
+
+def test_list_models_caches_override(monkeypatch):
+    calls = {"n": 0}
+
+    def _fake_override():
+        calls["n"] += 1
+        return ["cached-model"]
+
+    monkeypatch.setattr(q_direct, "_MODEL_OVERRIDE", None)
+    monkeypatch.setattr(q_direct, "_load_model_override", _fake_override)
+    assert q_direct.list_models() == ["cached-model"]
+    assert q_direct.list_models() == ["cached-model"]
+    # override loader is only consulted once (cached)
+    assert calls["n"] == 1
+
+
+def test_list_models_empty_override_falls_back_to_static(monkeypatch):
+    monkeypatch.setattr(q_direct, "_MODEL_OVERRIDE", None)
+    monkeypatch.setattr(q_direct, "_load_model_override", lambda: [])
+    assert q_direct.list_models() == q_direct.STATIC_MODELS
+
+
+# --- load_tags(): plugin.yaml override, cached, static fallback ----
+
+
+def test_load_tags_uses_static_fallback_when_no_override(monkeypatch):
+    monkeypatch.setattr(q_direct, "_TAG_OVERRIDE", None)
+    monkeypatch.setattr(q_direct, "_load_tag_override", lambda: None)
+    assert q_direct.load_tags() == q_direct.STATIC_TAGS
+
+
+def test_load_tags_uses_plugin_yaml_override(monkeypatch):
+    monkeypatch.setattr(q_direct, "_TAG_OVERRIDE", None)
+    monkeypatch.setattr(
+        q_direct, "_load_tag_override", lambda: ["custom-tag-x", "custom-tag-y"]
+    )
+    assert q_direct.load_tags() == ["custom-tag-x", "custom-tag-y"]
+
+
+def test_load_tags_caches_override(monkeypatch):
+    calls = {"n": 0}
+
+    def _fake_override():
+        calls["n"] += 1
+        return ["cached-tag"]
+
+    monkeypatch.setattr(q_direct, "_TAG_OVERRIDE", None)
+    monkeypatch.setattr(q_direct, "_load_tag_override", _fake_override)
+    assert q_direct.load_tags() == ["cached-tag"]
+    assert q_direct.load_tags() == ["cached-tag"]
+    assert calls["n"] == 1
+
+
+def test_load_tags_empty_override_falls_back_to_static(monkeypatch):
+    monkeypatch.setattr(q_direct, "_TAG_OVERRIDE", None)
+    monkeypatch.setattr(q_direct, "_load_tag_override", lambda: [])
+    assert q_direct.load_tags() == q_direct.STATIC_TAGS
