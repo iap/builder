@@ -331,11 +331,21 @@ def get_status() -> dict:
 
     Never includes the raw token.
 
-    Reads the local `.bid_token.json` mirror (this plugin's sole token
-    store — it does not use the Hermes credential pool).
+    If the stored access token is expired but a refresh token exists, this
+    silently refreshes it *before* reporting (so the card / bid_status stay
+    "Authenticated" across the ~1h access-token boundary and only flip to
+    "expired" when the refresh token itself is dead). Reads the local
+    `.bid_token.json` mirror (this plugin's sole token store — it does not use
+    the Hermes credential pool).
     """
     mirror_tok = _load_token()
     tok = mirror_tok if (mirror_tok and mirror_tok.get("expires_at", 0) > time.time()) else None
+    refreshed = False
+    if not tok and mirror_tok and mirror_tok.get("refresh_token"):
+        # Expired access token but refreshable -> renew silently.
+        refreshed = refresh_token()
+        if refreshed:
+            tok = _load_token()
     authenticated = tok is not None
     if authenticated:
         return {
@@ -346,6 +356,7 @@ def get_status() -> dict:
             "expires_in": None,
             "interval": None,
             "error": None,
+            "refreshed": refreshed,
             "token_expires_at": tok.get("expires_at"),
             "token_expires_at_iso": datetime.fromtimestamp(
                 tok["expires_at"], tz=timezone.utc
@@ -386,6 +397,7 @@ def get_status() -> dict:
         "expires_in": flow.get("expires_in") if flow else None,
         "interval": flow.get("interval") if flow else None,
         "error": error,
+        "refreshed": False,
         "token_expires_at": None,
         "token_expires_at_iso": None,
         "scopes": None,
