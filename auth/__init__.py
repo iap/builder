@@ -11,7 +11,6 @@ from .sso_oidc import (  # noqa: F401
     show_identity,
     refresh_token,
     ensure_valid,
-    is_available,
 )
 
 __all__ = [
@@ -21,5 +20,4 @@ __all__ = [
     "show_identity",
     "refresh_token",
     "ensure_valid",
-    "is_available",
 ]
