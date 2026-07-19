@@ -1,0 +1,14 @@
+{
+  "name": "aws-build",
+  "label": "AWS Build",
+  "description": "Amazon Builder ID (Build ID) device login for the AWS Build plugin",
+  "icon": "KeyRound",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/aws-build",
+    "position": "after:env"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}
