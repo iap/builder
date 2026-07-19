@@ -177,7 +177,7 @@ def start(host: str = HOST, port: int = DEFAULT_PORT) -> tuple[ThreadingHTTPServ
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
     _server, _thread = srv, t
-    return srv, port
+    return srv, srv.server_address[1]  # return the ACTUAL bound port (port=0 -> OS picks)
 
 
 def stop() -> None:

@@ -496,3 +496,60 @@ def test_plugin_model_enum_matches_provider_block():
     enum = schema["parameters"]["properties"]["model"]["enum"]
     assert "auto" in enum, "ask_q model enum must include 'auto'"
     assert concrete <= set(enum), "ask_q enum must include all concrete variants"
+
+
+def test_adapter_end_to_end_openai_wire(monkeypatch):
+    """Robust usability test: prove aws-build actually ANSWERS through the
+    OpenAI /v1/chat/completions wire path core uses — not just that it's
+    listed. Monkeypatches backend.chat (no real Q token needed) so this is
+    deterministic and offline, but exercises the real adapter HTTP+SSE
+    translation that a '-m aws-build' chat turn hits."""
+    import json, urllib.request
+    import adapter as real_adapter
+
+    captured = {}
+    def fake_chat(prompt, model="auto", conversation_id=None):
+        captured["prompt"] = prompt
+        captured["model"] = model
+        return ("ADAPTER-OK", None, None)
+    monkeypatch.setattr(real_adapter.backend, "chat", fake_chat)
+
+    srv, port = real_adapter.start(host="127.0.0.1", port=0)
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/v1/chat/completions",
+            data=json.dumps({
+                "model": "claude-sonnet-4.5",
+                "messages": [
+                    {"role": "system", "content": "Be terse."},
+                    {"role": "user", "content": "ping"},
+                ],
+                "stream": True,
+            }).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            body = resp.read().decode()
+        assert resp.status == 200, f"adapter HTTP {resp.status}"
+        # SSE frames: at least one 'data: {...}' with content + a [DONE]
+        assert "data: [DONE]" in body, "stream must terminate with [DONE]"
+        assert "ADAPTER-OK" in body, "answer must round-trip through adapter"
+        # system prompt + user content must be flattened into the Q prompt
+        assert captured["prompt"] == "System: Be terse.\n\nping", captured
+        assert captured["model"] == "claude-sonnet-4.5"
+    finally:
+        real_adapter.stop()
+
+
+def test_adapter_healthz():
+    """Health endpoint used by orchestration to confirm the listener is up."""
+    import urllib.request
+    import adapter as real_adapter
+    srv, port = real_adapter.start(host="127.0.0.1", port=0)
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=5) as r:
+            assert r.status == 200
+            assert b"ok" in r.read()
+    finally:
+        real_adapter.stop()
