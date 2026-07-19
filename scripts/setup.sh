@@ -54,9 +54,6 @@ cat > "$BLOCK_FILE" <<EOF
       - auto
 EOF
 
-cp "$CONFIG" "$BACKUP"
-echo "✓ backed up config → $BACKUP"
-
 "$HOME/.hermes/hermes-agent/venv/bin/python3" - "$CONFIG" "$BLOCK_FILE" <<'PY'
 import sys
 cfg, blockfile = sys.argv[1], sys.argv[2]

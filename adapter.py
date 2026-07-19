@@ -189,10 +189,6 @@ def stop() -> None:
     _server, _thread = None, None
 
 
-def is_running() -> bool:
-    return _server is not None
-
-
 if __name__ == "__main__":
     srv, p = start()
     print(f"aws-build adapter listening on http://{HOST}:{p}/v1/chat/completions")
