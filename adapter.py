@@ -88,7 +88,13 @@ def _flatten_messages(messages: list[dict[str, Any]]) -> str:
 
 
 def _sse(payload: dict) -> bytes:
-    return (json.dumps(payload) + "\n").encode("utf-8")
+    # SSE / OpenAI streaming requires each event to be terminated by a BLANK
+    # line, i.e. "\n\n" — not a single "\n". With only one newline, Hermes's
+    # openai_chat parser reads two `data:` frames as a single chunk, strips the
+    # first `data: `, json.loads() the first object, then hits the next `data:`
+    # line and fails with "Extra data: line 2 column 1". The trailing [DONE]
+    # frame was already correct; the per-event frames were not.
+    return (json.dumps(payload) + "\n\n").encode("utf-8")
 
 
 def _handle_chat(body: dict[str, Any]) -> bytes:
