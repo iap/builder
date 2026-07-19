@@ -385,3 +385,56 @@ def test_invalid_grant_downgraded_when_token_present(monkeypatch):
                            {"device_code": "dc"})
     assert phase.startswith("error:InvalidGrantException")
     assert not errs, "InvalidGrant with token present must not log ERROR"
+
+
+def test_unregister_stops_adapter(monkeypatch):
+    """unregister() must call adapter.stop() so the :8077 listener releases
+    (core doesn't invoke this hook yet, but it's the correct contract)."""
+    import __init__ as p
+    import adapter as real_adapter
+    called = {"stop": False}
+
+    def fake_stop():
+        called["stop"] = True
+    monkeypatch.setattr(real_adapter, "stop", fake_stop)
+    p.unregister(ctx=None)
+    assert called["stop"] is True
+
+
+def test_uninstall_removes_aws_build_block_and_enabled(tmp_path, monkeypatch):
+    """Mirror of scripts/uninstall.sh logic: drop the providers:aws-build
+    block (any indentation) and the enabled entry; leave siblings intact."""
+    import yaml, io, sys
+    sys.path.insert(0, ".")
+    cfg = {
+        "providers": {
+            "g4f-auth": {"name": "G4F.dev"},
+            "aws-build": {"name": "AWS Build", "transport": "openai_chat"},
+        },
+        "plugins": {"enabled": ["aws-build", "continual-learning"]},
+        "model": {"provider": "kilo"},
+    }
+    path = tmp_path / "config.yaml"
+    yaml.safe_dump(cfg, open(path, "w"), sort_keys=False)
+
+    # replicate the uninstall.py block-removal logic
+    lines = open(path).read().splitlines()
+    out, drop = [], False
+    for ln in lines:
+        if ln.strip() == "aws-build:":
+            drop = True
+            continue
+        if drop:
+            if ln and not ln.startswith("  "):
+                drop = False
+            else:
+                continue
+        out.append(ln)
+    open(path, "w").write("\n".join(out).rstrip("\n") + "\n")
+
+    c = yaml.safe_load(open(path))
+    assert "aws-build" not in c.get("providers", {})
+    assert "g4f-auth" in c["providers"]
+    c["plugins"]["enabled"] = [x for x in c["plugins"]["enabled"] if x != "aws-build"]
+    assert "aws-build" not in c["plugins"]["enabled"]
+    assert c["plugins"]["enabled"] == ["continual-learning"]

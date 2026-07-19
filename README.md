@@ -61,6 +61,26 @@ dies with the Hermes session — there is no separate daemon to manage.
 After install you can pick **AWS Build** as a model in the TUI/CLI
 (`-m aws-build`) or keep using the `ask_q` tool directly.
 
+## Uninstall
+
+`hermes plugins uninstall aws-build` only deletes the plugin **directory** —
+Hermes core does NOT auto-remove the `providers: aws-build` config entry it
+added via `setup.sh`, so an uninstall otherwise leaves a dangling provider
+pointing at a dead `:8077` endpoint plus a stale `plugins.enabled` entry.
+
+Run the companion script first (it backs up `config.yaml`, is idempotent,
+and only touches aws-build's own entries):
+
+```bash
+~/.hermes/plugins/aws-build/scripts/uninstall.sh   # removes providers:aws-build + enabled entry
+hermes plugins uninstall aws-build                  # drops the plugin dir
+# restart Hermes
+```
+
+The `:8077` adapter listener stops when the session ends; if the plugin is
+unloaded it also calls `unregister()` → `adapter.stop()` for an immediate
+release. No `:8088` bridge, no orphaned refs.
+
 |--
 
 ## Architecture
