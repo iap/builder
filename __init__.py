@@ -256,3 +256,20 @@ def register(ctx) -> None:
         print(f"[aws-build] OpenAI adapter listening on :{actual} (model-provider mode)")
     except Exception as exc:  # noqa: BLE001
         logger.warning("aws-build adapter failed to start (tool-only mode OK): %s", exc)
+
+
+def unregister(ctx) -> None:
+    """Best-effort teardown: stop the local OpenAI adapter so the :8077
+    listener is released immediately (otherwise it lingers until process
+    exit). Hermes core does not currently invoke this hook, but defining
+    it is the correct plugin contract and makes reinstall/rebind clean.
+    """
+    try:
+        from . import adapter  # package import
+    except ImportError:  # __main__ / direct
+        import adapter  # type: ignore
+    try:
+        adapter.stop()
+        print("[aws-build] OpenAI adapter stopped (model-provider mode off)")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("aws-build adapter stop failed (ignore): %s", exc)
