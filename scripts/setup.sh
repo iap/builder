@@ -37,8 +37,8 @@ fi
 cp "$CONFIG" "$BACKUP"
 echo "✓ backed up config → $BACKUP"
 
-# Insert the block as a top-level providers: key (sibling of g4f-auth),
-# using Python (reliable indentation handling). Idempotent: only if absent.
+# Insert the block as a top-level providers: key, using Python
+# (reliable indentation handling). Idempotent: only if absent.
 # Write the block to a temp file (real newlines, not escaped).
 BLOCK_FILE="$(mktemp)"
 cat > "$BLOCK_FILE" <<EOF
