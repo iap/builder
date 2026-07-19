@@ -318,3 +318,83 @@ def test_load_tags_empty_override_falls_back_to_static(monkeypatch):
     monkeypatch.setattr(backend, "_TAG_OVERRIDE", None)
     monkeypatch.setattr(backend, "_load_tag_override", lambda: [])
     assert backend.load_tags() == backend.STATIC_TAGS
+
+
+# --- _refresh(): stamps a fresh expires_at from the OIDC response ---
+
+
+class _FakeRefreshResp:
+    status_code = 200
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+def test_refresh_stamps_expires_at_from_snake_case(monkeypatch):
+    """OIDC /token returns `expires_in` (snake_case). _refresh must stamp
+    expires_at from it, or the refreshed on-disk token keeps a STALE
+    expires_at and get_token() re-refreshes in a loop on the next call.
+    """
+    import time as _t
+
+    saved = {}
+
+    def _fake_post(url, **kw):
+        return _FakeRefreshResp(
+            {"access_token": "NEW", "refresh_token": "R", "expires_in": 3600}
+        )
+
+    monkeypatch.setattr(backend.requests, "post", _fake_post)
+    monkeypatch.setattr(backend, "_save_token", lambda tok: saved.update(tok))
+
+    expired = {"access_token": "OLD", "refresh_token": "R", "expires_at": 1}
+    out = backend._refresh(expired)
+    assert out["access_token"] == "NEW"
+    # Fresh: ~now + 3600, not the stale value 1.
+    assert out["expires_at"] > _t.time() + 3000
+    assert saved.get("expires_at") == out["expires_at"]
+
+
+def test_refresh_accepts_camel_case_expires_in(monkeypatch):
+    """botocore-style camelCase `expiresIn` is also accepted (parity)."""
+
+    def _fake_post(url, **kw):
+        return _FakeRefreshResp(
+            {"access_token": "NEW", "refresh_token": "R", "expiresIn": 1800}
+        )
+
+    monkeypatch.setattr(backend.requests, "post", _fake_post)
+    monkeypatch.setattr(backend, "_save_token", lambda tok: None)
+    out = backend._refresh({"refresh_token": "R", "expires_at": 1})
+    # Fresh, not stale.
+    assert out["expires_at"] > 1700
+
+
+# --- chat(): refresh-then-retry is bounded (no infinite recursion) ---
+
+
+def test_chat_bounded_refresh_retry(monkeypatch):
+    """A 401 that persists after a successful refresh must raise, not recurse
+    forever.
+    """
+
+    class _FailResp:
+        status_code = 401
+
+        @property
+        def text(self):
+            return '{"__type":"UnauthorizedException","message":"invalid"}'
+
+        def iter_content(self, chunk_size=1024):
+            return iter([])
+
+    monkeypatch.setattr(backend, "get_token", lambda: {"access_token": "tok"})
+    monkeypatch.setattr(backend.requests, "post", lambda *a, **k: _FailResp())
+    # Refresh "succeeds" but the next 401 still happens -> bounded retry.
+    monkeypatch.setattr(backend, "_refresh", lambda tok: dict(tok, access_token="X"))
+
+    with pytest.raises(RuntimeError):
+        backend.chat("hi", model="claude-sonnet-4")
