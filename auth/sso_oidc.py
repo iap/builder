@@ -108,26 +108,21 @@ def _home() -> Path:
 _PLUGIN_DIR_NAME = "aws-build"
 
 
-def _mirror_path(filename: str) -> Path:
-    """Return the read path for a mirror file (always the canonical location)."""
-    return _canonical_path(filename)
-
-
 def _canonical_path(filename: str) -> Path:
     """Return the canonical mirror path (always `plugins/aws-build/`)."""
     return _home() / "plugins" / _PLUGIN_DIR_NAME / filename
 
 
 def _reg_path() -> Path:
-    return _mirror_path(".bid_registration.json")
+    return _canonical_path(".bid_registration.json")
 
 
 def _token_path() -> Path:
-    return _mirror_path(".bid_token.json")
+    return _canonical_path(".bid_token.json")
 
 
 def _flow_path() -> Path:
-    return _mirror_path(".bid_flow.json")
+    return _canonical_path(".bid_flow.json")
 
 
 def _write_secret(path: Path, data: dict) -> None:
@@ -136,7 +131,6 @@ def _write_secret(path: Path, data: dict) -> None:
     tmp.write_text(json.dumps(data))
     os.chmod(tmp, 0o600)
     tmp.replace(path)
-    os.chmod(path, 0o600)
 
 
 def _read_secret(path: Path) -> Optional[dict]:
@@ -251,6 +245,14 @@ def _poll_once(reg: dict, flow: dict) -> str:
             deviceCode=flow["device_code"],
         )
         _save_token(out, reg)
+        # Mirror into the canonical credential pool too, so a fresh device
+        # login is visible to get_status()/show_identity() (which read the
+        # pool first). Without this the token only landed in .bid_token.json
+        # and the pool stayed empty/stale after a re-auth.
+        try:
+            _save_pool_token(out, reg)
+        except Exception:  # noqa: BLE001
+            pass
         try:
             _flow_path().unlink()
         except OSError:  # noqa: BLE001
@@ -414,9 +416,10 @@ def refresh_token() -> bool:
 def ensure_valid() -> bool:
     """Refresh the token in place if expired and a refresh token exists.
 
-    Reads the canonical Hermes credential pool first (falling back to the
-    .bid_token.json mirror) so a token that lives only in the pool is still
-    considered valid instead of triggering a needless refresh.
+    Reads the credential pool and the `.bid_token.json` mirror and
+    refreshes the newest valid token when expired, so a token that lives
+    only in one store is still considered instead of triggering a needless
+    device re-login.
     """
     tok = _load_pool_token() or _load_token()
     if not tok:
@@ -430,11 +433,19 @@ def get_status() -> dict:
     """Return current auth/flow state. Actively polls if a flow is pending.
 
     Never includes the raw token.
+
+    Reads both the credential pool and the `.bid_token.json` mirror and
+    reports the *newest* valid token (by ``expires_at``), so a fresh
+    ``bid_login`` is not shadowed by a still-valid but stale pool entry from
+    an earlier account — consistent with ``backend.get_token()``.
     """
-    tok = _load_pool_token()
-    if not tok or tok.get("expires_at", 0) <= time.time():
-        tok = _load_token()
-    authenticated = bool(tok) and tok.get("expires_at", 0) > time.time()
+    pool_tok = _load_pool_token()
+    mirror_tok = _load_token()
+    candidates = [t for t in (pool_tok, mirror_tok) if t]
+    valid = [t for t in candidates if t.get("expires_at", 0) > time.time()]
+    valid.sort(key=lambda t: t.get("expires_at", 0), reverse=True)
+    tok = valid[0] if valid else None
+    authenticated = tok is not None
     if authenticated:
         return {
             "authenticated": True,
