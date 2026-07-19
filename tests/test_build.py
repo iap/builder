@@ -12,6 +12,84 @@ from unittest import mock
 
 import pytest
 
+
+# --- adapter (OpenAI-compatible front-end) ---
+
+def test_adapter_translates_openai_request_to_q(monkeypatch):
+    """The adapter must accept an OpenAI-shape /v1/chat/completions request,
+    flatten `messages` into one prompt, and call backend.chat() exactly once
+    with that prompt + the requested model. This is the contract that lets
+    Hermes treat aws-build as a selectable chat model (Way A) without the
+    old standalone :8088 bridge."""
+    import adapter
+    from importlib import import_module
+
+    backend = import_module("backend")
+
+    calls = {}
+
+    def fake_chat(prompt, model="auto", conversation_id=None, **kw):
+        calls["prompt"] = prompt
+        calls["model"] = model
+        return ("Hello from Q", None, None)
+
+    monkeypatch.setattr(backend, "chat", fake_chat)
+    monkeypatch.setattr(adapter, "backend", backend)
+
+    body = {
+        "model": "claude-sonnet-4.5",
+        "messages": [
+            {"role": "system", "content": "Be terse."},
+            {"role": "user", "content": "First"},
+            {"role": "assistant", "content": "Reply"},
+            {"role": "user", "content": "Now answer this."},
+        ],
+        "stream": True,
+    }
+    out = adapter._handle_chat(body)
+    text = out.decode("utf-8")
+    assert "Hello from Q" in text
+    assert "data: [DONE]" in text
+    # flattened: system prepended, last user turn is the actual ask
+    assert calls["prompt"].startswith("System: Be terse.")
+    assert calls["prompt"].endswith("Now answer this.")
+    assert calls["model"] == "claude-sonnet-4.5"
+
+
+def test_adapter_sse_shape(monkeypatch):
+    """Output frames must be OpenAI SSE: a role frame, a content frame,
+    then [DONE] — so Hermes's openai_chat transport can parse it."""
+    import adapter
+    from importlib import import_module
+
+    backend = import_module("backend")
+    monkeypatch.setattr(backend, "chat", lambda *a, **k: ("x", None, None))
+    monkeypatch.setattr(adapter, "backend", backend)
+
+    out = adapter._handle_chat({"messages": [{"role": "user", "content": "hi"}]})
+    frames = [l for l in out.decode().splitlines() if l.startswith("data:")]
+    assert len(frames) == 3
+    assert "assistant" in frames[0]
+    assert '"content": "x"' in frames[1]
+    assert frames[2] == "data: [DONE]"
+
+
+def test_adapter_surfaces_chat_errors_as_sse(monkeypatch):
+    """When backend.chat() raises (e.g. token missing), the adapter must
+    return an OpenAI-style error frame, not crash the HTTP handler."""
+    import adapter
+    from importlib import import_module
+
+    backend = import_module("backend")
+    monkeypatch.setattr(backend, "chat", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("No valid Amazon Q token available")))
+    monkeypatch.setattr(adapter, "backend", backend)
+
+    out = adapter._handle_chat({"messages": [{"role": "user", "content": "hi"}]})
+    assert "No valid Amazon Q token available" in out.decode()
+    assert "data: [DONE]" in out.decode()
+
+import pytest
+
 from conftest import load_plugin
 
 
