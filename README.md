@@ -114,18 +114,27 @@ Free-form **tags** are likewise read from `plugin.yaml` (`tags:`) with a
 
 ## Usage — authentication
 
-Recommended path is the `hermes auth` CLI (stores the credential in the
-canonical Hermes credential pool):
+The in-conversation tools (`bid_login`, `bid_status`, `bid_show_identity`,
+`bid_logout`) are the supported, working auth path. `bid_login` runs the
+self-contained OIDC device flow (RFC 8628) and writes the token to this
+plugin's own credential pool under provider `aws-build` — exactly what
+`ask_q` reads back. Use these for day-to-day auth:
 
 ```bash
-hermes auth add aws-build      # device flow; approve the user_code in a browser
-hermes auth status aws-build
-hermes auth logout aws-build   # clears pool entry + mirror files
+# inside a Hermes session (or via the aws-build toolset)
+bid_login      # device flow; approve the user_code in your browser
+bid_status     # report current auth / device-login state
+bid_logout     # stop polling and delete all stored secrets
 ```
 
-The in-conversation tools (`bid_login`, `bid_status`, `bid_show_identity`,
-`bid_logout`) read and clear the same pool entry, so there is a single source of
-truth.
+> **`hermes auth` CLI status (verified 2026-07-19):** the core CLI's
+> device-flow provider id is `aws-bid`, not `aws-build`, and it is **not yet
+> wired to this plugin's token store**. `hermes auth add aws-build` currently
+> just creates a generic `custom:aws-build` API-key slot that `ask_q` ignores,
+> and `hermes auth status aws-bid` fails on an import-slug mismatch
+> (`hermes_plugins.build` vs the installed `aws-build` slug). Until that
+> integration is fixed in Hermes core, **use the in-conversation `bid_*` tools
+> above** — they are self-contained and correct.
 
 ---
 
