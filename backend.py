@@ -262,7 +262,7 @@ def _sign_request(method: str, url: str, bearer: str) -> dict:
 # --- chat ----
 def chat(
     prompt: str,
-    model: str = "claude-sonnet-4",
+    model: str = "auto",
     conversation_id: Optional[str] = None,
     tools: Optional[list] = None,
     tool_results: Optional[list] = None,
@@ -271,9 +271,10 @@ def chat(
 ) -> tuple[str, Optional[str], Optional[str]]:
     """Send `prompt` to Q's GenerateAssistantResponse and return (answer, conversation_id, tool_use_id).
 
-    `model` is accepted for API compatibility but is not sent to Q's chat API
-    (Q selects the model server-side); it is ignored here to avoid sending an
-    unknown field.
+    `model` is sent to Q as `modelId` in the request body (verified live: Q
+    accepts and echoes it, e.g. "claude-sonnet-4.5"). When `model` is omitted or
+    empty, `modelId` defaults to "auto" so a Free-tier Builder ID always gets a
+    usable response instead of an entitlement error.
 
     `conversation_id` (optional) links the turn to an existing Q conversation so
     multi-turn context is preserved server-side by Q rather than flattened into
@@ -310,6 +311,11 @@ def chat(
     user_msg: dict = {"content": prompt, "origin": "CLI"}
     if ctx:
         user_msg["userInputMessageContext"] = ctx
+    # Send the model to Q as `modelId` (verified live: Q accepts and echoes it).
+    # Default to "auto" so a Free-tier Builder ID always gets a usable model
+    # rather than an entitlement error on a pinned Pro-only name.
+    model_id = model or "auto"
+    user_msg["modelId"] = model_id
     body = {
         "conversationState": {
             "currentMessage": {"userInputMessage": user_msg},
@@ -331,7 +337,18 @@ def chat(
         stream=True,
     )
     if r.status_code != 200:
-        err = r.text[:300]
+        err = r.text[:600]
+        err_low = err.lower()
+        # Entitlement / subscription failures: Q returns a non-200 with an
+        # AccessDenied / subscription-style body. Surface it clearly and point
+        # at activation — do NOT treat it as a token problem (no refresh here).
+        if any(k in err_low for k in ("subscri", "accessdenied", "not.*entitled", "not activat", "free tier", "q developer")):
+            raise RuntimeError(
+                "Amazon Q rejected the chat request due to entitlement/subscription. "
+                "This Builder ID may not have Amazon Q Developer activated. Activate it "
+                "(one-time, free) at console.aws.amazon.com/amazonq using 'Sign in with "
+                "Builder ID', or retry with model='auto'. Underlying error: " + err[:300]
+            )
         # Auth failure (expired/revoked bearer). Attempt a silent refresh and
         # ONE retry before giving up — don't nuke a possibly-valid token on a
         # generic 400, and don't require user interaction. (m1/m3)
