@@ -134,10 +134,27 @@ Do **not** use `hermes auth add/status/logout aws-build` for this plugin:
 that CLI path is unrelated to this plugin's token store and will not affect
 `ask_q`. The `bid_*` tools above are the only supported auth interface.
 
+---
+
+## Dashboard card
+
+The plugin ships a dashboard card (`dashboard/`) reachable at the **AWS Build**
+tab in the Hermes dashboard (after `env`). It is a thin web UI over the same
+`bid_*` tools:
+
+- **Login with Build ID** — starts the RFC 8628 device flow; opens the
+  verification URL in a new browser tab and shows the `user_code` to enter.
+  The card polls `GET /status` (which actively polls the in-flight flow) and
+  flips to *Authenticated* the moment you approve in your browser.
+- **Logout** — stops polling and deletes the local `~/.bid_*` mirror files.
+
+The card's backend (`dashboard/plugin_api.py`) reuses the plugin's own
+`auth/sso_oidc` module, so the dashboard and the in-conversation `bid_*` tools
+share one auth state. No Hermes credential pool is involved.
+
 ### Naming — three identifiers, one plugin
 
 These names look similar but live in different layers. Mixing them up is what
-broke the earlier `hermes auth` integration, so they are spelled out here:
 
 | Identifier | Where | Meaning |
 |------------|-------|---------|
