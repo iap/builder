@@ -50,7 +50,7 @@ def _handle_ask_q(args: dict[str, Any], **kwargs: Any) -> str:
     prompt = args.get("prompt", "")
     if not prompt:
         return _error("prompt is required", code="missing_prompt")
-    model = args.get("model", "claude-sonnet-4")
+    model = args.get("model", "auto")
     conversation_id = args.get("conversation_id")
     try:
         answer, _cid, _tool_use_id = chat(prompt, model=model, conversation_id=conversation_id)
@@ -133,8 +133,8 @@ _TOOLS = (
                     "prompt": {"type": "string", "description": "The prompt to send to Q."},
                     "model": {
                         "type": "string",
-                        "description": "Model to use (default: claude-sonnet-4).",
-                        "enum": list(list_models()),
+                        "description": "Model to use; sent to Q as modelId. Defaults to 'auto' (Q picks). Named Claude variants are advertised but the account's entitlement decides which are usable.",
+                        "enum": ["auto", *list_models()],
                     },
                     "conversation_id": {
                         "type": "string",
