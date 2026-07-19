@@ -131,13 +131,32 @@ def _refresh(tok: dict) -> Optional[dict]:
     refresh = tok.get("refresh_token") or tok.get("refreshToken")
     if not refresh:
         return None
+    # The OIDC client_id/secret are NOT carried on the token itself — they live
+    # in the device-flow registration (.bid_registration.json). The canonical
+    # pool token and the .bid_token.json mirror both omit them. If we only sent
+    # what the token dict carries, the refresh request would use an empty
+    # clientId and AWS would reject it, forcing a full device re-login on every
+    # expiry even though a valid refresh_token exists. Fall back to the
+    # registration when the token lacks credentials.
+    client_id = tok.get("client_id") or tok.get("clientId")
+    client_secret = tok.get("client_secret") or tok.get("clientSecret")
+    if not (client_id and client_secret):
+        try:
+            from auth import sso_oidc
+
+            reg = sso_oidc._load_registration()
+            if reg:
+                client_id = client_id or reg.get("client_id")
+                client_secret = client_secret or reg.get("client_secret")
+        except Exception:  # noqa: BLE001 - no registration => empty creds, AWS rejects
+            pass
     r = requests.post(
         f"{OIDC_URL}/token",
         headers={"Content-Type": "application/json"},
         json={
             "grantType": REFRESH_GRANT,
-            "clientId": tok.get("client_id") or tok.get("clientId", ""),
-            "clientSecret": tok.get("client_secret") or tok.get("clientSecret", ""),
+            "clientId": client_id or "",
+            "clientSecret": client_secret or "",
             "refreshToken": refresh,
         },
         timeout=30,
