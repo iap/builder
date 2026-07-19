@@ -68,6 +68,11 @@ def _handle_bid_login(args: dict[str, Any], **kwargs: Any) -> str:
         # Drop any stale .q_token.json so the new login is the sole token store.
         invalidate_q_token()
         info = start_login()
+        if info.get("already_authenticated"):
+            return _success({
+                "message": "Already authenticated with Amazon Q. No new login needed.",
+                **info,
+            })
         return _success({
             "message": (
                 "Open the verification URL in your browser and enter the "

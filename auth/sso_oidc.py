@@ -211,6 +211,18 @@ def _poll_once(reg: dict, flow: dict) -> str:
             return "pending"
         if code == "SlowDownException":
             return "slow_down"
+        # InvalidGrantException is expected when a device code was already
+        # consumed/expired or a duplicate flow collided (e.g. the dashboard
+        # login button re-triggers the same device flow that already
+        # completed). If a valid token already exists on disk, this is a
+        # benign race, not a real failure — log it at debug and stop, so it
+        # is not surfaced to the user as an auth error.
+        if code == "InvalidGrantException":
+            if _load_token():
+                logger.debug("stale device poll after grant (token present): %s", code)
+            else:
+                logger.error("device token poll failed: %s", code)
+            return "error:" + code
         logger.error("device token poll failed: %s", code)
         return "error:" + code
     except (EndpointConnectionError, ConnectionError) as e:
@@ -261,7 +273,15 @@ def _start_poll_thread(reg: dict, flow: dict) -> None:
 
 # --- Public API ---
 def start_login() -> dict:
-    """Start the device flow. Returns the user_code + verification URL only."""
+    """Start the device flow. Returns the user_code + verification URL only.
+
+    If a valid token already exists, do NOT start a new device flow — that
+    would spawn a doomed duplicate whose stale code makes AWS return
+    ``InvalidGrantException`` (surfaced as a login error in the dashboard).
+    Return an already-authenticated marker instead.
+    """
+    if _load_token():
+        return {"already_authenticated": True, "phase": "authenticated"}
     reg = _register()
     c = _client()
     da = c.start_device_authorization(

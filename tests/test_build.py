@@ -338,3 +338,50 @@ def test_get_token_refresh_persists_to_origin_store(monkeypatch, tmp_path):
     assert sso_file.exists()
     assert "expires_at" in json.loads(sso_file.read_text())
     assert not q_file.exists(), "get_token() must not write .q_token.json for an sso-origin token"
+
+def test_start_login_short_circuits_when_token_present(monkeypatch):
+    """Clicking login (e.g. the dashboard button) while already authed must
+    NOT spawn a doomed duplicate device flow — that's what made AWS return
+    InvalidGrantException and surface a fake login error. It should return
+    already_authenticated instead."""
+    import auth.sso_oidc as sso
+    from unittest import mock
+
+    monkeypatch.setattr(sso, "_load_token", lambda: {"access_token": "x", "expires_at": 9e12})
+    started = {"n": 0}
+
+    def fake_start(*a, **k):
+        started["n"] += 1
+        return mock.Mock()
+
+    monkeypatch.setattr(sso, "_client", lambda: type("C", (), {"start_device_authorization": fake_start})())
+    info = sso.start_login()
+    assert info.get("already_authenticated") is True
+    assert started["n"] == 0, "must not call AWS start_device_authorization when authed"
+
+
+def test_invalid_grant_downgraded_when_token_present(monkeypatch):
+    """A stale/duplicate poll that hits InvalidGrantException after a token
+    already exists is a benign race, not a failure - must not log at ERROR
+    (which the dashboard shows as a login error)."""
+    import auth.sso_oidc as sso
+    from botocore.exceptions import ClientError
+    import logging
+
+    monkeypatch.setattr(sso, "_load_token", lambda: {"access_token": "x", "expires_at": 9e12})
+    # Use the REAL _poll_once; make the boto3 client raise InvalidGrantException.
+    class FakeClient:
+        def create_token(self, **k):
+            raise ClientError({"Error": {"Code": "InvalidGrantException"}}, "create_token")
+    monkeypatch.setattr(sso, "_client", lambda: FakeClient())
+    errs = []
+    class H(logging.Handler):
+        def emit(self, r):
+            if r.levelno >= logging.ERROR:
+                errs.append(r.getMessage())
+    sso.logger.addHandler(H())
+    sso.logger.setLevel(logging.DEBUG)
+    phase = sso._poll_once({"client_id": "c", "client_secret": "s"},
+                           {"device_code": "dc"})
+    assert phase.startswith("error:InvalidGrantException")
+    assert not errs, "InvalidGrant with token present must not log ERROR"
