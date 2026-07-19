@@ -134,6 +134,23 @@ Do **not** use `hermes auth add/status/logout aws-build` for this plugin:
 that CLI path is unrelated to this plugin's token store and will not affect
 `ask_q`. The `bid_*` tools above are the only supported auth interface.
 
+### Naming — three identifiers, one plugin
+
+These names look similar but live in different layers. Mixing them up is what
+broke the earlier `hermes auth` integration, so they are spelled out here:
+
+| Identifier | Where | Meaning |
+|------------|-------|---------|
+| `aws-build` | this plugin (directory, `plugin.yaml` `name:`, `toolset=`) | the plugin slug — the only name that matters for loading/running the plugin |
+| `bid_*` | this plugin's auth tools (`bid_login`, `bid_status`, `bid_show_identity`, `bid_logout`) | "BID" = **B**uilder **ID** (Amazon's "Build ID" / Builder ID). The `bid_` prefix is the plugin's own, consistent abbreviation |
+| `.bid_token.json` / `.bid_registration.json` / `.bid_flow.json` | `HERMES_HOME/plugins/aws-build/` | the plugin's local token/flow mirror files (prefix matches the `bid_*` tools) |
+| `aws-bid` | Hermes **core** CLI (`hermes auth add aws-bid`) | core's *separate* device-flow provider id — **not** this plugin's slug and **not** wired to this plugin's `.bid_token.json` store |
+
+Rule of thumb: the plugin is `aws-build` everywhere it controls its own name;
+`aws-bid` belongs to Hermes core and is a different (currently un-integrated)
+path. Do not rename the plugin's `bid_*` tools to `build_*` — that would
+diverge from both the `.bid_*` file mirrors and AWS's `aws-bid` terminology.
+
 ---
 
 ## Tool use & local file/context access — important
