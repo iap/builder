@@ -48,6 +48,30 @@ from typing import Optional
 
 import requests
 
+
+def _import_sso_oidc():
+    """Import the auth.sso_oidc module robustly regardless of load style.
+
+    Hermes core loads this plugin as a *package* submodule (e.g.
+    ``hermes_plugins.aws-build.backend``) WITHOUT placing the plugin directory
+    on the top-level ``sys.path``. In that case a bare ``from auth import
+    sso_oidc`` raises ``ModuleNotFoundError: No module named 'auth'`` — which
+    used to mask the real "please authenticate" message at chat time (the
+    adapter surfaced the import error instead of the token error).
+
+    So try the package-relative import first (works under core's package
+    load), then fall back to the absolute import (works when the plugin dir is
+    on sys.path, e.g. standalone/tests/verify.py). Mirrors the same
+    relative-first/absolute-fallback pattern used in __init__.py.
+    """
+    try:
+        from .auth import sso_oidc  # type: ignore  # package load (core)
+        return sso_oidc
+    except ImportError:
+        from auth import sso_oidc  # type: ignore  # dir-on-path (standalone)
+        return sso_oidc
+
+
 # --- Q endpoints / constants (source-verified) ---
 OIDC_URL = "https://oidc.us-east-1.amazonaws.com"
 CHAT_HOST = "q.us-east-1.amazonaws.com"
@@ -65,7 +89,7 @@ def get_token() -> dict:
     second file). Raises RuntimeError with an actionable message when no
     valid token exists.
     """
-    from auth import sso_oidc
+    sso_oidc = _import_sso_oidc()
 
     if sso_oidc.get_status().get("authenticated"):
         tok = sso_oidc._load_token()
@@ -98,6 +122,39 @@ def _sign_request(bearer: str) -> dict:
 
 
 # --- chat ---
+def _resolve_model_id(model: Optional[str]) -> str:
+    """Map a requested model name to a modelId Q will accept.
+
+    Q returns an opaque HTTP 500 (InternalServerException) for ANY modelId
+    outside its supported set — verified live, including plausible typos like
+    "claude-sonnet-4-5" (note the dashes) and unrelated names like
+    "gpt-4-turbo". Rather than forward an arbitrary string straight through
+    (which surfaces that cryptic 500 to the caller / Hermes model UI), coerce
+    anything not in our advertised catalog to "auto", which always resolves to
+    a usable model.
+
+    Empty/None -> "auto". The catalog is ``list_models()`` (which already
+    honors the operator's ``models:`` override in plugin.yaml) plus the special
+    "auto" passthrough, so extending the catalog via config keeps that model
+    usable without code changes.
+    """
+    requested = (model or "").strip()
+    if not requested:
+        return "auto"
+    allowed = set(list_models()) | {"auto"}
+    if requested in allowed:
+        return requested
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "aws-build: unknown model %r not in catalog %s; using 'auto' "
+        "(Q returns HTTP 500 for unsupported modelId)",
+        requested,
+        sorted(allowed),
+    )
+    return "auto"
+
+
 def chat(
     prompt: str,
     model: str = "auto",
@@ -151,8 +208,12 @@ def chat(
         user_msg["userInputMessageContext"] = ctx
     # Send the model to Q as `modelId` (verified live: Q accepts and echoes it).
     # Default to "auto" so a Free-tier Builder ID always gets a usable model
-    # rather than an entitlement error on a pinned Pro-only name.
-    model_id = model or "auto"
+    # rather than an entitlement error on a pinned Pro-only name. Unknown model
+    # names are coerced to "auto" because Q returns an opaque HTTP 500
+    # (InternalServerException) for any modelId outside its supported set —
+    # verified live, including a plausible typo like "claude-sonnet-4-5". See
+    # _resolve_model_id.
+    model_id = _resolve_model_id(model)
     user_msg["modelId"] = model_id
     body = {
         "conversationState": {
@@ -202,7 +263,7 @@ def chat(
                 )
             # Refresh through sso_oidc (the store owner) — never a second
             # file — so the refreshed token lands in .bid_token.json.
-            from auth import sso_oidc
+            sso_oidc = _import_sso_oidc()
 
             if sso_oidc.refresh_token():
                 return chat(
