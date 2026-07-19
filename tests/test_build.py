@@ -302,10 +302,10 @@ def test_get_status_expired_no_refresh_token(monkeypatch, tmp_path):
 
 
 def test_get_token_refresh_persists_to_origin_store(monkeypatch, tmp_path):
-    """Regression: when the expired token came from the sso store
-    (.bid_token.json), get_token() must refresh via sso_oidc.refresh_token()
-    so the refreshed token is written BACK to .bid_token.json — NOT to the
-    legacy .q_token.json (split-brain + redundant double-refresh bug)."""
+    """Regression: get_token() refreshes through sso_oidc (the sole
+    store), so the refreshed token lands in .bid_token.json and NO
+    second .q_token.json is ever written (single-source-of-truth).
+    """
     import backend
     from auth import sso_oidc
 
@@ -330,14 +330,15 @@ def test_get_token_refresh_persists_to_origin_store(monkeypatch, tmp_path):
         return True
 
     monkeypatch.setattr(sso_oidc, "refresh_token", fake_sso_refresh)
-    # Ensure backend._refresh (which would write .q_token.json) is NOT used.
-    monkeypatch.setattr(backend, "_refresh", lambda c: (_ for _ in ()).throw(AssertionError("backend._refresh must not run for sso token")))
-
+    monkeypatch.setattr(sso_oidc, "get_status", lambda: {"authenticated": False})
+    monkeypatch.setattr(
+        sso_oidc, "_load_token", lambda: json.loads(sso_file.read_text()) if sso_file.exists() else None
+    )
     tok = backend.get_token()
     assert tok["access_token"] == "NEW"
     assert sso_file.exists()
     assert "expires_at" in json.loads(sso_file.read_text())
-    assert not q_file.exists(), "get_token() must not write .q_token.json for an sso-origin token"
+    assert not q_file.exists(), "get_token() must never write .q_token.json"
 
 def test_start_login_short_circuits_when_token_present(monkeypatch):
     """Clicking login (e.g. the dashboard button) while already authed must

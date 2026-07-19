@@ -18,6 +18,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+from auth import sso_oidc
 
 # import backend without triggering any network import side effects
 _spec = importlib.util.spec_from_file_location("backend", ROOT / "backend.py")
@@ -83,7 +84,7 @@ def test_chat_body_shape():
         }
     }
     payload = json.dumps(body)
-    headers = backend._sign_request("POST", backend.CHAT_URL, "TOKEN")
+    headers = backend._sign_request("TOKEN")
     assert headers["Authorization"] == "Bearer TOKEN"
     assert headers["x-amz-target"] == backend.X_AMZ_TARGET
     assert "X-Amz-Signature" not in headers  # no SigV4 (verified: q sends Bearer only)
@@ -128,23 +129,8 @@ def test_extract_answer_escaped_quotes_and_braces():
     assert out == 'print("x { y }")'
 
 
-def test_token_expired_epoch():
-    assert backend._token_expired({"expires_at": 100}, skew=0) is True
-    assert backend._token_expired({"expires_at": 9_999_999_999_999}, skew=0) is False
-
-
-def test_token_expired_iso():
-    past = "2020-01-01T00:00:00.000000Z"
-    future = "2999-01-01T00:00:00.000000Z"
-    assert backend._token_expired({"expires_at": past}) is True
-    assert backend._token_expired({"expires_at": future}) is False
-
-
-def test_token_expired_missing():
-    assert backend._token_expired({}) is True
-
-
-# --- conversation id / tool_use_id extraction (from the response stream) ---
+def test_extract_answer_empty_stream():
+    assert backend._extract_answer(_FakeResp(["", "   "])) == "(no response)"
 
 
 def test_extract_conversation_id_from_stream():
@@ -203,47 +189,47 @@ def test_list_models_static_catalog():
     assert not any("opus" in m for m in models)
 
 
-# --- token file path resolution (profile-safe, canonical only) ---
+# --- get_token(): delegates to auth.sso_oidc (single store) ---
 
 
-def test_token_file_prefers_hermes_home(monkeypatch, tmp_path):
-    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    canonical = tmp_path / "plugins" / "aws-build" / ".q_token.json"
-    canonical.parent.mkdir(parents=True)
-    canonical.write_text("{}")
-    assert backend._token_file() == canonical
+def test_get_token_returns_sso_token(monkeypatch):
+    "get_token() returns the sso_oidc mirror token when authenticated."
+    fake_status = {"authenticated": True}
+    fake_tok = {"access_token": "SSO", "expires_at": 9_999_999_999}
+    monkeypatch.setattr(sso_oidc, "get_status", lambda: fake_status)
+    monkeypatch.setattr(sso_oidc, "_load_token", lambda: fake_tok)
+    monkeypatch.setattr(sso_oidc, "refresh_token", lambda: False)
+    assert backend.get_token()["access_token"] == "SSO"
 
 
-def test_token_file_always_canonical(monkeypatch, tmp_path):
-    # _token_file() always resolves to HERMES_HOME/plugins/aws-build/.q_token.json
-    # (canonical, profile-safe) and does not fall back to a source-dir file.
-    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    assert backend._token_file() == tmp_path / "plugins" / "aws-build" / ".q_token.json"
+def test_get_token_silent_refresh_on_expiry(monkeypatch):
+    "Expired sso token -> silent refresh_token(), then re-read."
+    refreshed = {"access_token": "REFRESHED", "expires_at": 9_999_999_999}
+    calls = {"refresh": 0, "reread": 0}
 
+    def _refresh():
+        calls["refresh"] += 1
+        return True
 
-# --- get_token() ordering: credential pool (sso) is canonical, read first ---
+    def _load():
+        # In the real flow refresh_token() persists the new token, then the
+        # single post-refresh _load_token() call reads it back.
+        calls["reread"] += 1
+        return refreshed
 
-
-def test_get_token_prefers_pool_over_cache(monkeypatch):
-    future = 9_999_999_999
-    pool_tok = {"access_token": "POOL", "expires_at": future}
-    cache_tok = {"access_token": "CACHE", "expires_at": future}
-    monkeypatch.setattr(backend, "_load_sso_token", lambda: pool_tok)
-    monkeypatch.setattr(backend, "_load_token", lambda: cache_tok)
-    assert backend.get_token()["access_token"] == "POOL"
-
-
-def test_get_token_falls_back_to_cache_when_no_pool(monkeypatch):
-    future = 9_999_999_999
-    cache_tok = {"access_token": "CACHE", "expires_at": future}
-    monkeypatch.setattr(backend, "_load_sso_token", lambda: None)
-    monkeypatch.setattr(backend, "_load_token", lambda: cache_tok)
-    assert backend.get_token()["access_token"] == "CACHE"
+    monkeypatch.setattr(sso_oidc, "get_status", lambda: {"authenticated": False})
+    monkeypatch.setattr(sso_oidc, "_load_token", _load)
+    monkeypatch.setattr(sso_oidc, "refresh_token", _refresh)
+    tok = backend.get_token()
+    assert tok["access_token"] == "REFRESHED"
+    assert calls["refresh"] == 1
 
 
 def test_get_token_raises_when_no_credentials(monkeypatch):
-    monkeypatch.setattr(backend, "_load_sso_token", lambda: None)
-    monkeypatch.setattr(backend, "_load_token", lambda: None)
+    "No sso token and refresh fails -> actionable RuntimeError."
+    monkeypatch.setattr(sso_oidc, "get_status", lambda: {"authenticated": False})
+    monkeypatch.setattr(sso_oidc, "_load_token", lambda: None)
+    monkeypatch.setattr(sso_oidc, "refresh_token", lambda: False)
     with pytest.raises(RuntimeError):
         backend.get_token()
 
@@ -283,7 +269,7 @@ def test_list_models_empty_override_falls_back_to_static(monkeypatch):
     assert backend.list_models() == backend.STATIC_MODELS
 
 
-# --- load_tags(): plugin.yaml override, cached, static fallback ----
+# --- load_tags(): plugin.yaml override, cached, static fallback ---
 
 
 def test_load_tags_uses_static_fallback_when_no_override(monkeypatch):
@@ -320,116 +306,6 @@ def test_load_tags_empty_override_falls_back_to_static(monkeypatch):
     assert backend.load_tags() == backend.STATIC_TAGS
 
 
-# --- _refresh(): stamps a fresh expires_at from the OIDC response ---
-
-
-class _FakeRefreshResp:
-    status_code = 200
-
-    def __init__(self, payload):
-        self._payload = payload
-
-    def json(self):
-        return self._payload
-
-
-def test_refresh_stamps_expires_at_from_snake_case(monkeypatch):
-    """OIDC /token returns `expires_in` (snake_case). _refresh must stamp
-    expires_at from it, or the refreshed on-disk token keeps a STALE
-    expires_at and get_token() re-refreshes in a loop on the next call.
-    """
-    import time as _t
-
-    saved = {}
-
-    def _fake_post(url, **kw):
-        return _FakeRefreshResp(
-            {"access_token": "NEW", "refresh_token": "R", "expires_in": 3600}
-        )
-
-    monkeypatch.setattr(backend.requests, "post", _fake_post)
-    monkeypatch.setattr(backend, "_save_token", lambda tok: saved.update(tok))
-
-    expired = {"access_token": "OLD", "refresh_token": "R", "expires_at": 1}
-    out = backend._refresh(expired)
-    assert out["access_token"] == "NEW"
-    # Fresh: ~now + 3600, not the stale value 1.
-    assert out["expires_at"] > _t.time() + 3000
-    assert saved.get("expires_at") == out["expires_at"]
-
-
-def test_refresh_accepts_camel_case_expires_in(monkeypatch):
-    """botocore-style camelCase `expiresIn` is also accepted (parity)."""
-
-    def _fake_post(url, **kw):
-        return _FakeRefreshResp(
-            {"access_token": "NEW", "refresh_token": "R", "expiresIn": 1800}
-        )
-
-    monkeypatch.setattr(backend.requests, "post", _fake_post)
-    monkeypatch.setattr(backend, "_save_token", lambda tok: None)
-    out = backend._refresh({"refresh_token": "R", "expires_at": 1})
-    # Fresh, not stale.
-    assert out["expires_at"] > 1700
-
-
-def test_refresh_uses_registration_client_credentials(monkeypatch):
-    """A pool/mirror token omits client_id/client_secret (they live in the OIDC
-    registration). _refresh must pull them from the registration so the refresh
-    request is complete — otherwise it sends an empty clientId and AWS rejects
-    it, forcing a full device re-login on every expiry despite a valid
-    refresh_token.
-    """
-    from auth import sso_oidc
-
-    captured = {}
-
-    def _fake_post(url, **kw):
-        captured.update(kw.get("json", {}))
-        return _FakeRefreshResp(
-            {"access_token": "NEW", "refresh_token": "R", "expires_in": 3600}
-        )
-
-    monkeypatch.setattr(backend.requests, "post", _fake_post)
-    monkeypatch.setattr(backend, "_save_token", lambda tok: None)
-    monkeypatch.setattr(
-        sso_oidc, "_load_registration", lambda: {"client_id": "CID", "client_secret": "CSEC"}
-    )
-    # Token with NO client credentials, as the pool/mirror store it.
-    out = backend._refresh({"refresh_token": "R", "expires_at": 1})
-    assert captured["clientId"] == "CID"
-    assert captured["clientSecret"] == "CSEC"
-    assert out["access_token"] == "NEW"
-
-
-def test_refresh_prefers_token_client_credentials(monkeypatch):
-    """When the token already carries client credentials, use them directly
-    (don't reach for the registration).
-    """
-    from auth import sso_oidc
-
-    captured = {}
-
-    def _fake_post(url, **kw):
-        captured.update(kw.get("json", {}))
-        return _FakeRefreshResp(
-            {"access_token": "NEW", "refresh_token": "R", "expires_in": 3600}
-        )
-
-    monkeypatch.setattr(backend.requests, "post", _fake_post)
-    monkeypatch.setattr(backend, "_save_token", lambda tok: None)
-    called = {"reg": False}
-    monkeypatch.setattr(
-        sso_oidc, "_load_registration", lambda: called.update(reg=True) or {}
-    )
-    out = backend._refresh(
-        {"refresh_token": "R", "expires_at": 1, "client_id": "TID", "client_secret": "TSEC"}
-    )
-    assert captured["clientId"] == "TID"
-    assert captured["clientSecret"] == "TSEC"
-    assert not called["reg"]  # registration only consulted when creds missing
-
-
 # --- chat(): refresh-then-retry is bounded (no infinite recursion) ---
 
 
@@ -451,9 +327,9 @@ def test_chat_bounded_refresh_retry(monkeypatch):
     monkeypatch.setattr(backend, "get_token", lambda: {"access_token": "tok"})
     monkeypatch.setattr(backend.requests, "post", lambda *a, **k: _FailResp())
     # Refresh "succeeds" but the next 401 still happens -> bounded retry.
-    monkeypatch.setattr(backend, "_refresh", lambda tok: dict(tok, access_token="X"))
-
+    monkeypatch.setattr(sso_oidc, "refresh_token", lambda: True)
     with pytest.raises(RuntimeError):
+        backend.chat("hi", model="claude-sonnet-4")
         backend.chat("hi", model="claude-sonnet-4")
 
 

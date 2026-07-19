@@ -15,19 +15,32 @@ Wire protocol (verified live against Amazon Q's endpoints):
   Chat:  POST https://q.us-east-1.amazonaws.com/
     Headers: Content-Type application/x-amz-json-1.0,
              x-amz-target AmazonCodeWhispererStreamingService.GenerateAssistantResponse,
-             Authorization: Bearer <access_token>
+             Authorization: Bearer ***
     Body:    {"conversationState": {"currentMessage": {...},
               "chatTriggerType": "MANUAL"}}
     Auth is Bearer-only (no SigV4; verified live).
 
 Token is persisted locally (gitignored, under HERMES_HOME) so the device-login
 survives across restarts and is refreshable.
+
+Token storage
+-------------
+The plugin owns ONE token store end-to-end: the BID login mirror at
+auth/sso_oidc (.bid_token.json under HERMES_HOME). backend.chat() is a
+pure HTTP client to Q — it NEVER persists a token. get_token()
+delegates entirely to sso_oidc, so there is exactly one source of
+truth (no dual-store, no split-brain, no "newest wins" resolver).
+
+A from-scratch Builder ID device login in pure Python IS possible: AWS SSO
+OIDC exposes plain REST/JSON endpoints (client/register unsigned,
+/device_authorization, /token) needing NO SigV4 and NO AWS IAM
+credentials — verified live this session. The device flow
+(auth/sso_oidc.start_login) registers its own public client.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import re
 import time
 from pathlib import Path
@@ -43,227 +56,32 @@ REFRESH_GRANT = "refresh_token"
 X_AMZ_TARGET = "AmazonCodeWhispererStreamingService.GenerateAssistantResponse"
 
 
-def _token_file() -> Path:
-    """Return the profile-safe cache path for the direct-backend token.
-
-    Canonical location is ``HERMES_HOME/plugins/aws-build/.q_token.json`` so
-    each Hermes profile gets its own token (per AGENTS.md: never hardcode
-    ~/.hermes; use get_hermes_home()). Writes always target this location.
-    """
-    try:
-        from hermes_constants import get_hermes_home
-
-        return Path(get_hermes_home()) / "plugins" / "aws-build" / ".q_token.json"
-    except Exception:  # noqa: BLE001 - plugin may load outside a Hermes runtime
-        return Path.home() / ".hermes" / "plugins" / "aws-build" / ".q_token.json"
-
-
-def invalidate_q_token() -> None:
-    """Delete a stale `.q_token.json` so a fresh `bid_login` is unambiguous.
-
-    `.q_token.json` is a legacy cache that a *previous* login may have written.
-    If it outlives its replacement it shadows the newer `.bid_token.json` chosen
-    by ``get_token()``. Clearing it on login/logout keeps exactly one active
-    token store. Safe if the file is absent or already gone.
-    """
-    try:
-        _token_file().unlink()
-    except FileNotFoundError:  # noqa: BLE001 - nothing to clear
-        pass
-    except OSError:  # noqa: BLE001 - best-effort
-        pass
-
-
-# --- token storage ---
-# Q's own authenticated session is cached here by the `q` CLI. We reuse it so the
-# direct backend can call the chat API without the CLI binary. A from-scratch
-# Builder ID device login in pure Python IS possible: AWS SSO OIDC exposes plain
-# REST/JSON endpoints (/client/register unsigned, /device_authorization, /token)
-# that need NO SigV4 and NO AWS IAM credentials — verified live this session.
-# The device flow (auth/sso_oidc.start_login) registers its own public client.
-
-
-def _load_token() -> Optional[dict]:
-    path = _token_file()
-    if path.exists():
-        try:
-            return json.loads(path.read_text())
-        except Exception:
-            return None
-    return None
-
-
-def _save_token(tok: dict) -> None:
-    # Always write to the canonical profile-safe location.
-    try:
-        from hermes_constants import get_hermes_home
-
-        path = Path(get_hermes_home()) / "plugins" / "aws-build" / ".q_token.json"
-    except Exception:  # noqa: BLE001
-        path = _token_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(tok, indent=2))
-    os.chmod(path, 0o600)
-
-
-def _token_expired(tok: dict, skew: int = 120) -> bool:
-    exp = tok.get("expires_at") or tok.get("expiresAt")
-    if not exp:
-        return True
-    if isinstance(exp, (int, float)):
-        return time.time() + skew >= exp
-    try:
-        import datetime
-
-        dt = datetime.datetime.fromisoformat(str(exp).replace("Z", "+00:00"))
-        return time.time() + skew >= dt.timestamp()
-    except Exception:
-        return True
-
-
-# --- device login ---
-# The device flow lives in auth/sso_oidc.start_login() (RFC 8628, headless,
-# self-registered public client). The earlier backend.device_login() duplicate was
-# removed: one device-flow implementation, not two.
-
-
-def _refresh(tok: dict) -> Optional[dict]:
-    refresh = tok.get("refresh_token") or tok.get("refreshToken")
-    if not refresh:
-        return None
-    # The OIDC client_id/secret are NOT carried on the token itself — they live
-    # in the device-flow registration (.bid_registration.json). The canonical
-    # pool token and the .bid_token.json mirror both omit them. If we only sent
-    # what the token dict carries, the refresh request would use an empty
-    # clientId and AWS would reject it, forcing a full device re-login on every
-    # expiry even though a valid refresh_token exists. Fall back to the
-    # registration when the token lacks credentials.
-    client_id = tok.get("client_id") or tok.get("clientId")
-    client_secret = tok.get("client_secret") or tok.get("clientSecret")
-    if not (client_id and client_secret):
-        try:
-            from auth import sso_oidc
-
-            reg = sso_oidc._load_registration()
-            if reg:
-                client_id = client_id or reg.get("client_id")
-                client_secret = client_secret or reg.get("client_secret")
-        except Exception:  # noqa: BLE001 - no registration => empty creds, AWS rejects
-            pass
-    r = requests.post(
-        f"{OIDC_URL}/token",
-        headers={"Content-Type": "application/json"},
-        json={
-            "grantType": REFRESH_GRANT,
-            "clientId": client_id or "",
-            "clientSecret": client_secret or "",
-            "refreshToken": refresh,
-        },
-        timeout=30,
-    )
-    if r.status_code != 200:
-        return None
-    new = r.json()
-    tok.update(new)
-    # Refresh responses omit expires_at; stamp it so _token_expired() works.
-    # OAuth2 token responses use snake_case `expires_in`; AWS OIDC's JSON
-    # protocol (and botocore) use camelCase `expiresIn`. Accept BOTH casings
-    # here: this is a raw requests.post to the OIDC /token endpoint, which
-    # returns the standard wire form `expires_in`. If we only read
-    # `expiresIn`, the stamp is skipped, the on-disk token keeps its STALE
-    # expires_at, get_token() sees it as still-expired and re-refreshes in a
-    # loop on the next chat call. Recompute whenever an expiry field is present.
-    _expires_in = new.get("expires_in") or new.get("expiresIn")
-    if _expires_in:
-        tok["expires_at"] = int(time.time()) + int(_expires_in)
-    _save_token(tok)
-    return tok
-
-
-def _load_sso_token() -> Optional[dict]:
-    """Consult the plugin's BID login store (auth.sso_oidc) for a token.
-
-    `bid_login` (the plugin's login tool) writes here, not to .q_token.json.
-    Without this, a user who authenticates via the tool cannot chat because
-    get_token() only looked at .q_token.json. Lazy-import to
-    avoid pulling botocore at module load and to dodge circular imports.
-    """
-    try:
-        from auth import sso_oidc
-    except Exception:  # noqa: BLE001
-        return None
-    try:
-        return sso_oidc._load_token()
-    except Exception:  # noqa: BLE001
-        return None
-
-
 def get_token() -> dict:
-    """Return a valid token.
+    """Return a valid Builder ID token (delegated to the BID login store).
 
-    A `bid_login` (the plugin's login tool) writes the fresh token to the
-    Hermes credential pool / `.bid_token.json`, NOT to `.q_token.json`. When
-    both stores hold a valid token we must prefer the *newest* one, otherwise a
-    stale `.q_token.json` from an earlier login shadows a just-completed
-    `bid_login` and the chat keeps using the wrong (e.g. quota-exhausted)
-    account.
-
-    Resolution (newest valid token wins, by `expires_at` as a write-order
-    proxy):
-      1. The plugin's BID login store (auth.sso_oidc: the .bid_token.json mirror).
-      2. Our persisted cache (.q_token.json under HERMES_HOME).
-      3. If any stored token is present but expired, attempt a silent OIDC
-         refresh_token exchange (no browser/interaction) before giving up.
-      4. Otherwise raise with an actionable message.
-    The plugin owns its token store end-to-end and does NOT use the Hermes
-    credential pool / `hermes auth` mechanism. `bid_logout` / `bid_login`
-    delete the stale `.q_token.json` so the new login is unambiguous.
+    The plugin's token store is owned entirely by auth.sso_oidc
+    (.bid_token.json). On expiry it silently refreshes via the same
+    module (so the refreshed token lands back in .bid_token.json, never a
+    second file). Raises RuntimeError with an actionable message when no
+    valid token exists.
     """
-    candidates = []
-    sso_tok = _load_sso_token()
-    if sso_tok:
-        candidates.append(sso_tok)
-    tok = _load_token()
-    if tok:
-        candidates.append(tok)
+    from auth import sso_oidc
 
-    valid = [c for c in candidates if c and not _token_expired(c)]
-    if valid:
-        # Newest write wins: a fresh bid_login carries a later expires_at than
-        # a stale .q_token.json written by an earlier login.
-        valid.sort(key=lambda c: c.get("expires_at") or c.get("expiresAt") or 0, reverse=True)
-        return valid[0]
-    # Expired but refreshable -> silent refresh (no interactive device flow).
-    # Refresh each candidate with the module that OWNS its store, so the
-    # refreshed token is persisted back to the same file it came from. Routing
-    # an sso-origin token through backend._refresh() would save it to
-    # .q_token.json and leave .bid_token.json stale (split-brain + a redundant
-    # second refresh next time get_status() runs).
-    sso_tok_in = sso_tok if (sso_tok and _token_expired(sso_tok)) else None
-    q_tok_in = tok if (tok and _token_expired(tok)) else None
-
-    def _refresh_sso(c):
-        try:
-            from auth import sso_oidc
-
-            return sso_oidc.refresh_token()
-        except Exception:  # noqa: BLE001 - fall back to backend refresh below
-            return False
-
-    if sso_tok_in and (sso_tok_in.get("refresh_token") or sso_tok_in.get("refreshToken")):
-        if _refresh_sso(sso_tok_in):
-            sso_tok_after = _load_sso_token()
-            if sso_tok_after:
-                return sso_tok_after
-    if q_tok_in and (q_tok_in.get("refresh_token") or q_tok_in.get("refreshToken")):
-        refreshed = _refresh(q_tok_in)
-        if refreshed:
-            return refreshed
+    if sso_oidc.get_status().get("authenticated"):
+        tok = sso_oidc._load_token()
+        if tok:
+            return tok
+    # Expired but refreshable -> silent refresh, then re-read.
+    if sso_oidc.refresh_token():
+        tok = sso_oidc._load_token()
+        if tok:
+            return tok
     raise RuntimeError(
         "No valid Amazon Q token available. Authenticate via the `bid_login` plugin "
         "tool, which performs the OIDC device flow and writes the token the chat "
         "path reads. Then retry. A refresh is attempted automatically on expiry."
     )
+
 
 # --- request auth (Bearer only) ---
 # Verified live: the CodeWhisperer GenerateAssistantResponse call sends
@@ -271,7 +89,7 @@ def get_token() -> dict:
 # and NO SigV4 signed-headers. The OIDC access_token from the BID device
 # login IS the chat bearer. (An earlier dual-auth SigV4 attempt was wrong
 # — Q rejected the extra X-Amz-* signed headers.)
-def _sign_request(method: str, url: str, bearer: str) -> dict:
+def _sign_request(bearer: str) -> dict:
     return {
         "Content-Type": "application/x-amz-json-1.0",
         "Authorization": f"Bearer {bearer}",
@@ -279,7 +97,7 @@ def _sign_request(method: str, url: str, bearer: str) -> dict:
     }
 
 
-# --- chat ----
+# --- chat ---
 def chat(
     prompt: str,
     model: str = "auto",
@@ -348,7 +166,7 @@ def chat(
         body["conversationState"]["history"] = history
 
     payload = json.dumps(body)
-    headers = _sign_request("POST", CHAT_URL, access)
+    headers = _sign_request(access)
     r = requests.post(
         CHAT_URL,
         data=payload,
@@ -382,16 +200,17 @@ def chat(
                     "Amazon Q rejected the bearer token even after a silent "
                     "refresh. Re-authenticate via the `bid_login` plugin tool."
                 )
-            for cand in (_load_token(), _load_sso_token()):
-                if cand and (cand.get("refresh_token") or cand.get("refreshToken")):
-                    refreshed = _refresh(cand)
-                    if refreshed:
-                        return chat(
-                            prompt,
-                            model=model,
-                            conversation_id=conversation_id,
-                            _retries=_retries + 1,
-                        )
+            # Refresh through sso_oidc (the store owner) — never a second
+            # file — so the refreshed token lands in .bid_token.json.
+            from auth import sso_oidc
+
+            if sso_oidc.refresh_token():
+                return chat(
+                    prompt,
+                    model=model,
+                    conversation_id=conversation_id,
+                    _retries=_retries + 1,
+                )
             raise RuntimeError(
                 "Amazon Q rejected the bearer token (expired/revoked). Re-authenticate "
                 "via the `bid_login` plugin tool — it performs the OIDC device flow. "
@@ -469,9 +288,9 @@ def _extract_conversation_id(text: str) -> Optional[str]:
             continue
         obj_end = _match_brace(text, obj_start)
         obj = text[obj_start : obj_end + 1]
-        if '"modelId"' not in obj:
+        if "modelId" not in obj:
             continue
-        cid = re.search(r'"conversationId"\s*:\s*("(?:[^"\\]|\\.)*"|\S+)"', obj)
+        cid = re.search(r'"conversationId"\s*:\s*("(?:[^"\\]|\\.)*"|\S+)', obj)
         if cid:
             val = cid.group(1)
             if val.startswith('"'):
@@ -513,7 +332,7 @@ def _extract_answer_with_conversation_id(response: requests.Response) -> tuple[s
         if obj_start == -1:
             continue
         obj_end = _match_brace(text, obj_start)
-        if '"modelId"' not in text[obj_start : obj_end + 1]:
+        if "modelId" not in text[obj_start : obj_end + 1]:
             continue
         try:
             parts.append(json.loads(m.group(1)))
@@ -637,6 +456,7 @@ def load_tags() -> list[str]:
 
 if __name__ == "__main__":
     import sys
+
     p = sys.argv[1] if len(sys.argv) > 1 else "reply with exactly: DIRECT_OK"
     answer, _cid, _tool_use_id = chat(p)
     print(answer)
