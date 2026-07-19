@@ -114,10 +114,9 @@ OIDC access token (Bearer only — **no SigV4**, verified live).
 
 1. The plugin's BID login store — `.bid_token.json` written by `bid_login`
    (the plugin's sole canonical store).
-2. `.q_token.json` (this plugin's persisted cache), if valid.
-3. If a stored token is expired but has a refresh token, a silent OIDC
-   `refresh_token` exchange is attempted (no browser).
-4. Otherwise `RuntimeError` with an actionable message (run `bid_login`).
+2. If the stored token is expired but has a refresh token, a silent OIDC
+   refresh is attempted via `auth.sso_oidc.refresh_token()` (no browser).
+3. Otherwise `RuntimeError` with an actionable message (run `bid_login`).
 
 ### `auth/sso_oidc.py` — headless device login
 
@@ -234,7 +233,7 @@ context. Use `ask_q` when you want Claude-via-Q's reasoning/answers.
 
 These files hold live credentials and are **gitignored** (never commit them):
 
-- `.q_token.json`, `.bid_token.json`, `.bid_registration.json`, `.bid_flow.json`
+- `.bid_token.json`, `.bid_registration.json`, `.bid_flow.json`
 - `auth/oidc_client_secret.json`
 
 To rotate: `bid_logout` and re-authenticate via `bid_login`.

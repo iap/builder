@@ -14,11 +14,11 @@ import logging
 from typing import Any
 
 try:
-    from .auth import get_status, logout, show_identity, start_login
-    from .backend import chat, invalidate_q_token, list_models, load_tags
+    from .auth import get_status, logout, show_identity, start_login, sso_oidc
+    from .backend import chat, list_models, load_tags
 except ImportError:
-    from auth import get_status, logout, show_identity, start_login
-    from backend import chat, invalidate_q_token, list_models, load_tags
+    from auth import get_status, logout, show_identity, start_login, sso_oidc
+    from backend import chat, list_models, load_tags
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +65,9 @@ def _handle_ask_q(args: dict[str, Any], **kwargs: Any) -> str:
 
 def _handle_bid_login(args: dict[str, Any], **kwargs: Any) -> str:
     try:
-        # Drop any stale .q_token.json so the new login is the sole token store.
-        invalidate_q_token()
+        # Single token store (auth/sso_oidc .bid_token.json). start_login()
+        # guards re-auth when already authenticated, so no stale-token
+        # cleanup is needed here.
         info = start_login()
         if info.get("already_authenticated"):
             return _success({
@@ -103,9 +104,8 @@ def _handle_bid_show_identity(args: dict[str, Any], **kwargs: Any) -> str:
 
 def _handle_bid_logout(args: dict[str, Any], **kwargs: Any) -> str:
     try:
+        # logout() clears the sso mirror (.bid_token/.bid_registration/.bid_flow).
         logout()
-        # Clear any stale .q_token.json alongside the BID mirror files.
-        invalidate_q_token()
         return _success({"message": "Logged out; secrets cleared."})
     except Exception as exc:  # noqa: BLE001
         logger.exception("bid_logout failed")
