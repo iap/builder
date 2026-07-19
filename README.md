@@ -29,7 +29,7 @@ the device-flow access token is the chat bearer.
 | `bid_login` | Start an Amazon BID device login; returns a `user_code` + verification URL to approve in a browser. |
 | `bid_status` | Report current auth / device-login state (polls once if a flow is pending). Never returns the raw token. |
 | `bid_show_identity` | Return token identity metadata (type, scopes, expiry) — no raw token. |
-| `bid_logout` | Stop polling and delete all stored secrets (pool entry + mirror files). |
+| `bid_logout` | Stop polling and delete all stored secrets (the local `.bid_*` mirror files). |
 | `models` | List available AWS Build models (`backend.list_models()`) and plugin tags. |
 | `tags` | List free-form tags describing the plugin (`backend.load_tags()`). |
 
@@ -64,8 +64,8 @@ OIDC access token (Bearer only — **no SigV4**, verified live).
 
 **Token resolution order** (`get_token()`):
 
-1. The Hermes credential pool / `.bid_token.json` written by `bid_login`
-   (canonical store).
+1. The plugin's BID login store — `.bid_token.json` written by `bid_login`
+   (the plugin's sole canonical store).
 2. `.q_token.json` (this plugin's persisted cache), if valid.
 3. If a stored token is expired but has a refresh token, a silent OIDC
    `refresh_token` exchange is attempted (no browser).
@@ -80,9 +80,9 @@ with an anonymous public client (unsigned — no AWS credentials needed):
 - **Device authorization** persisted to a flow file so any process can complete
   polling; a daemon thread polls `create_token` in the background.
 - **Token refresh** via the stored refresh token.
-- **Canonical store:** the Hermes credential pool (`aws-build` provider) is the
-  source of truth; the local `.bid_*` files are a mirror. Secrets are written
-  chmod 600 and never returned by a tool handler.
+- **Canonical store:** the local `.bid_token.json` mirror under `HERMES_HOME`
+  is the sole source of truth (the plugin does not use the Hermes credential
+  pool). Secrets are written chmod 600 and never returned by a tool handler.
 
 ---
 
@@ -166,6 +166,6 @@ python3 -m pytest tests/ -q
 ```
 
 Offline unit tests cover the event-stream parser, token expiry/refresh logic,
-credential-pool / cache token loading, the dynamic model catalog, tag loading,
+local mirror / cache token loading, the dynamic model catalog, tag loading,
 and tool registration. `python3 verify.py` sanity-checks that all tools register
 and that no handler leaks a secret.
