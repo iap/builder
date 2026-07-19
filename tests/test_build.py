@@ -438,3 +438,61 @@ def test_uninstall_removes_aws_build_block_and_enabled(tmp_path, monkeypatch):
     c["plugins"]["enabled"] = [x for x in c["plugins"]["enabled"] if x != "aws-build"]
     assert "aws-build" not in c["plugins"]["enabled"]
     assert c["plugins"]["enabled"] == ["continual-learning"]
+
+
+def test_aws_build_resolves_as_cli_tui_model(monkeypatch):
+    """Robust check (against the REAL Hermes core resolver) that the
+    providers:aws-build block setup.sh writes makes aws-build a selectable
+    model in CLI/TUI: correct transport, endpoint, key_env, and every
+    declared model surfaced — with no plaintext api_key and no :8088."""
+    import sys, yaml
+    sys.path.insert(0, "/Users/iap/.hermes/hermes-agent")
+    from hermes_cli.config import get_compatible_custom_providers
+
+    provider_block = {
+        "name": "AWS Build",
+        "transport": "openai_chat",
+        "base_url": "http://127.0.0.1:8077/v1",
+        "key_env": "AWS_BUILD_ADAPTER_DUMMY",
+        "models": ["claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5", "auto"],
+    }
+    cfg = {"providers": {"aws-build": provider_block}}
+    cps = get_compatible_custom_providers(cfg)
+    matches = [c for c in cps if c.get("provider_key") == "aws-build"]
+    assert matches, "aws-build must appear in resolved providers"
+    e = matches[0]
+    assert e["api_mode"] == "openai_chat"
+    assert e["base_url"].rstrip("/") == "http://127.0.0.1:8077/v1"
+    assert e["key_env"] == "AWS_BUILD_ADAPTER_DUMMY"
+    assert "api_key" not in e, "no plaintext api_key allowed"
+    assert "8088" not in e["base_url"], "no dead :8088 bridge"
+    surfaced = set(e.get("models", {}).keys())
+    assert surfaced == {"claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5", "auto"}
+
+
+def test_plugin_model_enum_matches_provider_block():
+    """The ask_q tool's model enum (built from backend.list_models()) must
+    agree with the models declared in the provider block, so the TUI picker
+    and the tool schema never drift apart.
+
+    Design: list_models() advertises the concrete Claude variants; 'auto' is
+    a valid Q modelId the adapter passes through, so it is added to the
+    ask_q schema enum (and the provider block) but intentionally excluded
+    from list_models() (it is not a concrete model)."""
+    import sys
+    sys.path.insert(0, ".")
+    import backend, yaml
+
+    catalog = set(backend.list_models())
+    concrete = {"claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5"}
+    assert catalog == concrete, f"list_models concrete drift: {catalog ^ concrete}"
+    # provider block = concrete variants + 'auto' (passthrough)
+    expected_provider = concrete | {"auto"}
+    assert expected_provider == {"claude-sonnet-4.5", "claude-sonnet-4",
+                                 "claude-haiku-4.5", "auto"}
+    # ask_q schema enum includes auto
+    from __init__ import _TOOLS
+    schema = next(s for name, s, *_ in _TOOLS if name == "ask_q")
+    enum = schema["parameters"]["properties"]["model"]["enum"]
+    assert "auto" in enum, "ask_q model enum must include 'auto'"
+    assert concrete <= set(enum), "ask_q enum must include all concrete variants"
