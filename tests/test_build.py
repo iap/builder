@@ -173,3 +173,90 @@ def test_get_status_reports_expired_when_refresh_dead(monkeypatch, tmp_path):
     st = sso_oidc.get_status()
     assert st["authenticated"] is False
     assert st["refreshed"] is False
+    # Contract: a token that existed but couldn't be refreshed must report
+    # phase == "expired" (not "idle"), so the card shows the real state.
+    assert st["phase"] == "expired"
+
+
+def test_get_status_no_refresh_when_valid(monkeypatch, tmp_path):
+    """get_status() must NOT attempt a refresh when the stored token is still
+    valid — only when it is expired."""
+    from auth import sso_oidc
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    base = tmp_path / "plugins" / "aws-build"
+    base.mkdir(parents=True)
+    (base / ".bid_token.json").write_text(
+        json.dumps(
+            {"access_token": "OK", "refresh_token": "R", "expires_at": time.time() + 3600}
+        )
+    )
+
+    refresh_called = {"called": False}
+    monkeypatch.setattr(sso_oidc, "refresh_token", lambda: refresh_called.__setitem__("called", True))
+    monkeypatch.setattr(sso_oidc, "_load_flow", lambda: None)
+
+    st = sso_oidc.get_status()
+    assert st["authenticated"] is True
+    assert refresh_called["called"] is False
+
+
+def test_get_status_expired_no_refresh_token(monkeypatch, tmp_path):
+    """An expired token with NO refresh token must report not-authenticated
+    without attempting a refresh."""
+    from auth import sso_oidc
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    base = tmp_path / "plugins" / "aws-build"
+    base.mkdir(parents=True)
+    (base / ".bid_token.json").write_text(
+        json.dumps({"access_token": "OLD", "expires_at": time.time() - 10})  # no refresh_token
+    )
+
+    refresh_called = {"called": False}
+    monkeypatch.setattr(sso_oidc, "refresh_token", lambda: refresh_called.__setitem__("called", True))
+    monkeypatch.setattr(sso_oidc, "_load_flow", lambda: None)
+
+    st = sso_oidc.get_status()
+    assert st["authenticated"] is False
+    assert st["phase"] == "expired"
+    assert refresh_called["called"] is False
+
+
+def test_get_token_refresh_persists_to_origin_store(monkeypatch, tmp_path):
+    """Regression: when the expired token came from the sso store
+    (.bid_token.json), get_token() must refresh via sso_oidc.refresh_token()
+    so the refreshed token is written BACK to .bid_token.json — NOT to the
+    legacy .q_token.json (split-brain + redundant double-refresh bug)."""
+    import backend
+    from auth import sso_oidc
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    base = tmp_path / "plugins" / "aws-build"
+    base.mkdir(parents=True)
+    sso_file = base / ".bid_token.json"
+    q_file = base / ".q_token.json"
+    sso_file.write_text(
+        json.dumps(
+            {"access_token": "OLD", "refresh_token": "R", "expires_at": time.time() - 10}
+        )
+    )
+
+    def fake_sso_refresh():
+        # Simulate a successful sso refresh writing a fresh token to .bid_token.json.
+        sso_file.write_text(
+            json.dumps(
+                {"access_token": "NEW", "refresh_token": "R", "expires_at": time.time() + 3600}
+            )
+        )
+        return True
+
+    monkeypatch.setattr(sso_oidc, "refresh_token", fake_sso_refresh)
+    # Ensure backend._refresh (which would write .q_token.json) is NOT used.
+    monkeypatch.setattr(backend, "_refresh", lambda c: (_ for _ in ()).throw(AssertionError("backend._refresh must not run for sso token")))
+
+    tok = backend.get_token()
+    assert tok["access_token"] == "NEW"
+    assert sso_file.exists()
+    assert "expires_at" in json.loads(sso_file.read_text())
+    assert not q_file.exists(), "get_token() must not write .q_token.json for an sso-origin token"

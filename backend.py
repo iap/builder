@@ -234,11 +234,31 @@ def get_token() -> dict:
         valid.sort(key=lambda c: c.get("expires_at") or c.get("expiresAt") or 0, reverse=True)
         return valid[0]
     # Expired but refreshable -> silent refresh (no interactive device flow).
-    for candidate in candidates:
-        if candidate and (candidate.get("refresh_token") or candidate.get("refreshToken")):
-            refreshed = _refresh(candidate)
-            if refreshed:
-                return refreshed
+    # Refresh each candidate with the module that OWNS its store, so the
+    # refreshed token is persisted back to the same file it came from. Routing
+    # an sso-origin token through backend._refresh() would save it to
+    # .q_token.json and leave .bid_token.json stale (split-brain + a redundant
+    # second refresh next time get_status() runs).
+    sso_tok_in = sso_tok if (sso_tok and _token_expired(sso_tok)) else None
+    q_tok_in = tok if (tok and _token_expired(tok)) else None
+
+    def _refresh_sso(c):
+        try:
+            from auth import sso_oidc
+
+            return sso_oidc.refresh_token()
+        except Exception:  # noqa: BLE001 - fall back to backend refresh below
+            return False
+
+    if sso_tok_in and (sso_tok_in.get("refresh_token") or sso_tok_in.get("refreshToken")):
+        if _refresh_sso(sso_tok_in):
+            sso_tok_after = _load_sso_token()
+            if sso_tok_after:
+                return sso_tok_after
+    if q_tok_in and (q_tok_in.get("refresh_token") or q_tok_in.get("refreshToken")):
+        refreshed = _refresh(q_tok_in)
+        if refreshed:
+            return refreshed
     raise RuntimeError(
         "No valid Amazon Q token available. Authenticate via the `bid_login` plugin "
         "tool, which performs the OIDC device flow and writes the token the chat "
