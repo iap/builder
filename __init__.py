@@ -221,7 +221,15 @@ _TOOLS = (
 
 
 def register(ctx) -> None:
-    """Register all aws-build plugin tools."""
+    """Register all aws-build plugin tools + start the OpenAI adapter.
+
+    The adapter lets aws-build be a *selectable chat model* in the Hermes
+    TUI/CLI (Way A): it speaks OpenAI's /v1/chat/completions wire
+    format on the Hermes side and translates to Q via backend.chat(). It is
+    launched as a daemon background thread here (dies with the Hermes
+    session) — NOT the old standalone `:8088` bridge. If it fails to bind
+    we log and continue; the ask_q tool still works tool-only.
+    """
     for name, schema, handler, check_fn, emoji in _TOOLS:
         ctx.register_tool(
             name=name,
@@ -231,3 +239,15 @@ def register(ctx) -> None:
             check_fn=check_fn,
             emoji=emoji,
         )
+    # Best-effort: start the local OpenAI-compatible adapter so Hermes can
+    # route chat turns to aws-build as a model. No-op if already running.
+    try:
+        from . import adapter  # package import
+    except ImportError:  # __main__ / direct
+        import adapter  # type: ignore
+    port = int(__import__("os").environ.get("AWS_BUILD_ADAPTER_PORT", "8077"))
+    try:
+        srv, actual = adapter.start(port=port)
+        print(f"[aws-build] OpenAI adapter listening on :{actual} (model-provider mode)")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("aws-build adapter failed to start (tool-only mode OK): %s", exc)
