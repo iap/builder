@@ -404,3 +404,75 @@ def test_chat_surfaces_subscription_error(monkeypatch):
     # Must NOT attempt a token refresh on a subscription error.
     assert "rejected the bearer token" not in str(exc.value)
 
+
+
+# --- chat() works across EVERY model the plugin advertises ---
+# Robust check: each model from list_models() (+ the "auto" passthrough)
+# must survive a full chat() call -> Q request -> streamed answer parse.
+# Uses a fake Q responder (no live token / network).
+
+
+import itertools as _it
+
+_ALL_PLUGIN_MODELS = list(backend.list_models()) + ["auto"]
+
+
+def test_chat_works_for_every_advertised_model(monkeypatch):
+    """Every model the plugin exposes must round-trip through chat()."""
+    captured = {}
+
+    class _OkResp:
+        status_code = 200
+
+        def iter_content(self, chunk_size=1024):
+            # Minimal valid assistantResponseEvent stream.
+            yield (
+                '{"content":"ok","modelId":"%s"}' % captured["model"]
+            ).encode()
+
+    def _fake_post(url, **kwargs):
+        captured["body"] = kwargs.get("data")
+        captured["model"] = kwargs.get("model")  # not used; body holds it
+        return _OkResp()
+
+    monkeypatch.setattr(backend, "get_token", lambda: {"access_token": "tok"})
+    monkeypatch.setattr(backend.requests, "post", _fake_post)
+
+    for m in _ALL_PLUGIN_MODELS:
+        captured.clear()
+        answer, _cid, _tuid = backend.chat("ping", model=m)
+        body = json.loads(captured["body"])
+        sent = body["conversationState"]["currentMessage"]["userInputMessage"]["modelId"]
+        assert sent == m, f"model '{m}' not forwarded as modelId (got '{sent}')"
+        assert answer == "ok", f"model '{m}' yielded no parsed answer"
+    # No model left untested.
+    assert set(_ALL_PLUGIN_MODELS) == {
+        "claude-haiku-4.5",
+        "claude-sonnet-4",
+        "claude-sonnet-4.5",
+        "auto",
+    }
+
+
+def test_chat_empty_model_defaults_to_auto(monkeypatch):
+    "When model is ''/None, chat() must send modelId 'auto'."
+    captured = {}
+
+    class _OkResp:
+        status_code = 200
+
+        def iter_content(self, chunk_size=1024):
+            yield '{"content":"ok","modelId":"auto"}'.encode()
+
+    def _fake_post(url, **kwargs):
+        captured["body"] = kwargs.get("data")
+        return _OkResp()
+
+    monkeypatch.setattr(backend, "get_token", lambda: {"access_token": "tok"})
+    monkeypatch.setattr(backend.requests, "post", _fake_post)
+
+    backend.chat("hi", model="")
+    body = json.loads(captured["body"])
+    assert (
+        body["conversationState"]["currentMessage"]["userInputMessage"]["modelId"] == "auto"
+    )
