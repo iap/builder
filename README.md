@@ -33,7 +33,35 @@ the device-flow access token is the chat bearer.
 | `models` | List available AWS Build models (`backend.list_models()`) and plugin tags. |
 | `tags` | List free-form tags describing the plugin (`backend.load_tags()`). |
 
----
+|--
+
+## Installation
+
+```bash
+# 1) install the plugin (git URL or owner/repo)
+hermes plugins install <aws-build-repo-url>
+
+# 2) register aws-build as a selectable chat model in Hermes
+#    (backs up ~/.hermes/config.yaml, then adds providers: aws-build
+#     pointing at the in-plugin adapter on :8077 — no :8088 bridge)
+~/.hermes/plugins/aws-build/scripts/setup.sh
+
+# 3) restart Hermes so config reloads + the adapter launches on register()
+# 4) one-time auth, then chat via the model or the ask_q tool
+bid_login   # approve the user_code in your browser
+```
+
+`setup.sh` is **idempotent** (skips if `providers: aws-build` is already
+present) and **always backs up `config.yaml` first**. It does NOT write
+the guarded config file silently — it is user-invoked by design (Hermes core
+does not let a plugin register an LLM backend or edit `config.yaml` itself).
+The adapter it points at is launched inside the plugin on `register()` and
+dies with the Hermes session — there is no separate daemon to manage.
+
+After install you can pick **AWS Build** as a model in the TUI/CLI
+(`-m aws-build`) or keep using the `ask_q` tool directly.
+
+|--
 
 ## Architecture
 
