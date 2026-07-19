@@ -193,9 +193,6 @@ def _load_sso_token() -> Optional[dict]:
     except Exception:  # noqa: BLE001
         return None
     try:
-        tok = sso_oidc._load_pool_token()
-        if tok:
-            return tok
         return sso_oidc._load_token()
     except Exception:  # noqa: BLE001
         return None
@@ -213,14 +210,14 @@ def get_token() -> dict:
 
     Resolution (newest valid token wins, by `expires_at` as a write-order
     proxy):
-      1. The plugin's BID login store (auth.sso_oidc: Hermes credential pool,
-         falling back to the .bid_token.json mirror).
+      1. The plugin's BID login store (auth.sso_oidc: the .bid_token.json mirror).
       2. Our persisted cache (.q_token.json under HERMES_HOME).
       3. If any stored token is present but expired, attempt a silent OIDC
          refresh_token exchange (no browser/interaction) before giving up.
       4. Otherwise raise with an actionable message.
-    `bid_logout` / `bid_login` delete the stale `.q_token.json` so the new
-    login is unambiguous.
+    The plugin owns its token store end-to-end and does NOT use the Hermes
+    credential pool / `hermes auth` mechanism. `bid_logout` / `bid_login`
+    delete the stale `.q_token.json` so the new login is unambiguous.
     """
     candidates = []
     sso_tok = _load_sso_token()
@@ -244,9 +241,8 @@ def get_token() -> dict:
                 return refreshed
     raise RuntimeError(
         "No valid Amazon Q token available. Authenticate via the `bid_login` plugin "
-        "tool (or `hermes auth add aws-build`), which performs the OIDC device flow "
-        "and writes the token the chat path reads. Then retry. A refresh is attempted "
-        "automatically on expiry."
+        "tool, which performs the OIDC device flow and writes the token the chat "
+        "path reads. Then retry. A refresh is attempted automatically on expiry."
     )
 
 # --- request auth (Bearer only) ---
@@ -347,8 +343,7 @@ def chat(
             if _retries >= 1:
                 raise RuntimeError(
                     "Amazon Q rejected the bearer token even after a silent "
-                    "refresh. Re-authenticate via the `bid_login` plugin tool (or "
-                    "`hermes auth add aws-build`)."
+                    "refresh. Re-authenticate via the `bid_login` plugin tool."
                 )
             for cand in (_load_token(), _load_sso_token()):
                 if cand and (cand.get("refresh_token") or cand.get("refreshToken")):
@@ -362,9 +357,8 @@ def chat(
                         )
             raise RuntimeError(
                 "Amazon Q rejected the bearer token (expired/revoked). Re-authenticate "
-                "via the `bid_login` plugin tool (or `hermes auth add aws-build`) — it "
-                "performs the OIDC device flow. A refresh is attempted automatically "
-                "on expiry."
+                "via the `bid_login` plugin tool — it performs the OIDC device flow. "
+                "A refresh is attempted automatically on expiry."
             )
         raise RuntimeError(f"Q chat HTTP {r.status_code}: {err}")
     return _extract_answer_with_conversation_id(r)
