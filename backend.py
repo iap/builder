@@ -324,7 +324,6 @@ def _extract_answer_with_conversation_id(response: requests.Response) -> tuple[s
     raw = b""
     for chunk in response.iter_content(chunk_size=4096):
         raw += chunk
-    _ = raw  # keep reference for parity with _extract_answer debugging
     text = raw.decode("utf-8", "replace")
     parts: list[str] = []
     for m in _CONTENT_RE.finditer(text):

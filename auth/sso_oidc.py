@@ -121,17 +121,8 @@ def _client():
         return _cached_client
 
 
-def is_available() -> bool:
-    """check_fn: True when boto3 is importable for the device flow."""
-    try:
-        import boto3  # noqa: F401
-
-        return True
-    except Exception:  # noqa: BLE001
-        return False
-
-
 # --- Client registration (cached to disk, server-recommended) ---
+
 def _load_registration() -> Optional[dict]:
     data = _read_secret(_reg_path())
     if not data:
