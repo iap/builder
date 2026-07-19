@@ -373,6 +373,63 @@ def test_refresh_accepts_camel_case_expires_in(monkeypatch):
     assert out["expires_at"] > 1700
 
 
+def test_refresh_uses_registration_client_credentials(monkeypatch):
+    """A pool/mirror token omits client_id/client_secret (they live in the OIDC
+    registration). _refresh must pull them from the registration so the refresh
+    request is complete — otherwise it sends an empty clientId and AWS rejects
+    it, forcing a full device re-login on every expiry despite a valid
+    refresh_token.
+    """
+    from auth import sso_oidc
+
+    captured = {}
+
+    def _fake_post(url, **kw):
+        captured.update(kw.get("json", {}))
+        return _FakeRefreshResp(
+            {"access_token": "NEW", "refresh_token": "R", "expires_in": 3600}
+        )
+
+    monkeypatch.setattr(backend.requests, "post", _fake_post)
+    monkeypatch.setattr(backend, "_save_token", lambda tok: None)
+    monkeypatch.setattr(
+        sso_oidc, "_load_registration", lambda: {"client_id": "CID", "client_secret": "CSEC"}
+    )
+    # Token with NO client credentials, as the pool/mirror store it.
+    out = backend._refresh({"refresh_token": "R", "expires_at": 1})
+    assert captured["clientId"] == "CID"
+    assert captured["clientSecret"] == "CSEC"
+    assert out["access_token"] == "NEW"
+
+
+def test_refresh_prefers_token_client_credentials(monkeypatch):
+    """When the token already carries client credentials, use them directly
+    (don't reach for the registration).
+    """
+    from auth import sso_oidc
+
+    captured = {}
+
+    def _fake_post(url, **kw):
+        captured.update(kw.get("json", {}))
+        return _FakeRefreshResp(
+            {"access_token": "NEW", "refresh_token": "R", "expires_in": 3600}
+        )
+
+    monkeypatch.setattr(backend.requests, "post", _fake_post)
+    monkeypatch.setattr(backend, "_save_token", lambda tok: None)
+    called = {"reg": False}
+    monkeypatch.setattr(
+        sso_oidc, "_load_registration", lambda: called.update(reg=True) or {}
+    )
+    out = backend._refresh(
+        {"refresh_token": "R", "expires_at": 1, "client_id": "TID", "client_secret": "TSEC"}
+    )
+    assert captured["clientId"] == "TID"
+    assert captured["clientSecret"] == "TSEC"
+    assert not called["reg"]  # registration only consulted when creds missing
+
+
 # --- chat(): refresh-then-retry is bounded (no infinite recursion) ---
 
 
