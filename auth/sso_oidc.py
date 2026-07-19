@@ -341,6 +341,9 @@ def get_status() -> dict:
     mirror_tok = _load_token()
     tok = mirror_tok if (mirror_tok and mirror_tok.get("expires_at", 0) > time.time()) else None
     refreshed = False
+    expired_token_present = bool(
+        mirror_tok and mirror_tok.get("expires_at", 0) <= time.time()
+    )
     if not tok and mirror_tok and mirror_tok.get("refresh_token"):
         # Expired access token but refreshable -> renew silently.
         refreshed = refresh_token()
@@ -391,7 +394,7 @@ def get_status() -> dict:
             error = "no_registration"
     return {
         "authenticated": False,
-        "phase": phase,
+        "phase": "expired" if expired_token_present else phase,
         "user_code": flow.get("user_code") if flow else None,
         "verification_uri_complete": flow.get("verification_uri_complete") if flow else None,
         "expires_in": flow.get("expires_in") if flow else None,
