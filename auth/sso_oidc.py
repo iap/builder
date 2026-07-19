@@ -47,55 +47,10 @@ _lock = threading.Lock()
 _stop = threading.Event()
 _poll_thread: Optional[threading.Thread] = None
 
-# The Hermes credential pool is the canonical store for the authenticated
-# token. hermes auth add aws-build writes it there; this module reads it first
-# and uses the local .bid_* mirror for transient flow/poll state.
-POOL_PROVIDER = "aws-build"
-
-
-def _load_pool_token() -> Optional[dict]:
-    """Read the canonical aws-build credential from the Hermes credential pool.
-
-    Returns a token-shaped dict compatible with _load_token(), or None.
-    Defensive: any failure yields None so the caller falls back to the
-    local .bid_* mirror.
-    """
-    try:
-        from agent.credential_pool import load_pool
-    except Exception:  # noqa: BLE001
-        return None
-    try:
-        entries = load_pool(POOL_PROVIDER).entries()
-    except Exception:  # noqa: BLE001
-        return None
-    now_ms = time.time() * 1000
-    for e in entries:
-        if e.access_token and (e.expires_at_ms or 0) > now_ms:
-            extra = e.extra or {}
-            return {
-                "access_token": e.access_token,
-                "refresh_token": e.refresh_token,
-                "expires_at": (e.expires_at_ms or 0) / 1000.0,
-                "token_type": extra.get("token_type"),
-                "scopes": extra.get("scopes"),
-            }
-    return None
-
-
-def _clear_pool() -> None:
-    """Remove all aws-build credentials from the canonical pool store."""
-    try:
-        from agent.credential_pool import load_pool
-    except Exception:  # noqa: BLE001
-        return
-    try:
-        pool = load_pool(POOL_PROVIDER)
-        while pool.entries():
-            pool.remove_index(1)
-    except Exception:  # noqa: BLE001
-        pass
-
-
+# This plugin is fully self-contained: the authenticated token lives ONLY in
+# the local `.bid_token.json` mirror under HERMES_HOME. It does NOT use the
+# Hermes credential pool / `hermes auth` mechanism (that integration was never
+# wired up in core, so the plugin owns its own token store end-to-end).
 # --- Paths (always HERMES_HOME, never hardcoded ~/.hermes) ---
 def _home() -> Path:
     from hermes_constants import get_hermes_home
@@ -245,14 +200,6 @@ def _poll_once(reg: dict, flow: dict) -> str:
             deviceCode=flow["device_code"],
         )
         _save_token(out, reg)
-        # Mirror into the canonical credential pool too, so a fresh device
-        # login is visible to get_status()/show_identity() (which read the
-        # pool first). Without this the token only landed in .bid_token.json
-        # and the pool stayed empty/stale after a re-auth.
-        try:
-            _save_pool_token(out, reg)
-        except Exception:  # noqa: BLE001
-            pass
         try:
             _flow_path().unlink()
         except OSError:  # noqa: BLE001
@@ -343,52 +290,9 @@ def start_login() -> dict:
     }
 
 
-def _save_pool_token(out: dict, reg: dict) -> None:
-    """Mirror a refreshed token into the canonical pool entry, if present."""
-    try:
-        from agent.credential_pool import load_pool, PooledCredential
-    except Exception:  # noqa: BLE001
-        return
-    try:
-        pool = load_pool(POOL_PROVIDER)
-        entries = pool.entries()
-        if entries:
-            e = entries[0]
-            pool.remove_index(1)
-            updated = PooledCredential(
-                provider=POOL_PROVIDER,
-                id=e.id,
-                label=e.label,
-                auth_type=e.auth_type,
-                priority=0,
-                source=e.source,
-                access_token=out.get("accessToken"),
-                refresh_token=out.get("refreshToken", e.refresh_token),
-                expires_at_ms=int((time.time() + out.get("expiresIn", 0)) * 1000),
-                extra={**(e.extra or {}), "token_type": out.get("tokenType"), "scopes": reg.get("scopes")},
-            )
-            pool.add_entry(updated)
-        else:
-            updated = PooledCredential(
-                provider=POOL_PROVIDER,
-                id=None,
-                label="Amazon BID (Build ID)",
-                auth_type="oauth",
-                priority=0,
-                source="plugin",
-                access_token=out.get("accessToken"),
-                refresh_token=out.get("refreshToken"),
-                expires_at_ms=int((time.time() + out.get("expiresIn", 0)) * 1000),
-                extra={"token_type": out.get("tokenType"), "scopes": reg.get("scopes")},
-            )
-            pool.add_entry(updated)
-    except Exception:  # noqa: BLE001
-        pass
-
-
 def refresh_token() -> bool:
     """Use the refresh token to obtain a new access token. Returns success."""
-    tok = _load_pool_token() or _load_token()
+    tok = _load_token()
     reg = _load_registration()
     if not tok or not reg or not tok.get("refresh_token"):
         return False
@@ -402,7 +306,6 @@ def refresh_token() -> bool:
                 refreshToken=tok["refresh_token"],
             )
             _save_token(out, reg)
-            _save_pool_token(out, reg)
             return True
         except Exception:  # noqa: BLE001
             if attempt < 2:
@@ -414,14 +317,8 @@ def refresh_token() -> bool:
 
 
 def ensure_valid() -> bool:
-    """Refresh the token in place if expired and a refresh token exists.
-
-    Reads the credential pool and the `.bid_token.json` mirror and
-    refreshes the newest valid token when expired, so a token that lives
-    only in one store is still considered instead of triggering a needless
-    device re-login.
-    """
-    tok = _load_pool_token() or _load_token()
+    """Refresh the token in place if expired and a refresh token exists."""
+    tok = _load_token()
     if not tok:
         return False
     if tok.get("expires_at", 0) > time.time():
@@ -434,17 +331,11 @@ def get_status() -> dict:
 
     Never includes the raw token.
 
-    Reads both the credential pool and the `.bid_token.json` mirror and
-    reports the *newest* valid token (by ``expires_at``), so a fresh
-    ``bid_login`` is not shadowed by a still-valid but stale pool entry from
-    an earlier account — consistent with ``backend.get_token()``.
+    Reads the local `.bid_token.json` mirror (this plugin's sole token
+    store — it does not use the Hermes credential pool).
     """
-    pool_tok = _load_pool_token()
     mirror_tok = _load_token()
-    candidates = [t for t in (pool_tok, mirror_tok) if t]
-    valid = [t for t in candidates if t.get("expires_at", 0) > time.time()]
-    valid.sort(key=lambda t: t.get("expires_at", 0), reverse=True)
-    tok = valid[0] if valid else None
+    tok = mirror_tok if (mirror_tok and mirror_tok.get("expires_at", 0) > time.time()) else None
     authenticated = tok is not None
     if authenticated:
         return {
@@ -504,7 +395,7 @@ def get_status() -> dict:
 def show_identity() -> dict:
     """Return token identity metadata only (no raw token)."""
     ensure_valid()
-    tok = _load_pool_token() or _load_token()
+    tok = _load_token()
     if not tok:
         return {"authenticated": False}
     return {
@@ -522,18 +413,13 @@ def show_identity() -> dict:
 
 
 def logout() -> None:
-    """Stop polling and delete all stored secrets.
-
-    Clears both the canonical Hermes credential pool entry and the
-    .bid_* mirror files.
-    """
+    """Stop polling and delete all stored secrets (local mirror files)."""
     _stop.set()
     global _poll_thread
     thread = _poll_thread
     _poll_thread = None
     if thread is not None and thread.is_alive():
         thread.join(timeout=2.0)
-    _clear_pool()
     # Delete mirror files in the canonical plugin directory.
     filenames = (".bid_token.json", ".bid_registration.json", ".bid_flow.json")
     dirs = (_home() / "plugins" / _PLUGIN_DIR_NAME,)
