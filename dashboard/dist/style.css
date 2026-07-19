@@ -42,6 +42,10 @@
   color: var(--destructive, #ef4444);
 }
 
+.ab-ok {
+  color: var(--primary, #3b82f6);
+}
+
 .ab-muted {
   font-size: 13px;
   color: var(--muted, #888);

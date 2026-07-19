@@ -252,6 +252,13 @@
                 "Expires: " + status.token_expires_at_iso,
               )
             : null,
+          authenticated && status.refreshed
+            ? React.createElement(
+                "div",
+                { className: "ab-meta ab-ok" },
+                "Renewed automatically (was expired; refresh token reused).",
+              )
+            : null,
           status.error
             ? React.createElement(
                 "div",
