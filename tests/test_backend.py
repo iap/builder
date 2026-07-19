@@ -476,3 +476,66 @@ def test_chat_empty_model_defaults_to_auto(monkeypatch):
     assert (
         body["conversationState"]["currentMessage"]["userInputMessage"]["modelId"] == "auto"
     )
+
+
+# --- model-id resolution (unknown model -> auto; guards Q's opaque HTTP 500) ---
+def test_resolve_model_id_passes_known_and_auto():
+    """Known catalog names + 'auto' are forwarded verbatim."""
+    for m in [*backend.list_models(), "auto"]:
+        assert backend._resolve_model_id(m) == m
+
+
+def test_resolve_model_id_empty_and_none_default_to_auto():
+    assert backend._resolve_model_id("") == "auto"
+    assert backend._resolve_model_id(None) == "auto"
+    assert backend._resolve_model_id("   ") == "auto"
+
+
+def test_resolve_model_id_coerces_unknown_to_auto():
+    """Unknown names and plausible typos coerce to 'auto'.
+
+    Verified live: Q returns an opaque HTTP 500 (InternalServerException) for
+    ANY unsupported modelId, including the dashed typo 'claude-sonnet-4-5' and
+    unrelated names like 'gpt-4-turbo'. Coercing to 'auto' turns that crash
+    into a usable response.
+    """
+    assert backend._resolve_model_id("gpt-4-turbo") == "auto"
+    assert backend._resolve_model_id("claude-sonnet-4-5") == "auto"  # dashed typo
+    assert backend._resolve_model_id("does-not-exist") == "auto"
+
+
+def test_chat_coerces_unknown_model_to_auto(monkeypatch):
+    """End-to-end: an unknown model reaches Q as modelId 'auto', not the raw
+    string (which would 500)."""
+    captured = {}
+
+    class _OkResp:
+        status_code = 200
+
+        def iter_content(self, chunk_size=1024):
+            yield '{"content":"ok","modelId":"auto"}'.encode()
+
+    def _fake_post(url, **kwargs):
+        captured["body"] = kwargs.get("data")
+        return _OkResp()
+
+    monkeypatch.setattr(backend, "get_token", lambda: {"access_token": "tok"})
+    monkeypatch.setattr(backend.requests, "post", _fake_post)
+
+    backend.chat("hi", model="gpt-4-turbo")
+    body = json.loads(captured["body"])
+    assert (
+        body["conversationState"]["currentMessage"]["userInputMessage"]["modelId"] == "auto"
+    )
+
+
+def test_import_sso_oidc_returns_module():
+    """_import_sso_oidc() resolves the auth.sso_oidc module regardless of load
+    style (relative-first, absolute-fallback). Guards the live regression where
+    a bare `from auth import sso_oidc` raised 'No module named auth' under
+    core's package load and masked the real token error."""
+    mod = backend._import_sso_oidc()
+    assert hasattr(mod, "get_status")
+    assert hasattr(mod, "refresh_token")
+    assert hasattr(mod, "_load_token")
+
