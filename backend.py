@@ -147,15 +147,16 @@ def _refresh(tok: dict) -> Optional[dict]:
     new = r.json()
     tok.update(new)
     # Refresh responses omit expires_at; stamp it so _token_expired() works.
-    # Always recompute from expiresIn — tok may already carry a STALE
-    # expires_at (from the pre-refresh token), and the `if "expires_at" not
-    # in tok` guard would skip the update, leaving an expired timestamp on
-    # disk (bug: every call re-refreshed because the saved token looked
-    # expired). Recompute whenever expiresIn is present.
-    if new.get("expiresIn"):
-        import time as _time
-
-        tok["expires_at"] = int(_time.time()) + int(new["expiresIn"])
+    # OAuth2 token responses use snake_case `expires_in`; AWS OIDC's JSON
+    # protocol (and botocore) use camelCase `expiresIn`. Accept BOTH casings
+    # here: this is a raw requests.post to the OIDC /token endpoint, which
+    # returns the standard wire form `expires_in`. If we only read
+    # `expiresIn`, the stamp is skipped, the on-disk token keeps its STALE
+    # expires_at, get_token() sees it as still-expired and re-refreshes in a
+    # loop on the next chat call. Recompute whenever an expiry field is present.
+    _expires_in = new.get("expires_in") or new.get("expiresIn")
+    if _expires_in:
+        tok["expires_at"] = int(time.time()) + int(_expires_in)
     _save_token(tok)
     return tok
 
@@ -251,6 +252,7 @@ def chat(
     tools: Optional[list] = None,
     tool_results: Optional[list] = None,
     history: Optional[list] = None,
+    _retries: int = 0,
 ) -> tuple[str, Optional[str], Optional[str]]:
     """Send `prompt` to Q's GenerateAssistantResponse and return (answer, conversation_id, tool_use_id).
 
@@ -319,11 +321,26 @@ def chat(
         # ONE retry before giving up — don't nuke a possibly-valid token on a
         # generic 400, and don't require user interaction. (m1/m3)
         if r.status_code in (400, 401) and "invalid" in err.lower():
+            # Bound the refresh-then-retry to a single attempt. After a
+            # refresh (which now stamps a fresh expires_at), get_token() will
+            # return the valid token; a second 400/401 means the credentials
+            # are genuinely rejected, so stop rather than recursing forever.
+            if _retries >= 1:
+                raise RuntimeError(
+                    "Amazon Q rejected the bearer token even after a silent "
+                    "refresh. Re-authenticate via the `bid_login` plugin tool (or "
+                    "`hermes auth add aws-build`)."
+                )
             for cand in (_load_token(), _load_sso_token()):
                 if cand and (cand.get("refresh_token") or cand.get("refreshToken")):
                     refreshed = _refresh(cand)
                     if refreshed:
-                        return chat(prompt, model=model, conversation_id=conversation_id)
+                        return chat(
+                            prompt,
+                            model=model,
+                            conversation_id=conversation_id,
+                            _retries=_retries + 1,
+                        )
             raise RuntimeError(
                 "Amazon Q rejected the bearer token (expired/revoked). Re-authenticate "
                 "via the `bid_login` plugin tool (or `hermes auth add aws-build`) — it "
