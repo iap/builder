@@ -74,6 +74,29 @@ def test_adapter_sse_shape(monkeypatch):
     assert frames[2] == "data: [DONE]"
 
 
+def test_adapter_sse_frames_end_with_blank_line(monkeypatch):
+    """Every SSE event must be terminated by a BLANK line ("\\n\\n"), per the
+    SSE / OpenAI streaming spec. With only a single "\\n", Hermes's openai_chat
+    parser reads two `data:` frames as one chunk and fails to json.loads()
+    with 'Extra data: line 2 column 1' — the exact live CLI failure this
+    guards against. splitlines() hid the bug because it collapses \\n and
+    \\n\\n, so assert on the raw bytes instead."""
+    import adapter
+    from importlib import import_module
+
+    backend = import_module("backend")
+    monkeypatch.setattr(backend, "chat", lambda *a, **k: ("hello", None, None))
+    monkeypatch.setattr(adapter, "backend", backend)
+
+    raw = adapter._handle_chat({"messages": [{"role": "user", "content": "hi"}]})
+    text = raw.decode()
+    # No two `data:` lines may be separated by only a single newline.
+    assert "}\ndata:" not in text, "SSE frames not separated by a blank line"
+    # Each JSON event frame is followed by a blank line.
+    assert text.count("}\n\n") >= 2  # role frame + content frame
+    assert text.endswith("data: [DONE]\n\n")
+
+
 def test_adapter_surfaces_chat_errors_as_sse(monkeypatch):
     """When backend.chat() raises (e.g. token missing), the adapter must
     return an OpenAI-style error frame, not crash the HTTP handler."""
