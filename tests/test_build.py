@@ -115,3 +115,61 @@ def test_get_status_falls_back_when_no_valid_token(monkeypatch, tmp_path):
     st = sso_oidc.get_status()
     assert st["authenticated"] is False
     assert st["phase"] == "idle"
+
+
+def test_get_status_refreshes_expired_token(monkeypatch, tmp_path):
+    """get_status() must silently refresh an expired access token (when a
+    refresh token exists) and report authenticated, flagging `refreshed`."""
+    from auth import sso_oidc
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    base = tmp_path / "plugins" / "aws-build"
+    base.mkdir(parents=True)
+    # Expired access token but with a usable refresh token on disk.
+    (base / ".bid_token.json").write_text(
+        json.dumps(
+            {"access_token": "EXPIRED", "refresh_token": "R", "expires_at": time.time() - 10}
+        )
+    )
+
+    refreshed = {"called": False}
+
+    def fake_refresh():
+        refreshed["called"] = True
+        # Simulate a successful refresh: write a fresh, valid token.
+        (base / ".bid_token.json").write_text(
+            json.dumps(
+                {"access_token": "NEW", "refresh_token": "R", "expires_at": time.time() + 3600}
+            )
+        )
+        return True
+
+    monkeypatch.setattr(sso_oidc, "refresh_token", fake_refresh)
+    monkeypatch.setattr(sso_oidc, "_load_flow", lambda: None)
+
+    st = sso_oidc.get_status()
+    assert refreshed["called"] is True
+    assert st["authenticated"] is True
+    assert st["refreshed"] is True
+
+
+def test_get_status_reports_expired_when_refresh_dead(monkeypatch, tmp_path):
+    """If the access token is expired and refresh fails, get_status() must NOT
+    claim authenticated — it reports expired (refreshed: False)."""
+    from auth import sso_oidc
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    base = tmp_path / "plugins" / "aws-build"
+    base.mkdir(parents=True)
+    (base / ".bid_token.json").write_text(
+        json.dumps(
+            {"access_token": "EXPIRED", "refresh_token": "R", "expires_at": time.time() - 10}
+        )
+    )
+
+    monkeypatch.setattr(sso_oidc, "refresh_token", lambda: False)
+    monkeypatch.setattr(sso_oidc, "_load_flow", lambda: None)
+
+    st = sso_oidc.get_status()
+    assert st["authenticated"] is False
+    assert st["refreshed"] is False
