@@ -455,3 +455,76 @@ def test_chat_bounded_refresh_retry(monkeypatch):
 
     with pytest.raises(RuntimeError):
         backend.chat("hi", model="claude-sonnet-4")
+
+
+def test_chat_sends_model_id(monkeypatch):
+    """chat() must forward `model` to Q as `modelId` (verified live: Q accepts
+    and echoes it)."""
+    captured = {}
+
+    class _OkResp:
+        status_code = 200
+
+        def iter_content(self, chunk_size=1024):
+            # minimal valid stream carrying content + modelId
+            yield '{"content":"ok","modelId":"claude-sonnet-4.5"}'.encode()
+
+    def _fake_post(url, **kwargs):
+        captured["body"] = kwargs.get("data")
+        return _OkResp()
+
+    monkeypatch.setattr(backend, "get_token", lambda: {"access_token": "tok"})
+    monkeypatch.setattr(backend.requests, "post", _fake_post)
+
+    backend.chat("hi", model="claude-sonnet-4.5")
+    body = json.loads(captured["body"])
+    assert body["conversationState"]["currentMessage"]["userInputMessage"]["modelId"] == "claude-sonnet-4.5"
+
+
+def test_chat_defaults_model_to_auto(monkeypatch):
+    """When no model is given, chat() must default modelId to 'auto' so a
+    Free-tier Builder ID gets a usable response rather than an entitlement
+    error."""
+    captured = {}
+
+    class _OkResp:
+        status_code = 200
+
+        def iter_content(self, chunk_size=1024):
+            yield '{"content":"ok","modelId":"auto"}'.encode()
+
+    def _fake_post(url, **kwargs):
+        captured["body"] = kwargs.get("data")
+        return _OkResp()
+
+    monkeypatch.setattr(backend, "get_token", lambda: {"access_token": "tok"})
+    monkeypatch.setattr(backend.requests, "post", _fake_post)
+
+    backend.chat("hi")
+    body = json.loads(captured["body"])
+    assert body["conversationState"]["currentMessage"]["userInputMessage"]["modelId"] == "auto"
+
+
+def test_chat_surfaces_subscription_error(monkeypatch):
+    """A Q entitlement/subscription rejection must be surfaced as a clear
+    RuntimeError (not swallowed, not treated as a token error)."""
+
+    class _SubResp:
+        status_code = 403
+
+        @property
+        def text(self):
+            return '{"__type":"AccessDeniedException","message":"not subscribed to Q Developer"}'
+
+        def iter_content(self, chunk_size=1024):
+            return iter([])
+
+    monkeypatch.setattr(backend, "get_token", lambda: {"access_token": "tok"})
+    monkeypatch.setattr(backend.requests, "post", lambda *a, **k: _SubResp())
+
+    with pytest.raises(RuntimeError) as exc:
+        backend.chat("hi", model="claude-sonnet-4.5")
+    assert "entitlement" in str(exc.value).lower() or "subscri" in str(exc.value).lower()
+    # Must NOT attempt a token refresh on a subscription error.
+    assert "rejected the bearer token" not in str(exc.value)
+
