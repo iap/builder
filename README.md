@@ -114,11 +114,14 @@ Free-form **tags** are likewise read from `plugin.yaml` (`tags:`) with a
 
 ## Usage — authentication
 
-The in-conversation tools (`bid_login`, `bid_status`, `bid_show_identity`,
-`bid_logout`) are the supported, working auth path. `bid_login` runs the
-self-contained OIDC device flow (RFC 8628) and writes the token to this
-plugin's own credential pool under provider `aws-build` — exactly what
-`ask_q` reads back. Use these for day-to-day auth:
+This plugin manages its own Amazon BID (Build ID) OIDC device flow
+(RFC 8628) **end-to-end and is fully self-contained.** It does **not** use
+the Hermes credential pool or the `hermes auth` mechanism — there is no
+integration between the two, by design. Authenticate entirely through the
+in-conversation tools (`bid_login`, `bid_status`, `bid_show_identity`,
+`bid_logout`); `bid_login` writes the token to this plugin's local
+`.bid_token.json` under `HERMES_HOME`, which is exactly what `ask_q` reads
+back:
 
 ```bash
 # inside a Hermes session (or via the aws-build toolset)
@@ -127,14 +130,9 @@ bid_status     # report current auth / device-login state
 bid_logout     # stop polling and delete all stored secrets
 ```
 
-> **`hermes auth` CLI status (verified 2026-07-19):** the core CLI's
-> device-flow provider id is `aws-bid`, not `aws-build`, and it is **not yet
-> wired to this plugin's token store**. `hermes auth add aws-build` currently
-> just creates a generic `custom:aws-build` API-key slot that `ask_q` ignores,
-> and `hermes auth status aws-bid` fails on an import-slug mismatch
-> (`hermes_plugins.build` vs the installed `aws-build` slug). Until that
-> integration is fixed in Hermes core, **use the in-conversation `bid_*` tools
-> above** — they are self-contained and correct.
+Do **not** use `hermes auth add/status/logout aws-build` for this plugin:
+that CLI path is unrelated to this plugin's token store and will not affect
+`ask_q`. The `bid_*` tools above are the only supported auth interface.
 
 ---
 
@@ -157,7 +155,7 @@ These files hold live credentials and are **gitignored** (never commit them):
 - `.q_token.json`, `.bid_token.json`, `.bid_registration.json`, `.bid_flow.json`
 - `auth/oidc_client_secret.json`
 
-To rotate: `bid_logout` (or `hermes auth logout aws-build`) and re-authenticate.
+To rotate: `bid_logout` and re-authenticate via `bid_login`.
 
 ---
 

@@ -97,22 +97,19 @@ def test_get_status_prefers_newest_valid_token(monkeypatch, tmp_path):
     base.mkdir(parents=True)
     old = {"access_token": "OLD", "expires_at": time.time() + 3600}
     new = {"access_token": "NEW", "expires_at": time.time() + 7200}
-    # pool has the OLDER valid token; mirror has the NEWER one.
-    monkeypatch.setattr(
-        sso_oidc, "_load_pool_token", lambda: dict(old)
-    )
+    # .bid_token.json carries the NEWER valid token (single store; no pool).
     (base / ".bid_token.json").write_text(json.dumps(new))
 
     st = sso_oidc.get_status()
     assert st["authenticated"] is True
-    # identity reflects the NEWER token's expiry, not the stale pool one.
+    # identity reflects the token from .bid_token.json.
     assert st["token_expires_at"] == new["expires_at"]
+
 
 def test_get_status_falls_back_when_no_valid_token(monkeypatch, tmp_path):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    monkeypatch.setattr(sso_oidc, "_load_pool_token", lambda: None)
     monkeypatch.setattr(sso_oidc, "_load_token", lambda: None)
     monkeypatch.setattr(sso_oidc, "_load_flow", lambda: None)
     st = sso_oidc.get_status()
