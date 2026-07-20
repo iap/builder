@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * AWS Build (Amazon Builder ID) auth dashboard card.
+ * AWS Builder ID (Amazon BID) auth dashboard card.
  *
  * Uses the Hermes plugin SDK exposed on window:
  *   - window.__HERMES_PLUGINS__.register(name, Component)  (required!)
@@ -11,7 +11,7 @@
  * called register() within a microtask. So we MUST call register() at the top
  * level (no awaits before it).
  *
- * Flow: a single "Login with Build ID" button starts an RFC 8628 device flow.
+ * Flow: a single "Login with Builder ID" button starts an RFC 8628 device flow.
  * The backend returns a verification URL + user_code; we open the URL in a new
  * tab and show the code. The card then polls GET /status (which actively polls
  * the in-flight flow) until the human approves in their browser. No headless
@@ -197,7 +197,7 @@
           "div",
           { className: "ab-card-header" },
           React.createElement(Icon, { name: "Cloud" }),
-          React.createElement("span", null, "AWS Build"),
+          React.createElement("span", null, "AWS Builder ID"),
           React.createElement(
             "span",
             { className: "ab-sub" },
@@ -331,7 +331,7 @@
                     className: "w-full",
                   },
                   React.createElement(Icon, { name: "LogIn" }),
-                  " Login with Build ID",
+                   " Login with Builder ID",
                 ),
                 React.createElement(
                   "p",

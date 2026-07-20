@@ -1,6 +1,6 @@
 """Dashboard backend for the builder plugin.
 
-Exposes the Amazon Builder ID (Build ID) device-login flow over the Hermes
+Exposes the Amazon Builder ID (BID) device-login flow over the Hermes
 plugin API surface, mounted at ``/api/plugins/builder/...``. Reuses the
 plugin's own ``sso_oidc`` module so the auth state lives in one place (no core
 files touched). The plugin's tools (bid_login / bid_status / bid_logout) call
@@ -73,7 +73,7 @@ async def status() -> dict[str, Any]:
 
 @router.post("/login")
 async def login() -> dict[str, Any]:
-    """Start the Build ID device flow; returns user_code + verification URL."""
+    """Start the Builder ID device flow; returns user_code + verification URL."""
     try:
         info = _sso().start_login()
         return {
