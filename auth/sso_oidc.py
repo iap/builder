@@ -1,7 +1,7 @@
-"""Amazon BID (Build ID) — headless SSO-OIDC device authorization (RFC 8628).
+"""Amazon BID (Builder ID) — headless SSO-OIDC device authorization (RFC 8628).
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-Wraps the Amazon BID (Build ID) device flow for the Amazon builder CLI,
+Wraps the Amazon BID (Builder ID) device flow for the Amazon builder CLI,
 but requires neither that binary nor any AWS credentials on the client side.
 The OIDC server (oidc.us-east-1.amazonaws.com) accepts the public client
 registration anonymously, so the whole flow runs headless: the agent starts it,

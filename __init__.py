@@ -1,4 +1,4 @@
-"""AWS Build plugin — Amazon Q Developer for Hermes Agent (direct HTTPS chat).
+"""AWS Builder ID plugin — Amazon Q Developer for Hermes Agent (direct HTTPS chat).
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
 Hermes drives the agentic loop. This plugin exposes Q as a single tool:
@@ -64,7 +64,7 @@ def _check_available() -> bool:
 # --- tool handlers ---
 
 def _handle_ask_q(args: dict[str, Any], **kwargs: Any) -> str:
-    """Send a prompt to AWS Build (Q) and return the answer."""
+    """Send a prompt to AWS Builder ID (Q) and return the answer."""
     prompt = args.get("prompt", "")
     if not prompt:
         return _error("prompt is required", code="missing_prompt")
@@ -146,7 +146,7 @@ _TOOLS = (
         {
             "name": "ask_q",
             "description": (
-                "Send a prompt to AWS Build (Amazon Q / Claude) and return the answer. "
+                "Send a prompt to AWS Builder ID (Amazon Q / Claude) and return the answer. "
                 "Hermes drives the agentic loop; Q answers single prompts. "
                 "Optionally pass conversation_id to continue a prior Q conversation."
             ),
@@ -176,7 +176,7 @@ _TOOLS = (
         {
             "name": "bid_login",
             "description": (
-                "Start an Amazon BID (Build ID) device login. Returns a "
+                "Start an Amazon BID (Builder ID) device login. Returns a "
                 "user_code and verification URL to approve in your browser."
             ),
             "parameters": {"type": "object", "properties": {}},
@@ -222,7 +222,7 @@ _TOOLS = (
         "models",
         {
             "name": "models",
-            "description": "List available AWS Build models (Claude variants) and plugin tags.",
+            "description": "List available AWS Builder ID models (Claude variants) and plugin tags.",
             "parameters": {"type": "object", "properties": {}},
         },
         _handle_bid_models,
@@ -233,7 +233,7 @@ _TOOLS = (
         "tags",
         {
             "name": "tags",
-            "description": "List free-form tags describing the AWS Build plugin (aws, amazon-q, claude, chat, builder-id, auth).",
+            "description": "List free-form tags describing the AWS Builder ID plugin (aws, amazon-q, claude, chat, builder-id, auth).",
             "parameters": {"type": "object", "properties": {}},
         },
         _handle_tags,

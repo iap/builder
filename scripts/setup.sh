@@ -43,7 +43,7 @@ echo "✓ backed up config → $BACKUP"
 BLOCK_FILE="$(mktemp)"
 cat > "$BLOCK_FILE" <<EOF
   aws-build:
-    name: AWS Build
+    name: AWS Builder ID
     transport: openai_chat
     base_url: http://127.0.0.1:${PORT}/v1
     key_env: AWS_BUILD_ADAPTER_DUMMY
@@ -85,7 +85,7 @@ if grep -qE '^[[:space:]]*aws-build:' "$CONFIG"; then
   echo "✓ added providers: aws-build → http://127.0.0.1:${PORT}/v1 (transport: openai_chat)"
   echo "✓ NO :8088 bridge — adapter launches inside the plugin on register()."
   echo
-  echo "NEXT: restart Hermes, then in TUI/CLI use '-m aws-build' or pick 'AWS Build'."
+  echo "NEXT: restart Hermes, then in TUI/CLI use '-m aws-build' or pick 'AWS Builder ID'."
   echo "      (login once with: bid_login  — approve in browser)"
 else
   echo "✗ insert failed; restored from backup." >&2

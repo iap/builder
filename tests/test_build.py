@@ -833,7 +833,7 @@ def test_uninstall_removes_aws_build_block_and_enabled(tmp_path, monkeypatch):
     cfg = {
         "providers": {
             "g4f-auth": {"name": "G4F.dev"},
-            "aws-build": {"name": "AWS Build", "transport": "openai_chat"},
+            "aws-build": {"name": "AWS Builder ID", "transport": "openai_chat"},
         },
         "plugins": {"enabled": ["aws-build", "continual-learning"]},
         "model": {"provider": "kilo"},
@@ -874,7 +874,7 @@ def test_aws_build_resolves_as_cli_tui_model(monkeypatch):
     from hermes_cli.config import get_compatible_custom_providers
 
     provider_block = {
-        "name": "AWS Build",
+        "name": "AWS Builder ID",
         "transport": "openai_chat",
         "base_url": "http://127.0.0.1:8077/v1",
         "key_env": "AWS_BUILD_ADAPTER_DUMMY",
