@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# builder plugin: register aws-build as a selectable Hermes chat model.
+# builder plugin: register builder as a selectable Hermes chat model.
 #
 # WHY: Hermes routes chat through providers declared in ~/.hermes/config.yaml
 # with transport: openai_chat. The plugin ships a self-contained OpenAI-
 # compatible adapter (adapter.py, launched by register()) that translates to
-# Amazon Q. This script adds the providers: aws-build entry pointing at that
+# Amazon Q. This script adds the providers: builder entry pointing at that
 # adapter (localhost :8077) — NO :8088 bridge daemon, no orphaned ref.
 #
 # SAFE: idempotent (skips if already present), always backs up config.yaml
@@ -27,8 +27,8 @@ if [[ ! -f "$CONFIG" ]]; then
 fi
 
 # Idempotency: already present?
-if grep -qE '^[[:space:]]*aws-build:' "$CONFIG"; then
-  echo "✓ providers: aws-build already present in $CONFIG — nothing to do."
+if grep -qE '^[[:space:]]*builder:' "$CONFIG"; then
+  echo "✓ providers: builder already present in $CONFIG — nothing to do."
   echo "  Restart Hermes if you haven't since installing the plugin."
   exit 0
 fi
@@ -42,7 +42,7 @@ echo "✓ backed up config → $BACKUP"
 # Write the block to a temp file (real newlines, not escaped).
 BLOCK_FILE="$(mktemp)"
 cat > "$BLOCK_FILE" <<EOF
-  aws-build:
+  builder:
     name: AWS Builder ID
     transport: openai_chat
     base_url: http://127.0.0.1:${PORT}/v1
@@ -59,13 +59,13 @@ import sys
 cfg, blockfile = sys.argv[1], sys.argv[2]
 block = open(blockfile).read().rstrip("\n")
 lines = open(cfg).read().splitlines()
-if any(l.strip() == "aws-build:" for l in lines):
+if any(l.strip() == "builder:" for l in lines):
     sys.exit(0)  # idempotent guard (shell already checked)
 out, i, n, in_prov, done = [], 0, len(lines), False, False
 while i < n:
     out.append(lines[i])
     # We are inside the providers: block (set when we saw 'providers:'
-    # at col 0). Append the aws-build block once, right before the
+    # at col 0). Append the builder block once, right before the
     # block closes (next line at col 0, or EOF).
     if not done and in_prov and (
         i + 1 == n or (lines[i + 1] and not lines[i + 1].startswith("  "))
@@ -81,11 +81,11 @@ open(cfg, "w").write("\n".join(out) + "\n")
 PY
 rm -f "$BLOCK_FILE"
 
-if grep -qE '^[[:space:]]*aws-build:' "$CONFIG"; then
-  echo "✓ added providers: aws-build → http://127.0.0.1:${PORT}/v1 (transport: openai_chat)"
+if grep -qE '^[[:space:]]*builder:' "$CONFIG"; then
+  echo "✓ added providers: builder → http://127.0.0.1:${PORT}/v1 (transport: openai_chat)"
   echo "✓ NO :8088 bridge — adapter launches inside the plugin on register()."
   echo
-  echo "NEXT: restart Hermes, then in TUI/CLI use '-m aws-build' or pick 'AWS Builder ID'."
+  echo "NEXT: restart Hermes, then in TUI/CLI use '-m builder' or pick 'AWS Builder ID'."
   echo "      (login once with: bid_login  — approve in browser)"
 else
   echo "✗ insert failed; restored from backup." >&2

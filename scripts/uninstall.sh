@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# builder plugin: remove aws-build as a selectable Hermes chat model.
+# builder plugin: remove builder as a selectable Hermes chat model.
 #
-# WHY: install (setup.sh) adds a `providers: aws-build` entry + `plugins.enabled`
+# WHY: install (setup.sh) adds a `providers: builder` entry + `plugins.enabled`
 # entry so Hermes can route chat to the in-plugin adapter on :8077. Hermes core
 # does NOT auto-clean a plugin's config on `hermes plugins uninstall` (that only
 # rmtree's the plugin dir), so without this step an uninstall leaves a dangling
@@ -23,52 +23,52 @@ if [[ ! -f "$CONFIG" ]]; then
 fi
 
 # Idempotency: nothing to remove?
-if ! grep -qE '^[[:space:]]*aws-build:' "$CONFIG"; then
-  echo "✓ providers: aws-build already absent from $CONFIG — nothing to do."
-  # still normalize plugins.enabled (in case it lists aws-build without a provider block)
+if ! grep -qE '^[[:space:]]*builder:' "$CONFIG"; then
+  echo "✓ providers: builder already absent from $CONFIG — nothing to do."
+  # still normalize plugins.enabled (in case it lists builder without a provider block)
 else
   # Backup (once)
   BACKUP="${CONFIG}.bak.$(date +%Y%m%d_%H%M%S)"
   cp "$CONFIG" "$BACKUP"
   echo "✓ backed up config → $BACKUP"
 
-  # Remove the providers: aws-build block (the 'aws-build:' key, which is
+  # Remove the providers: builder block (the 'builder:' key, which is
   # indented under 'providers:', plus its child lines). Match on stripped
-  # line == 'aws-build:' (unique key, any indentation).
+  # line == 'builder:' (unique key, any indentation).
   "$HOME/.hermes/hermes-agent/venv/bin/python3" - "$CONFIG" <<'PY'
 import sys
 cfg = sys.argv[1]
 lines = open(cfg).read().splitlines()
 out, drop = [], False
 for ln in lines:
-    if ln.strip() == "aws-build:":
+    if ln.strip() == "builder:":
         drop = True            # start dropping this block
         continue
     if drop:
         if ln and not ln.startswith("  "):
             drop = False       # next top-level (or sibling) key -> stop dropping
         else:
-            continue           # still inside the aws-build block
+            continue           # still inside the builder block
     out.append(ln)
 open(cfg, "w").write("\n".join(out).rstrip("\n") + "\n")
 PY
-  echo "✓ removed providers: aws-build from $CONFIG"
+  echo "✓ removed providers: builder from $CONFIG"
 fi
 
-# Normalize plugins.enabled (remove aws-build if present) — backup-safe.
+# Normalize plugins.enabled (remove builder if present) — backup-safe.
 "$HOME/.hermes/hermes-agent/venv/bin/python3" - "$CONFIG" <<'PY'
 import sys, yaml
 cfg = sys.argv[1]
 c = yaml.safe_load(open(cfg))
 en = (c.get("plugins") or {}).get("enabled") or []
-if "aws-build" in en:
-    c.setdefault("plugins", {})["enabled"] = [x for x in en if x != "aws-build"]
+if "builder" in en:
+    c.setdefault("plugins", {})["enabled"] = [x for x in en if x != "builder"]
     yaml.safe_dump(c, open(cfg, "w"), sort_keys=False, default_flow_style=False)
-    print("✓ removed aws-build from plugins.enabled")
+    print("✓ removed builder from plugins.enabled")
 else:
-    print("✓ aws-build not in plugins.enabled — nothing to do.")
+    print("✓ builder not in plugins.enabled — nothing to do.")
 PY
 
 echo
-echo "NEXT: restart Hermes (and run 'hermes plugins uninstall aws-build' to drop the dir)."
+echo "NEXT: restart Hermes (and run 'hermes plugins uninstall builder' to drop the dir)."
 echo "      The :8077 adapter stops when the session ends (or on unregister())."
