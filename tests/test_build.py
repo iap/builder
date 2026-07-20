@@ -1105,3 +1105,85 @@ def test_cli_logout_clears_store(monkeypatch, tmp_path, capsys):
     assert cli.main(["logout"]) == 0
     assert cleared["n"] == 1
     assert "Logged out" in capsys.readouterr().out
+
+
+# --- backend.chat(): wire-protocol body (tools / history / modelId) ---
+
+class _FakeResp:
+    status_code = 200
+
+    def __init__(self, text):
+        self._text = text
+
+    def iter_content(self, chunk_size=4096):
+        yield self._text.encode("utf-8")
+
+
+def test_chat_wires_userinputmessagecontext_and_modelid(monkeypatch):
+    """chat() must build a faithful Q body: modelId coerced to a catalog value,
+    and tools/tool_results/history folded into userInputMessageContext. This
+    exercises the branch that ask_q never hits (Hermes drives tools itself), so
+    it must be covered explicitly rather than left unverified in the hot path."""
+    import backend
+
+    captured = {}
+
+    class FakePost:
+        def __call__(self, url, data=None, headers=None, timeout=None, stream=False):
+            captured["url"] = url
+            captured["data"] = data
+            captured["headers"] = headers
+            return _FakeResp(
+                '{"assistantResponseEvent":{"content":"ok","modelId":"auto"}}'
+            )
+
+    monkeypatch.setattr(backend, "requests", type("R", (), {"post": FakePost()})())
+    monkeypatch.setattr(backend, "get_token", lambda: {"access_token": "TOK"})
+
+    tools = [{"type": "function", "function": {"name": "fs_read", "description": "read"}}]
+    history = [{"role": "user", "content": "prior"}]
+    answer, cid, tuid = backend.chat(
+        "current prompt",
+        model="not-a-real-model",
+        tools=tools,
+        tool_results=[{"tool": "fs_read", "result": "x"}],
+        history=history,
+    )
+
+    assert answer == "ok"
+    body = json.loads(captured["data"])
+    msg = body["conversationState"]["currentMessage"]["userInputMessage"]
+    # modelId is coerced (unknown -> auto), not forwarded verbatim.
+    assert msg["modelId"] == "auto"
+    # Bearer token attached, no SigV4.
+    assert captured["headers"]["Authorization"] == "Bearer TOK"
+    assert captured["headers"]["x-amz-target"].startswith("AmazonCodeWhisperer")
+    # tools/history are folded into the context object (wire-protocol shape),
+    # and origin is the required "CLI" string.
+    ctx = msg["userInputMessageContext"]
+    assert ctx["tools"] == tools
+    assert ctx["toolResults"] == [{"tool": "fs_read", "result": "x"}]
+    assert ctx is not None
+    assert "history" in body["conversationState"]
+    assert msg["origin"] == "CLI"
+
+
+def test_chat_omits_context_when_no_tools(monkeypatch):
+    """When no tools/history are supplied, userInputMessageContext must be
+    absent (keep the body minimal + faithful to the simple chat shape)."""
+    import backend
+
+    captured = {}
+
+    class FakePost:
+        def __call__(self, url, data=None, headers=None, timeout=None, stream=False):
+            captured["data"] = data
+            return _FakeResp('{"assistantResponseEvent":{"content":"hi","modelId":"auto"}}')
+
+    monkeypatch.setattr(backend, "requests", type("R", (), {"post": FakePost()})())
+    monkeypatch.setattr(backend, "get_token", lambda: {"access_token": "TOK"})
+
+    backend.chat("plain prompt")
+    msg = json.loads(captured["data"])["conversationState"]["currentMessage"]["userInputMessage"]
+    assert "userInputMessageContext" not in msg
+    assert msg["content"] == "plain prompt"
