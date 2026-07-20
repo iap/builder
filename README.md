@@ -210,6 +210,26 @@ Do **not** use `hermes auth add/status/logout aws-build` for this plugin:
 that CLI path is unrelated to this plugin's token store and will not affect
 `ask_q`. The `bid_*` tools above are the only supported auth interface.
 
+### Standalone CLI (copy-device-link, no dashboard needed)
+
+For a terminal copy-device-link flow without the dashboard, use the bundled
+CLI. It imports the plugin's own `auth/sso_oidc` + `backend` modules, so it
+shares the **exact same** `auth/bid_token.json` store as the `bid_*` tools
+(not Hermes core's credential pool):
+
+```bash
+python3 aws_build_cli.py login     # prints a copyable verification URL + user_code, then polls to completion
+python3 aws_build_cli.py status    # current auth / device-flow state
+python3 aws_build_cli.py whoami    # token identity (no raw token)
+python3 aws_build_cli.py logout     # clear stored secrets
+python3 aws_build_cli.py models     # list advertised models + tags
+# convenience shim (anywhere): ~/.hermes/plugins/aws-build/bin/aws-build login
+```
+
+`login` prints the `verification_uri_complete` link to copy into a browser and
+waits for approval (Ctrl-C cancels; the pending flow is persisted, so `status`
+can resume polling). Override the home with `HERMES_HOME`.
+
 ---
 
 ## Dashboard card
