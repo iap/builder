@@ -533,13 +533,13 @@ def test_mirror_path_prefers_canonical_aws_build(monkeypatch, tmp_path):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    # Canonical (aws-build) file present -> read resolves to it.
-    canonical = tmp_path / "plugins" / "aws-build" / ".bid_token.json"
+    # Canonical (aws-build/auth) file present -> read resolves to it.
+    canonical = tmp_path / "plugins" / "aws-build" / "auth" / "bid_token.json"
     canonical.parent.mkdir(parents=True)
     canonical.write_text("{}")
     assert sso_oidc._token_path() == canonical
-    # _canonical_path always points at aws-build regardless of what exists.
-    assert sso_oidc._canonical_path(".bid_token.json") == canonical
+    # _canonical_path always points at aws-build/auth regardless of what exists.
+    assert sso_oidc._canonical_path("bid_token.json") == canonical
 
 
 def test_mirror_path_ignores_legacy_build_dir(monkeypatch, tmp_path):
@@ -548,17 +548,40 @@ def test_mirror_path_ignores_legacy_build_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     # A token left in the old plugins/build dir must NOT be picked up; the
     # resolved path stays canonical (aws-build) so state lives in one place.
-    legacy = tmp_path / "plugins" / "build" / ".bid_token.json"
+    legacy = tmp_path / "plugins" / "build" / "auth" / "bid_token.json"
     legacy.parent.mkdir(parents=True)
     legacy.write_text("{}")
     assert sso_oidc._token_path() == (
-        tmp_path / "plugins" / "aws-build" / ".bid_token.json"
+        tmp_path / "plugins" / "aws-build" / "auth" / "bid_token.json"
     )
 
 
 # --- get_status must report the NEWEST valid token (not a stale pool entry) ---
 # Regression: a still-valid but older pool token used to shadow a fresh
-# .bid_token.json from a re-auth on another account.
+# auth/bid_token.json from a re-auth on another account.
+
+def test_legacy_dotfile_token_migrates_to_auth_dir(monkeypatch, tmp_path):
+    """Backward-compat: a token left at the old dotted path
+    (plugins/aws-build/.bid_token.json) must be read AND migrated into the new
+    auth/bid_token.json location, so an existing session survives the move
+    without forcing a re-login."""
+    from auth import sso_oidc
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    base = tmp_path / "plugins" / "aws-build"
+    legacy = base / ".bid_token.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(json.dumps({"access_token": "LEGACY", "expires_at": time.time() + 3600}))
+
+    tok = sso_oidc._load_token()
+    assert tok is not None
+    assert tok["access_token"] == "LEGACY"
+    # migrated into the new canonical location
+    new_path = base / "auth" / "bid_token.json"
+    assert new_path.exists(), "legacy token must be migrated to auth/"
+    assert not legacy.exists(), "legacy dotted file should be removed after migrate"
+    assert json.loads(new_path.read_text())["access_token"] == "LEGACY"
+
 
 def test_get_status_prefers_newest_valid_token(monkeypatch, tmp_path):
     from auth import sso_oidc
@@ -566,14 +589,15 @@ def test_get_status_prefers_newest_valid_token(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     base = tmp_path / "plugins" / "aws-build"
     base.mkdir(parents=True)
+    (base / "auth").mkdir(parents=True, exist_ok=True)
     old = {"access_token": "OLD", "expires_at": time.time() + 3600}
     new = {"access_token": "NEW", "expires_at": time.time() + 7200}
-    # .bid_token.json carries the NEWER valid token (single store; no pool).
-    (base / ".bid_token.json").write_text(json.dumps(new))
+    # auth/bid_token.json carries the NEWER valid token (single store; no pool).
+    (base / "auth" / "bid_token.json").write_text(json.dumps(new))
 
     st = sso_oidc.get_status()
     assert st["authenticated"] is True
-    # identity reflects the token from .bid_token.json.
+    # identity reflects the token from auth/bid_token.json.
     assert st["token_expires_at"] == new["expires_at"]
 
 
@@ -596,8 +620,9 @@ def test_get_status_refreshes_expired_token(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     base = tmp_path / "plugins" / "aws-build"
     base.mkdir(parents=True)
+    (base / "auth").mkdir(parents=True, exist_ok=True)
     # Expired access token but with a usable refresh token on disk.
-    (base / ".bid_token.json").write_text(
+    (base / "auth" / "bid_token.json").write_text(
         json.dumps(
             {"access_token": "EXPIRED", "refresh_token": "R", "expires_at": time.time() - 10}
         )
@@ -608,7 +633,7 @@ def test_get_status_refreshes_expired_token(monkeypatch, tmp_path):
     def fake_refresh():
         refreshed["called"] = True
         # Simulate a successful refresh: write a fresh, valid token.
-        (base / ".bid_token.json").write_text(
+        (base / "auth" / "bid_token.json").write_text(
             json.dumps(
                 {"access_token": "NEW", "refresh_token": "R", "expires_at": time.time() + 3600}
             )
@@ -632,7 +657,8 @@ def test_get_status_reports_expired_when_refresh_dead(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     base = tmp_path / "plugins" / "aws-build"
     base.mkdir(parents=True)
-    (base / ".bid_token.json").write_text(
+    (base / "auth").mkdir(parents=True, exist_ok=True)
+    (base / "auth" / "bid_token.json").write_text(
         json.dumps(
             {"access_token": "EXPIRED", "refresh_token": "R", "expires_at": time.time() - 10}
         )
@@ -657,7 +683,8 @@ def test_get_status_no_refresh_when_valid(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     base = tmp_path / "plugins" / "aws-build"
     base.mkdir(parents=True)
-    (base / ".bid_token.json").write_text(
+    (base / "auth").mkdir(parents=True, exist_ok=True)
+    (base / "auth" / "bid_token.json").write_text(
         json.dumps(
             {"access_token": "OK", "refresh_token": "R", "expires_at": time.time() + 3600}
         )
@@ -680,7 +707,8 @@ def test_get_status_expired_no_refresh_token(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     base = tmp_path / "plugins" / "aws-build"
     base.mkdir(parents=True)
-    (base / ".bid_token.json").write_text(
+    (base / "auth").mkdir(parents=True, exist_ok=True)
+    (base / "auth" / "bid_token.json").write_text(
         json.dumps({"access_token": "OLD", "expires_at": time.time() - 10})  # no refresh_token
     )
 
@@ -696,7 +724,7 @@ def test_get_status_expired_no_refresh_token(monkeypatch, tmp_path):
 
 def test_get_token_refresh_persists_to_origin_store(monkeypatch, tmp_path):
     """Regression: get_token() refreshes through sso_oidc (the sole
-    store), so the refreshed token lands in .bid_token.json and NO
+    store), so the refreshed token lands in auth/bid_token.json and NO
     second .q_token.json is ever written (single-source-of-truth).
     """
     import backend
@@ -705,7 +733,8 @@ def test_get_token_refresh_persists_to_origin_store(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     base = tmp_path / "plugins" / "aws-build"
     base.mkdir(parents=True)
-    sso_file = base / ".bid_token.json"
+    (base / "auth").mkdir(parents=True, exist_ok=True)
+    sso_file = base / "auth" / "bid_token.json"
     q_file = base / ".q_token.json"
     sso_file.write_text(
         json.dumps(
@@ -714,7 +743,7 @@ def test_get_token_refresh_persists_to_origin_store(monkeypatch, tmp_path):
     )
 
     def fake_sso_refresh():
-        # Simulate a successful sso refresh writing a fresh token to .bid_token.json.
+        # Simulate a successful sso refresh writing a fresh token to auth/bid_token.json.
         sso_file.write_text(
             json.dumps(
                 {"access_token": "NEW", "refresh_token": "R", "expires_at": time.time() + 3600}

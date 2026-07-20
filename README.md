@@ -119,7 +119,7 @@ OIDC access token (Bearer only — **no SigV4**, verified live).
 
 **Token resolution order** (`get_token()`):
 
-1. The plugin's BID login store — `.bid_token.json` written by `bid_login`
+1. The plugin's BID login store — `auth/bid_token.json` written by `bid_login`
    (the plugin's sole canonical store).
 2. If the stored token is expired but has a refresh token, a silent OIDC
    refresh is attempted via `auth.sso_oidc.refresh_token()` (no browser).
@@ -154,7 +154,7 @@ with an anonymous public client (unsigned — no AWS credentials needed):
 - **Device authorization** persisted to a flow file so any process can complete
   polling; a daemon thread polls `create_token` in the background.
 - **Token refresh** via the stored refresh token.
-- **Canonical store:** the local `.bid_token.json` mirror under `HERMES_HOME`
+- **Canonical store:** the local `auth/bid_token.json` mirror under `HERMES_HOME`
   is the sole source of truth (the plugin does not use the Hermes credential
   pool). Secrets are written chmod 600 and never returned by a tool handler.
 
@@ -196,7 +196,7 @@ the Hermes credential pool or the `hermes auth` mechanism — there is no
 integration between the two, by design. Authenticate entirely through the
 in-conversation tools (`bid_login`, `bid_status`, `bid_show_identity`,
 `bid_logout`); `bid_login` writes the token to this plugin's local
-`.bid_token.json` under `HERMES_HOME`, which is exactly what `ask_q` reads
+`auth/bid_token.json` under `HERMES_HOME`, which is exactly what `ask_q` reads
 back:
 
 ```bash
@@ -236,8 +236,8 @@ These names look similar but live in different layers. Mixing them up is what
 |------------|-------|---------|
 | `aws-build` | this plugin (directory, `plugin.yaml` `name:`, `toolset=`) | the plugin slug — the only name that matters for loading/running the plugin |
 | `bid_*` | this plugin's auth tools (`bid_login`, `bid_status`, `bid_show_identity`, `bid_logout`) | "BID" = **B**uilder **ID** (Amazon's "Build ID" / Builder ID). The `bid_` prefix is the plugin's own, consistent abbreviation |
-| `.bid_token.json` / `.bid_registration.json` / `.bid_flow.json` | `HERMES_HOME/plugins/aws-build/` | the plugin's local token/flow mirror files (prefix matches the `bid_*` tools) |
-| `aws-bid` | Hermes **core** CLI (`hermes auth add aws-bid`) | core's *separate* device-flow provider id — **not** this plugin's slug and **not** wired to this plugin's `.bid_token.json` store |
+| `bid_token.json` / `bid_registration.json` / `bid_flow.json` | `HERMES_HOME/plugins/aws-build/auth/` | the plugin's local token/flow mirror files (prefix matches the `bid_*` tools) |
+| `aws-bid` | Hermes **core** CLI (`hermes auth add aws-bid`) | core's *separate* device-flow provider id — **not** this plugin's slug and **not** wired to this plugin's `auth/bid_token.json` store |
 
 Rule of thumb: the plugin is `aws-build` everywhere it controls its own name;
 `aws-bid` belongs to Hermes core and is a different (currently un-integrated)
@@ -278,9 +278,16 @@ access; aws-build is the reasoning backend behind it.
 
 ## Secrets
 
-These files hold live credentials and are **gitignored** (never commit them):
+These files hold live credentials and are **gitignored** (never commit them).
+They live under the plugin's own `auth/` directory (scoped to aws-build, not
+Hermes core's `auth/` namespace), written `chmod 600`:
 
-- `.bid_token.json`, `.bid_registration.json`, `.bid_flow.json`
+- `plugins/aws-build/auth/bid_token.json`
+- `plugins/aws-build/auth/bid_registration.json`
+- `plugins/aws-build/auth/bid_flow.json`
+
+A one-time migration reads any legacy `.bid_*.json` from the plugin root and
+moves it into `auth/`, so an existing session survives the layout change.
 
 To rotate: `bid_logout` and re-authenticate via `bid_login`.
 
