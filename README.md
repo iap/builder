@@ -1,4 +1,4 @@
-# builder Plugin — Amazon Q / Claude for Hermes (direct HTTPS chat)
+# builder Plugin — AWS Builder ID for Hermes (direct HTTPS chat)
 
 > [!IMPORTANT]
 > Unofficial, experimental community plugin for the Hermes Agent. It authenticates
