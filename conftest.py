@@ -1,4 +1,4 @@
-"""Shared pytest/conftest for the aws-build plugin.
+"""Shared pytest/conftest for the build plugin.
 
 Single source of truth for path resolution so every test + the standalone
 verify.py agree on where the plugin and hermes-agent live, and on how to load
@@ -17,7 +17,7 @@ from pathlib import Path
 import yaml
 
 PLUGIN_DIR = Path(__file__).resolve().parent
-# Plugin lives at <HERMES_HOME>/plugins/aws-build; hermes-agent is at
+# Plugin lives at <HERMES_HOME>/plugins/build; hermes-agent is at
 # <HERMES_HOME>/hermes-agent, i.e. two levels up from PLUGIN_DIR.
 HERMES_AGENT_DIR = PLUGIN_DIR.parent.parent / "hermes-agent"
 
@@ -31,16 +31,16 @@ for p in (str(PLUGIN_DIR), str(HERMES_AGENT_DIR)):
 # ``HERMES_HOME/plugins`` and user plugins are opt-in, so the isolated profile
 # must contain both the plugin link and its enabled-config entry.  Without this,
 # tests that import model_tools only prove that an empty profile cannot discover
-# aws-build.
+# build.
 TEST_HERMES_HOME = Path(tempfile.mkdtemp(prefix="build-"))
 os.environ["HERMES_HOME"] = str(TEST_HERMES_HOME)
 (TEST_HERMES_HOME / "plugins").mkdir(parents=True)
-(TEST_HERMES_HOME / "plugins" / "aws-build").symlink_to(
+(TEST_HERMES_HOME / "plugins" / "build").symlink_to(
     PLUGIN_DIR,
     target_is_directory=True,
 )
 (TEST_HERMES_HOME / "config.yaml").write_text(
-    yaml.safe_dump({"plugins": {"enabled": ["aws-build"]}}),
+    yaml.safe_dump({"plugins": {"enabled": ["build"]}}),
     encoding="utf-8",
 )
 

@@ -1,4 +1,4 @@
-# Test/runtime dependencies for the aws-build plugin's test suite + verify.py.
+# Test/runtime dependencies for the build plugin's test suite + verify.py.
 #
 # NOTE: the plugin is NOT self-contained for testing — its modules import
 # `hermes_constants` (and some tests import `hermes_cli`), which live in Hermes
