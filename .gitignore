@@ -3,10 +3,8 @@
 .bid_registration.json
 .bid_flow.json
 .q_token.json
+# OIDC public client secret (AWS published, not private)
+auth/oidc_client_secret.json
 __pycache__/
 *.pyc
 .pytest_cache/
-
-# OIDC public client secret (AWS published, not private)
-auth/oidc_client_secret.json
-.amazonq/
