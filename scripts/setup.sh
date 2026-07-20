@@ -48,10 +48,10 @@ cat > "$BLOCK_FILE" <<EOF
     base_url: http://127.0.0.1:${PORT}/v1
     key_env: AWS_BUILD_ADAPTER_DUMMY
     models:
+      - auto
       - claude-sonnet-4.5
       - claude-sonnet-4
       - claude-haiku-4.5
-      - auto
 EOF
 
 "$HOME/.hermes/hermes-agent/venv/bin/python3" - "$CONFIG" "$BLOCK_FILE" <<'PY'
