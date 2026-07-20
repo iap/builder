@@ -49,7 +49,7 @@ _stop = threading.Event()
 _poll_thread: Optional[threading.Thread] = None
 
 # This plugin is fully self-contained: the authenticated token lives ONLY in
-# the local `.bid_token.json` mirror under HERMES_HOME. It does NOT use the
+# the local `auth/bid_token.json` mirror under HERMES_HOME. It does NOT use the
 # Hermes credential pool / `hermes auth` mechanism (that integration was never
 # wired up in core, so the plugin owns its own token store end-to-end).
 # --- Paths (always HERMES_HOME, never hardcoded ~/.hermes) ---
@@ -59,26 +59,44 @@ def _home() -> Path:
     return Path(get_hermes_home())
 
 
-# Canonical mirror directory for this plugin. Matches the plugin's actual
-# directory name (`aws-build`).
+# Canonical directory for this plugin. Matches the plugin's actual
+# directory name (`aws-build`). Secrets live in an `auth/` subdir (scoped to
+# this plugin, NOT Hermes core's `auth/` namespace) as plain, non-hidden
+# JSON files written chmod 600.
 _PLUGIN_DIR_NAME = "aws-build"
+_AUTH_DIR_NAME = "auth"
+
+# De-dotted, non-hidden secret filenames under <plugin>/auth/.
+_REG_FILENAME = "bid_registration.json"
+_TOKEN_FILENAME = "bid_token.json"
+_FLOW_FILENAME = "bid_flow.json"
+
+# Legacy dotted names (pre-migration). Kept only for the one-time read
+# fallback so existing sessions survive the move; never written.
+_LEGACY_REG_FILENAME = ".bid_registration.json"
+_LEGACY_TOKEN_FILENAME = ".bid_token.json"
+_LEGACY_FLOW_FILENAME = ".bid_flow.json"
+
+
+def _auth_dir() -> Path:
+    return _home() / "plugins" / _PLUGIN_DIR_NAME / _AUTH_DIR_NAME
 
 
 def _canonical_path(filename: str) -> Path:
-    """Return the canonical mirror path (always `plugins/aws-build/`)."""
-    return _home() / "plugins" / _PLUGIN_DIR_NAME / filename
+    """Return the canonical secret path under `plugins/aws-build/auth/`."""
+    return _auth_dir() / filename
 
 
 def _reg_path() -> Path:
-    return _canonical_path(".bid_registration.json")
+    return _canonical_path(_REG_FILENAME)
 
 
 def _token_path() -> Path:
-    return _canonical_path(".bid_token.json")
+    return _canonical_path(_TOKEN_FILENAME)
 
 
 def _flow_path() -> Path:
-    return _canonical_path(".bid_flow.json")
+    return _canonical_path(_FLOW_FILENAME)
 
 
 def _write_secret(path: Path, data: dict) -> None:
@@ -90,12 +108,33 @@ def _write_secret(path: Path, data: dict) -> None:
 
 
 def _read_secret(path: Path) -> Optional[dict]:
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text())
-    except Exception:  # noqa: BLE001 - corrupt state => treat as absent
-        return None
+    """Read a secret, with a one-time legacy (dotted) path fallback + migrate.
+
+    If the canonical (de-dotted) file under `auth/` is absent but a legacy
+    `.bid_*.json` exists in the plugin root, read it and copy it into the new
+    location so an existing session survives the layout change without
+    re-login.
+    """
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except Exception:  # noqa: BLE001 - corrupt state => treat as absent
+            return None
+    # Legacy files lived as dotted names directly in the plugin root
+    # (plugins/aws-build/.bid_token.json), not inside auth/.
+    legacy = _home() / "plugins" / _PLUGIN_DIR_NAME / ("." + path.name)
+    if legacy.exists():
+        try:
+            data = json.loads(legacy.read_text())
+        except Exception:  # noqa: BLE001
+            return None
+        _write_secret(path, data)  # migrate into the new auth/ layout
+        try:
+            legacy.unlink()
+        except OSError:  # noqa: BLE001
+            pass
+        return data
+    return None
 
 
 # --- boto3 client (anonymous; no AWS credentials needed) ---
@@ -148,7 +187,7 @@ def _register() -> dict:
         "client_secret_expires_at": out.get("clientSecretExpiresAt"),
         "scopes": SCOPES,
     }
-    _write_secret(_canonical_path(".bid_registration.json"), data)
+    _write_secret(_canonical_path(_REG_FILENAME), data)
     return data
 
 
@@ -162,7 +201,7 @@ def _save_token(out: dict, reg: dict) -> None:
         "token_type": out.get("tokenType"),
         "scopes": reg.get("scopes"),
     }
-    _write_secret(_canonical_path(".bid_token.json"), data)
+    _write_secret(_canonical_path(_TOKEN_FILENAME), data)
 
 
 def _load_token() -> Optional[dict]:
@@ -171,7 +210,7 @@ def _load_token() -> Optional[dict]:
 
 # --- Flow persistence (so any process can complete the poll) ---
 def _save_flow(flow: dict) -> None:
-    _write_secret(_canonical_path(".bid_flow.json"), flow)
+    _write_secret(_canonical_path(_FLOW_FILENAME), flow)
 
 
 def _load_flow() -> Optional[dict]:
@@ -347,7 +386,7 @@ def get_status() -> dict:
     silently refreshes it *before* reporting (so the card / bid_status stay
     "Authenticated" across the ~1h access-token boundary and only flip to
     "expired" when the refresh token itself is dead). Reads the local
-    `.bid_token.json` mirror (this plugin's sole token store — it does not use
+    `auth/bid_token.json` mirror (this plugin's sole token store — it does not use
     the Hermes credential pool).
     """
     mirror_tok = _load_token()
@@ -447,11 +486,16 @@ def logout() -> None:
     _poll_thread = None
     if thread is not None and thread.is_alive():
         thread.join(timeout=2.0)
-    # Delete mirror files in the canonical plugin directory.
-    filenames = (".bid_token.json", ".bid_registration.json", ".bid_flow.json")
-    dirs = (_home() / "plugins" / _PLUGIN_DIR_NAME,)
+    # Delete mirror files in the canonical plugin auth/ directory (and any
+    # legacy dotted files left in the plugin root from before the migration).
+    new_names = (_TOKEN_FILENAME, _REG_FILENAME, _FLOW_FILENAME)
+    legacy_names = (_LEGACY_TOKEN_FILENAME, _LEGACY_REG_FILENAME, _LEGACY_FLOW_FILENAME)
+    dirs = (
+        _auth_dir(),
+        _home() / "plugins" / _PLUGIN_DIR_NAME,
+    )
     for d in dirs:
-        for name in filenames:
+        for name in (*new_names, *legacy_names):
             p = d / name
             try:
                 if p.exists():

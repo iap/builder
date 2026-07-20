@@ -27,7 +27,7 @@ survives across restarts and is refreshable.
 Token storage
 -------------
 The plugin owns ONE token store end-to-end: the BID login mirror at
-auth/sso_oidc (.bid_token.json under HERMES_HOME). backend.chat() is a
+auth/sso_oidc (auth/bid_token.json under HERMES_HOME). backend.chat() is a
 pure HTTP client to Q — it NEVER persists a token. get_token()
 delegates entirely to sso_oidc, so there is exactly one source of
 truth (no dual-store, no split-brain, no "newest wins" resolver).
@@ -85,8 +85,8 @@ def get_token() -> dict:
     """Return a valid Builder ID token (delegated to the BID login store).
 
     The plugin's token store is owned entirely by auth.sso_oidc
-    (.bid_token.json). On expiry it silently refreshes via the same
-    module (so the refreshed token lands back in .bid_token.json, never a
+    (auth/bid_token.json). On expiry it silently refreshes via the same
+    module (so the refreshed token lands back in auth/bid_token.json, never a
     second file). Raises RuntimeError with an actionable message when no
     valid token exists.
     """
@@ -263,7 +263,7 @@ def chat(
                     "refresh. Re-authenticate via the `bid_login` plugin tool."
                 )
             # Refresh through sso_oidc (the store owner) — never a second
-            # file — so the refreshed token lands in .bid_token.json.
+            # file — so the refreshed token lands in auth/bid_token.json.
             sso_oidc = _import_sso_oidc()
 
             if sso_oidc.refresh_token():
