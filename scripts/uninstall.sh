@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aws-build plugin: remove aws-build as a selectable Hermes chat model.
+# build plugin: remove aws-build as a selectable Hermes chat model.
 #
 # WHY: install (setup.sh) adds a `providers: aws-build` entry + `plugins.enabled`
 # entry so Hermes can route chat to the in-plugin adapter on :8077. Hermes core
@@ -10,7 +10,7 @@
 # SAFE: idempotent (no-op if already absent), always backs up config.yaml first.
 # User-invoked (never auto-run by the plugin) to respect Hermes' config-write guard.
 #
-# USAGE:  ~/.hermes/plugins/aws-build/scripts/uninstall.sh
+# USAGE:  ~/.hermes/plugins/build/scripts/uninstall.sh
 #         then restart Hermes.
 
 set -euo pipefail
