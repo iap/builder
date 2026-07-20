@@ -332,4 +332,4 @@ and that no handler leaks a secret.
 
 “Amazon Web Services” and all related marks, including logos, graphic designs, and service names, are trademarks or trade dress of AWS in the U.S. and other countries. AWS’s trademarks and trade dress may not be used in connection with any product or service that is not AWS’s, in any manner that is likely to cause confusion among customers, or in any manner that disparages or discredits AWS.
 
-Copyright © 2026 Iko and . Not affiliated with or endorsed by Amazon.com, Inc.
+Copyright © 2026 Iko. Not affiliated with or endorsed by Amazon.com, Inc.
