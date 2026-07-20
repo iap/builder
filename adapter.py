@@ -16,7 +16,7 @@ This is intentionally NOT the old ``:8088`` bridge daemon:
   * it lives inside the plugin (stdlib only, no separate binary),
   * the plugin launches it on ``register()`` (background thread, dies with the
     Hermes session — no orphaned process to forget about),
-  * ``config.yaml`` points a ``providers: aws-build`` entry at this listener, so
+  * ``config.yaml`` points a ``providers: builder`` entry at this listener, so
     there is no dead/roted pointer.
 
 REQUEST (OpenAI shape, received from Hermes)
