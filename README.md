@@ -138,6 +138,13 @@ rejects it server-side), then streams SSE back. For turns where Q emits
 fires. Launched on `register()` in a daemon thread, dies with the session — no
 `:8088` bridge, no orphaned process.
 
+**Security — local-only bridge.** The endpoint proxies to Amazon Q with the
+plugin's stored Builder ID token, so it is **loopback-only by design**
+(`AWS_BUILD_ADAPTER_HOST` defaults to `127.0.0.1`). There is intentionally no
+auth on the endpoint — safe *only* because it is not network-reachable. Binding
+any non-loopback host is rejected unless `AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1` is
+explicitly set. Never expose `:8077` on a shared/multi-user host.
+
 ### `auth/sso_oidc.py` — headless device login
 
 Wraps the `sso-oidc` botocore service against `oidc.us-east-1.amazonaws.com`
