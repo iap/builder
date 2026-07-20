@@ -1,5 +1,10 @@
 # aws-build Plugin — Amazon Q / Claude for Hermes (direct HTTPS chat)
 
+> [!IMPORTANT]
+> Unofficial, experimental community plugin for the Hermes Agent. It authenticates
+> via Amazon Builder ID (AWS BID) and is not affiliated with or endorsed by Amazon.
+> See [Licenses](#licenses) for terms.
+
 ## Overview
 
 The `aws-build` plugin lets the Hermes Agent talk to **Amazon Q Developer
@@ -88,6 +93,8 @@ release. No `:8088` bridge, no orphaned refs.
 ```
 __init__.py            registers tools via ctx.register_tool
   ├── backend.py       direct HTTPS chat with Amazon Q (ask_q, models)
+  ├── adapter.py       OpenAI-compatible /v1/chat/completions SSE server
+  │                    (the model path) — runs on :8077, launched on register()
   └── auth/
         ├── __init__.py    re-exports the public auth API
         └── sso_oidc.py    RFC 8628 device authorization (botocore, anonymous)
@@ -117,6 +124,19 @@ OIDC access token (Bearer only — **no SigV4**, verified live).
 2. If the stored token is expired but has a refresh token, a silent OIDC
    refresh is attempted via `auth.sso_oidc.refresh_token()` (no browser).
 3. Otherwise `RuntimeError` with an actionable message (run `bid_login`).
+
+### `adapter.py` — OpenAI-compatible model path (optional)
+
+When AWS Build is registered as a model (`providers: aws-build` → `:8077`),
+`adapter.py` exposes a tiny stdlib HTTP server speaking OpenAI
+`/v1/chat/completions`. It receives Hermes's OpenAI-shaped request
+(`messages`, `tools`, `stream`), calls `backend.chat()` (single Q prompt —
+messages are flattened, the `tools` field is conveyed as injected text because Q
+rejects it server-side), then streams SSE back. For turns where Q emits
+`<tool_call>` blocks, it emits OpenAI `tool_calls` frames with
+`finish_reason: "tool_calls"` so Hermes's agentic loop (MCP/skills/native tools)
+fires. Launched on `register()` in a daemon thread, dies with the session — no
+`:8088` bridge, no orphaned process.
 
 ### `auth/sso_oidc.py` — headless device login
 
@@ -149,10 +169,12 @@ what Amazon Q accepts):
 > `claude-opus-*` is **not** offered — Amazon Q rejects it ("Model does not
 > exist").
 
-`ask_q` defaults to `claude-sonnet-4`. The `models` tool reads the catalog
-lazily, so an edit to `plugin.yaml` takes effect on the next call without
-restarting Hermes. An unknown `model` name is still passed through to
-`backend.chat` for API compatibility (Q selects the model server-side).
+`ask_q` defaults to `auto` (Q picks the model server-side). The `models` tool
+reads the catalog lazily, so an edit to `plugin.yaml` takes effect on the next
+call without restarting Hermes. An unknown `model` name is coerced to `auto`
+rather than passed through verbatim — Q returns an opaque HTTP 500 for any
+modelId it doesn't recognize, so the original string is never sent to
+`backend.chat`.
 
 Free-form **tags** are likewise read from `plugin.yaml` (`tags:`) with a
 `STATIC_TAGS` fallback, and exposed via the `tags` tool.
@@ -219,13 +241,31 @@ diverge from both the `.bid_*` file mirrors and AWS's `aws-bid` terminology.
 
 ## Tool use & local file/context access — important
 
-`ask_q` is **chat/reasoning only**. Amazon Q's `GenerateAssistantResponse` is a
-chat-completion stream that rejects a `tools` field, so the model **cannot
-execute Hermes tools** (write files, run commands) through this plugin — it will
-narrate an action rather than perform it.
+Two distinct paths, two distinct rules:
 
-Hermes remains the agent: use Hermes's own tools for file edits, commands, and
-context. Use `ask_q` when you want Claude-via-Q's reasoning/answers.
+- **`ask_q` tool path — chat/reasoning only.** Amazon Q's
+  `GenerateAssistantResponse` is a chat-completion stream that rejects a `tools`
+  field, so the `ask_q` tool **cannot execute Hermes tools** (write files, run
+  commands) — it will narrate an action rather than perform it. Use `ask_q` when
+  you want Claude-via-Q's reasoning/answers and let Hermes drive any follow-up
+  tool use.
+
+- **`-m aws-build` model path — tool calls DO fire.** When AWS Build is selected
+  as a *model*, the in-plugin adapter (`adapter.py`) speaks OpenAI
+  `/v1/chat/completions`. Because Q can't receive a real `tools` field, the
+  adapter injects the tool-call convention (plus the tool names) as text, asks Q
+  to emit Hermes-compatible `<tool_call>` blocks, and **translates those blocks
+  back into OpenAI `tool_calls` SSE frames** (`finish_reason: "tool_calls"`).
+  Hermes's `openai_chat` transport parses those frames exactly like a native
+  function-calling model, so **MCP / skills / native tools actually run** through
+  the aws-build model. Multiple tool calls per turn are supported; surrounding
+  prose is stripped from content. This is a text-based function-calling shim — it
+  depends on Q following the injected convention. Verified end-to-end against the
+  real OpenAI SDK streaming parser (frames parse into a valid
+  `assistant(tool_calls)` message).
+
+Hermes remains the agent in both paths: it owns the tool loop, context, and file
+access; aws-build is the reasoning backend behind it.
 
 ---
 
@@ -234,11 +274,23 @@ context. Use `ask_q` when you want Claude-via-Q's reasoning/answers.
 These files hold live credentials and are **gitignored** (never commit them):
 
 - `.bid_token.json`, `.bid_registration.json`, `.bid_flow.json`
-- `auth/oidc_client_secret.json`
 
 To rotate: `bid_logout` and re-authenticate via `bid_login`.
 
 ---
+
+## License
+
+Dual-licensed under your choice of **MIT** (`LICENSE-MIT`) or **Apache
+License 2.0** (`LICENSE-APACHE`). SPDX: `MIT OR Apache-2.0`.
+
+The dual license is also chosen to respect third-party branding and product
+names — in particular **Amazon**, **AWS**, **Amazon Q**, and **Builder ID** are
+trademarks of Amazon.com, Inc. and are used here only to describe
+interoperability with those services. This project is not affiliated with,
+endorsed by, or sponsored by Amazon. The Apache-2.0 `NOTICE`/attribution
+provisions and trademark clauses help keep that boundary explicit, while MIT
+offers a permissive alternative.
 
 ## Tests
 
@@ -250,3 +302,14 @@ Offline unit tests cover the event-stream parser, token expiry/refresh logic,
 local mirror / cache token loading, the dynamic model catalog, tag loading,
 and tool registration. `python3 verify.py` sanity-checks that all tools register
 and that no handler leaks a secret.
+
+---
+
+## Licenses
+
+- [MIT License](LICENSE-MIT)
+- [Apache License 2.0](LICENSE-APACHE)
+
+“Amazon Web Services” and all related marks, including logos, graphic designs, and service names, are trademarks or trade dress of AWS in the U.S. and other countries. AWS’s trademarks and trade dress may not be used in connection with any product or service that is not AWS’s, in any manner that is likely to cause confusion among customers, or in any manner that disparages or discredits AWS.
+
+Copyright © 2026 Iko . Not affiliated with or endorsed by Amazon.com, Inc.

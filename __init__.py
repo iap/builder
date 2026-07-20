@@ -1,4 +1,5 @@
 """AWS Build plugin — Amazon Q Developer for Hermes Agent (direct HTTPS chat).
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
 Hermes drives the agentic loop. This plugin exposes Q as a single tool:
 `ask_q(prompt)` → calls backend.chat() and returns the answer.
@@ -9,7 +10,6 @@ model/tag listing are also registered.
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
@@ -23,12 +23,30 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _tool_result_helpers():
+    """Return Hermes's house (success, error) serializers with ensure_ascii=False.
+
+    Delegates to ``tools.registry.tool_result`` / ``tool_error`` so plugin
+    output is byte-identical to core tools: valid JSON with ``ensure_ascii=False``
+    (non-ASCII text like "café" / "—" / CJK is NOT escaped to ``\\uXXXX`` — escapes
+    corrupt the answer when the TUI renders it verbatim). Relative-first/absolute
+    fallback import matches the pattern auth/sso_oidc uses under Hermes core.
+    """
+    try:
+        from tools.registry import tool_result, tool_error  # type: ignore
+    except ImportError:  # standalone / tests where hermes-agent is on sys.path
+        from registry import tool_result, tool_error  # type: ignore
+    return tool_result, tool_error
+
+
 def _success(data: dict[str, Any]) -> str:
-    return json.dumps({"success": True, **data})
+    tool_result, _ = _tool_result_helpers()
+    return tool_result(success=True, **data)
 
 
 def _error(message: str, code: str = "error") -> str:
-    return json.dumps({"success": False, "error": message, "code": code})
+    _, tool_error = _tool_result_helpers()
+    return tool_error(message, code=code, success=False)
 
 
 def _check_available() -> bool:
