@@ -23,7 +23,7 @@
   const SDK = window.__HERMES_PLUGIN_SDK__;
   const PLUGINS = window.__HERMES_PLUGINS__;
   if (!SDK || !PLUGINS) {
-    console.error("[aws-build] Hermes plugin SDK not available");
+    console.error("[build] Hermes plugin SDK not available");
     return;
   }
 
@@ -32,7 +32,7 @@
   const { authedFetch } = SDK;
   const C = SDK.components;
 
-  const API_BASE = "/api/plugins/aws-build";
+  const API_BASE = "/api/plugins/build";
 
   function authHeaders() {
     return { "Content-Type": "application/json" };
@@ -356,5 +356,5 @@
   }
 
   // REQUIRED: register the tab component with the host.
-  PLUGINS.register("aws-build", App);
+  PLUGINS.register("build", App);
 })();
