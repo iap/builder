@@ -1,4 +1,4 @@
-"""Robust integration tests for the aws-build plugin's models/tags tools.
+"""Robust integration tests for the build plugin's models/tags tools.
 
 These drive the REAL hermes chat/TUI tool-dispatch path — the same code the
 `hermes chat` / TUI loop calls when the agent emits a tool call:
@@ -24,7 +24,7 @@ import pytest
 from conftest import HERMES_AGENT_DIR, PLUGIN_DIR  # noqa: E402
 
 # Importing model_tools triggers plugin discovery (the same side effect the chat
-# CLI relies on), so tools.registry is fully populated with aws-build's tools.
+# CLI relies on), so tools.registry is fully populated with build's tools.
 if HERMES_AGENT_DIR.exists():
     sys.path.insert(0, str(HERMES_AGENT_DIR))
 else:  # pragma: no cover - layout guard
@@ -40,10 +40,10 @@ def _plugin_manager():
     return P._ensure_plugins_discovered()
 
 
-def test_aws_build_discovered_and_registers_model_tools():
+def test_build_discovered_and_registers_model_tools():
     mgr = _plugin_manager()
-    assert "aws-build" in mgr._plugins, "aws-build plugin must be discovered"
-    registered = set(mgr._plugins["aws-build"].tools_registered)
+    assert "build" in mgr._plugins, "build plugin must be discovered"
+    registered = set(mgr._plugins["build"].tools_registered)
     assert {"models", "tags"}.issubset(registered)
 
 
@@ -52,7 +52,7 @@ def test_models_and_tags_resolve_in_global_registry():
     for name in ("models", "tags"):
         entry = registry.get_entry(name)
         assert entry is not None, f"{name} must be in the tool registry"
-        assert entry.toolset == "aws-build"
+        assert entry.toolset == "build"
 
 
 def test_models_tool_returns_plugin_yaml_catalog():

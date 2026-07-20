@@ -5,41 +5,46 @@ on:
     branches: [main, master]
   pull_request:
   workflow_dispatch:
+    # Only needed if you trigger this workflow from a DIFFERENT repo than the
+    # build plugin (e.g. the hermes-agent repo). Left empty by default so we
+    # always test the repo the workflow is running on — never a guessed URL.
     inputs:
-      plugin_ref:
-        description: "Ref of the aws-build plugin repo to test"
+      plugin_repo:
+        description: "Optional git URL of the build plugin repo to test (defaults to the current repo)"
         required: false
-        default: "main"
+        default: ""
 
-# The aws-build plugin is tested INSIDE the Hermes core layout: its modules
+# The build plugin is tested INSIDE the Hermes core layout: its modules
 # import `hermes_constants` (and some tests import `hermes_cli`), which live in
-# hermes-agent. So we check out hermes-agent as a sibling and mount the plugin
-# under <HERMES_HOME>/plugins/aws-build, then run the suite from there.
+# hermes-agent. So we check out hermes-agent as a sibling and mount THIS repo
+# (the plugin) under <HERMES_HOME>/plugins/build, then run the suite there.
 #
-# The plugin repo is fetched via PLUGIN_REPO below. Until the plugin is pushed
-# to a remote, set PLUGIN_REPO to a pushable URL (or run this workflow after
-# pushing). Core (hermes-agent) is public and fetched directly.
-
-env:
-  PLUGIN_REPO: "git@github.com:NousResearch/aws-build.git"
-  HERMES_HOME: "${{ github.workspace }}/hm"
+# Core (NousResearch/hermes-agent) is public and verified. The plugin is the
+# repository this workflow runs in, so no plugin URL is assumed.
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      # The default checkout (this plugin repo) lands at github.workspace root.
+      - name: Checkout aws-build plugin (this repo)
+        uses: actions/checkout@v4
+        with:
+          path: plugin-src
+
+      # Override with an explicit repo only when dispatched from elsewhere.
+      - name: Override plugin checkout (if plugin_repo provided)
+        if: ${{ github.event.inputs.plugin_repo != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.inputs.plugin_repo }}
+          path: plugin-src
+
       - name: Checkout Hermes core (public)
         uses: actions/checkout@v4
         with:
           repository: NousResearch/hermes-agent
           path: hermes-agent
-
-      - name: Checkout aws-build plugin
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.PLUGIN_REPO }}
-          ref: ${{ github.event.inputs.plugin_ref || 'main' }}
-          path: plugin-src
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -50,10 +55,10 @@ jobs:
       - name: Assemble Hermes home layout
         run: |
           set -euo pipefail
-          HM="${{ env.HERMES_HOME }}"
+          HM="${{ github.workspace }}/hm"
           mkdir -p "$HM/plugins"
-          # Mount plugin at the canonical path Hermes core expects.
-          ln -s "${{ github.workspace }}/plugin-src" "$HM/plugins/aws-build"
+          # Mount the plugin at the canonical path Hermes core expects.
+          ln -s "${{ github.workspace }}/plugin-src" "$HM/plugins/build"
           echo "HERMES_HOME=$HM" >> "$GITHUB_ENV"
 
       - name: Install test dependencies
@@ -63,7 +68,7 @@ jobs:
           pip install -r "${{ github.workspace }}/plugin-src/requirements.txt"
 
       - name: Run tests
-        working-directory: ${{ env.HERMES_HOME }}/plugins/aws-build
+        working-directory: ${{ env.HERMES_HOME }}/plugins/build
         env:
           HERMES_HOME: ${{ env.HERMES_HOME }}
         run: |
@@ -73,7 +78,7 @@ jobs:
           python -m pytest -q -k "not adapter"
 
       - name: Run plugin self-checks (verify.py)
-        working-directory: ${{ env.HERMES_HOME }}/plugins/aws-build
+        working-directory: ${{ env.HERMES_HOME }}/plugins/build
         env:
           HERMES_HOME: ${{ env.HERMES_HOME }}
         run: python verify.py

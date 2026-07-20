@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aws-build plugin: register aws-build as a selectable Hermes chat model.
+# build plugin: register aws-build as a selectable Hermes chat model.
 #
 # WHY: Hermes routes chat through providers declared in ~/.hermes/config.yaml
 # with transport: openai_chat. The plugin ships a self-contained OpenAI-
@@ -11,7 +11,7 @@
 # first. Does NOT touch any other provider. User-invoked (never auto-run by
 # the plugin) to respect Hermes' config-write guard.
 #
-# USAGE:  hermes plugins install <url> && ~/.hermes/plugins/aws-build/scripts/setup.sh
+# USAGE:  hermes plugins install <url> && ~/.hermes/plugins/build/scripts/setup.sh
 #         then restart Hermes.
 
 set -euo pipefail

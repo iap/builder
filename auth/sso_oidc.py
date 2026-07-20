@@ -60,10 +60,10 @@ def _home() -> Path:
 
 
 # Canonical directory for this plugin. Matches the plugin's actual
-# directory name (`aws-build`). Secrets live in an `auth/` subdir (scoped to
+# directory name (`build`). Secrets live in an `auth/` subdir (scoped to
 # this plugin, NOT Hermes core's `auth/` namespace) as plain, non-hidden
 # JSON files written chmod 600.
-_PLUGIN_DIR_NAME = "aws-build"
+_PLUGIN_DIR_NAME = "build"
 _AUTH_DIR_NAME = "auth"
 
 # De-dotted, non-hidden secret filenames under <plugin>/auth/.
@@ -83,7 +83,7 @@ def _auth_dir() -> Path:
 
 
 def _canonical_path(filename: str) -> Path:
-    """Return the canonical secret path under `plugins/aws-build/auth/`."""
+    """Return the canonical secret path under `plugins/build/auth/`."""
     return _auth_dir() / filename
 
 
@@ -121,19 +121,26 @@ def _read_secret(path: Path) -> Optional[dict]:
         except Exception:  # noqa: BLE001 - corrupt state => treat as absent
             return None
     # Legacy files lived as dotted names directly in the plugin root
-    # (plugins/aws-build/.bid_token.json), not inside auth/.
-    legacy = _home() / "plugins" / _PLUGIN_DIR_NAME / ("." + path.name)
-    if legacy.exists():
-        try:
-            data = json.loads(legacy.read_text())
-        except Exception:  # noqa: BLE001
-            return None
-        _write_secret(path, data)  # migrate into the new auth/ layout
-        try:
-            legacy.unlink()
-        except OSError:  # noqa: BLE001
-            pass
-        return data
+    # (plugins/build/.bid_token.json), not inside auth/. Also support the older
+    # plugin directory name `aws-build` so a directory rename (aws-build -> build)
+    # migrates an existing session's secrets without forcing a re-login.
+    legacy_candidates = [
+        _home() / "plugins" / _PLUGIN_DIR_NAME / ("." + path.name),
+        _home() / "plugins" / "aws-build" / "auth" / path.name,
+        _home() / "plugins" / "aws-build" / ("." + path.name),
+    ]
+    for legacy in legacy_candidates:
+        if legacy.exists():
+            try:
+                data = json.loads(legacy.read_text())
+            except Exception:  # noqa: BLE001
+                return None
+            _write_secret(path, data)  # migrate into the new auth/ layout
+            try:
+                legacy.unlink()
+            except OSError:  # noqa: BLE001
+                pass
+            return data
     return None
 
 

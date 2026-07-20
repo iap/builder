@@ -1,4 +1,4 @@
-name: aws-build
+name: build
 version: 1.0.0
 description: "Self-contained Amazon Builder ID auth for Hermes Agent."
 author: iap
