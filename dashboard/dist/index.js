@@ -32,7 +32,7 @@
   const { authedFetch } = SDK;
   const C = SDK.components;
 
-  const API_BASE = "/api/plugins/build";
+  const API_BASE = "/api/plugins/builder";
 
   function authHeaders() {
     return { "Content-Type": "application/json" };
