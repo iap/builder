@@ -976,3 +976,132 @@ def test_adapter_healthz():
             assert b"ok" in r.read()
     finally:
         real_adapter.stop()
+
+
+# --- aws_build_cli.py: standalone copy-device-link login method ---
+
+def test_cli_login_prints_copyable_link_and_polls_to_success(monkeypatch, tmp_path, capsys):
+    """`aws-build login` must print the verification URL + user_code (the
+    copy-device-link UX) and then poll get_status() to completion, writing the
+    token into the plugin's OWN store (auth/bid_token.json), never the Hermes
+    credential pool."""
+    import aws_build_cli as cli
+    from auth import sso_oidc
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    base = tmp_path / "plugins" / "aws-build"
+    (base / "auth").mkdir(parents=True, exist_ok=True)
+
+    # start_login returns a pending flow (no token yet).
+    monkeypatch.setattr(
+        sso_oidc,
+        "start_login",
+        lambda: {
+            "user_code": "ABCD-EFGH",
+            "verification_uri": "https://example.com/verify",
+            "verification_uri_complete": "https://example.com/verify?user_code=ABCD-EFGH",
+            "expires_in": 600,
+            "interval": 1,
+        },
+    )
+
+    # get_status flips from awaiting -> authenticated once the token lands.
+    state = {"n": 0}
+
+    def fake_get_status():
+        state["n"] += 1
+        if state["n"] == 1:
+            return {"authenticated": False, "phase": "awaiting_approval",
+                    "verification_uri_complete": "https://example.com/verify?user_code=ABCD-EFGH",
+                    "user_code": "ABCD-EFGH", "expires_in": 600, "interval": 1}
+        # simulate the human approving: write the token, then report authed.
+        (base / "auth" / "bid_token.json").write_text(
+            json.dumps({"access_token": "T", "refresh_token": "R",
+                        "expires_at": time.time() + 3600})
+        )
+        return {"authenticated": True, "phase": "authenticated",
+                "token_expires_at": time.time() + 3600, "refreshed": False}
+
+    monkeypatch.setattr(sso_oidc, "get_status", fake_get_status)
+
+    rc = cli.main(["login"])
+    out = capsys.readouterr().out
+
+    assert rc == 0, "login should succeed on approval"
+    assert "ABCD-EFGH" in out, "user_code must be printed (copy-device-link)"
+    assert "https://example.com/verify?user_code=ABCD-EFGH" in out, "verification URL must be printed"
+    # token written to the plugin's own store, not the Hermes pool.
+    assert (base / "auth" / "bid_token.json").exists()
+
+
+def test_cli_login_already_authenticated(monkeypatch, tmp_path, capsys):
+    """If a valid token already exists, `login` must NOT start a new device
+    flow (avoids the doomed-duplicate InvalidGrantException) and should report
+    already-authenticated."""
+    import aws_build_cli as cli
+    from auth import sso_oidc
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    base = tmp_path / "plugins" / "aws-build"
+    (base / "auth").mkdir(parents=True, exist_ok=True)
+    (base / "auth" / "bid_token.json").write_text(
+        json.dumps({"access_token": "T", "refresh_token": "R", "expires_at": time.time() + 3600})
+    )
+    started = {"n": 0}
+    monkeypatch.setattr(
+        sso_oidc,
+        "start_login",
+        lambda: started.__setitem__("n", started["n"] + 1)
+        or {"already_authenticated": True, "phase": "authenticated"},
+    )
+
+    rc = cli.main(["login"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    # start_login's own guard short-circuits (no new device flow / AWS call):
+    # it returns the already-authenticated marker, and login must not poll.
+    assert "Already authenticated" in out
+    # No new token file should be (re)written by a login that did nothing.
+    assert "Authenticated. Token stored" not in out
+
+
+def test_cli_status_and_whoami_report_store_state(monkeypatch, tmp_path, capsys):
+    """status/whoami must reflect the plugin's own store (auth/bid_token.json),
+    independent of Hermes core's credential pool."""
+    import aws_build_cli as cli
+    from auth import sso_oidc
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    base = tmp_path / "plugins" / "aws-build"
+    (base / "auth").mkdir(parents=True, exist_ok=True)
+    (base / "auth" / "bid_token.json").write_text(
+        json.dumps({"access_token": "T", "refresh_token": "R", "expires_at": time.time() + 3600,
+                    "token_type": "Bearer", "scopes": ["codewhisperer:conversations"]})
+    )
+
+    assert cli.main(["status"]) == 0
+    assert "authenticated: yes" in capsys.readouterr().out
+
+    assert cli.main(["whoami"]) == 0
+    out = capsys.readouterr().out
+    assert "token_type:  Bearer" in out
+    assert "has_refresh: True" in out
+
+
+def test_cli_logout_clears_store(monkeypatch, tmp_path, capsys):
+    """logout must clear the plugin's own store via the shared sso_oidc.logout()."""
+    import aws_build_cli as cli
+    from auth import sso_oidc
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    base = tmp_path / "plugins" / "aws-build"
+    (base / "auth").mkdir(parents=True, exist_ok=True)
+    (base / "auth" / "bid_token.json").write_text(
+        json.dumps({"access_token": "T", "refresh_token": "R", "expires_at": time.time() + 3600})
+    )
+    cleared = {"n": 0}
+    monkeypatch.setattr(sso_oidc, "logout", lambda: cleared.__setitem__("n", cleared["n"] + 1))
+
+    assert cli.main(["logout"]) == 0
+    assert cleared["n"] == 1
+    assert "Logged out" in capsys.readouterr().out
