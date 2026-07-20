@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""build — standalone CLI for the Amazon Builder ID (BID) auth + chat plugin.
+"""builder — standalone CLI for the Amazon Builder ID (BID) auth + chat plugin.
 
 This is the copy-device-link method you can run from a terminal, without the
 Hermes dashboard. It reuses the plugin's own auth/chat modules exactly as the
@@ -150,8 +150,8 @@ def cmd_models(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="aws-build",
-        description="CLI for the aws-build plugin (Amazon Builder ID auth + chat).",
+        prog="builder",
+        description="CLI for the builder plugin (Amazon Builder ID auth + chat).",
     )
     sub = p.add_subparsers(dest="command", required=True)
 

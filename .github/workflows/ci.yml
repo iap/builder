@@ -6,18 +6,18 @@ on:
   pull_request:
   workflow_dispatch:
     # Only needed if you trigger this workflow from a DIFFERENT repo than the
-    # build plugin (e.g. the hermes-agent repo). Left empty by default so we
+    # builder plugin (e.g. the hermes-agent repo). Left empty by default so we
     # always test the repo the workflow is running on — never a guessed URL.
     inputs:
       plugin_repo:
-        description: "Optional git URL of the build plugin repo to test (defaults to the current repo)"
+        description: "Optional git URL of the builder plugin repo to test (defaults to the current repo)"
         required: false
         default: ""
 
-# The build plugin is tested INSIDE the Hermes core layout: its modules
+# The builder plugin is tested INSIDE the Hermes core layout: its modules
 # import `hermes_constants` (and some tests import `hermes_cli`), which live in
 # hermes-agent. So we check out hermes-agent as a sibling and mount THIS repo
-# (the plugin) under <HERMES_HOME>/plugins/build, then run the suite there.
+# (the plugin) under <HERMES_HOME>/plugins/builder, then run the suite there.
 #
 # Core (NousResearch/hermes-agent) is public and verified. The plugin is the
 # repository this workflow runs in, so no plugin URL is assumed.
@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # The default checkout (this plugin repo) lands at github.workspace root.
-      - name: Checkout aws-build plugin (this repo)
+      - name: Checkout builder plugin (this repo)
         uses: actions/checkout@v4
         with:
           path: plugin-src
@@ -58,7 +58,7 @@ jobs:
           HM="${{ github.workspace }}/hm"
           mkdir -p "$HM/plugins"
           # Mount the plugin at the canonical path Hermes core expects.
-          ln -s "${{ github.workspace }}/plugin-src" "$HM/plugins/build"
+          ln -s "${{ github.workspace }}/plugin-src" "$HM/plugins/builder"
           echo "HERMES_HOME=$HM" >> "$GITHUB_ENV"
 
       - name: Install test dependencies
@@ -68,7 +68,7 @@ jobs:
           pip install -r "${{ github.workspace }}/plugin-src/requirements.txt"
 
       - name: Run tests
-        working-directory: ${{ env.HERMES_HOME }}/plugins/build
+        working-directory: ${{ env.HERMES_HOME }}/plugins/builder
         env:
           HERMES_HOME: ${{ env.HERMES_HOME }}
         run: |
@@ -78,7 +78,7 @@ jobs:
           python -m pytest -q -k "not adapter"
 
       - name: Run plugin self-checks (verify.py)
-        working-directory: ${{ env.HERMES_HOME }}/plugins/build
+        working-directory: ${{ env.HERMES_HOME }}/plugins/builder
         env:
           HERMES_HOME: ${{ env.HERMES_HOME }}
         run: python verify.py

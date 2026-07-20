@@ -1,6 +1,6 @@
-# Contributing to build
+# Contributing to builder
 
-Thanks for helping improve the build plugin. This document covers how to
+Thanks for helping improve the builder plugin. This document covers how to
 set up, test, and submit changes.
 
 ## Project conventions
@@ -18,8 +18,8 @@ set up, test, and submit changes.
   or endorsed by Amazon. Keep wording that respects those marks and states
   non-affiliation where appropriate.
 - **Commits:** short, label-prefixed subjects using Conventional Commits-lite:
-  `feat(build):`, `fix(build):`, `chore(build):`, `docs(build):`,
-  `test(build):`, `refactor(build):`, `sec(build):`. Bodies only
+  `feat(builder):`, `fix(builder):`, `chore(builder):`, `docs(builder):`,
+  `test(builder):`, `refactor(builder):`, `sec(builder):`. Bodies only
   when a critical bug/security reason must be recorded. Keep subjects ≤ ~72
   chars.
 

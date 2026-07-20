@@ -1,4 +1,4 @@
-# build Plugin — Amazon Q / Claude for Hermes (direct HTTPS chat)
+# builder Plugin — Amazon Q / Claude for Hermes (direct HTTPS chat)
 
 > [!IMPORTANT]
 > Unofficial, experimental community plugin for the Hermes Agent. It authenticates
@@ -7,7 +7,7 @@
 
 ## Overview
 
-The `build` plugin lets the Hermes Agent talk to **Amazon Q Developer
+The `builder` plugin lets the Hermes Agent talk to **Amazon Q Developer
 (Claude models)** through a **direct HTTPS backend** — `backend.py` calls
 Amazon Q's `GenerateAssistantResponse` API straight over the wire, with no
 HTTP bridge and no subprocess. Hermes drives the agentic loop; this plugin
@@ -49,7 +49,7 @@ hermes plugins install <aws-build-repo-url>
 # 2) register aws-build as a selectable chat model in Hermes
 #    (backs up ~/.hermes/config.yaml, then adds providers: aws-build
 #     pointing at the in-plugin adapter on :8077 — no :8088 bridge)
-~/.hermes/plugins/build/scripts/setup.sh
+~/.hermes/plugins/builder/scripts/setup.sh
 
 # 3) restart Hermes so config reloads + the adapter launches on register()
 # 4) one-time auth, then chat via the model or the ask_q tool
@@ -77,7 +77,7 @@ Run the companion script first (it backs up `config.yaml`, is idempotent,
 and only touches aws-build's own entries):
 
 ```bash
-~/.hermes/plugins/build/scripts/uninstall.sh   # removes providers:aws-build + enabled entry
+~/.hermes/plugins/builder/scripts/uninstall.sh   # removes providers:aws-build + enabled entry
 hermes plugins uninstall aws-build                  # drops the plugin dir
 # restart Hermes
 ```
@@ -200,7 +200,7 @@ in-conversation tools (`bid_login`, `bid_status`, `bid_show_identity`,
 back:
 
 ```bash
-# inside a Hermes session (or via the build toolset)
+# inside a Hermes session (or via the builder toolset)
 bid_login      # device flow; approve the user_code in your browser
 bid_status     # report current auth / device-login state
 bid_logout     # stop polling and delete all stored secrets
@@ -223,7 +223,7 @@ python3 build_cli.py status    # current auth / device-flow state
 python3 build_cli.py whoami    # token identity (no raw token)
 python3 build_cli.py logout     # clear stored secrets
 python3 build_cli.py models     # list advertised models + tags
-# convenience shim (anywhere): ~/.hermes/plugins/build/bin/build login
+# convenience shim (anywhere): ~/.hermes/plugins/builder/bin/builder login
 ```
 
 `login` prints the `verification_uri_complete` link to copy into a browser and
@@ -254,12 +254,12 @@ These names look similar but live in different layers. Mixing them up is what
 
 | Identifier | Where | Meaning |
 |------------|-------|---------|
-| `build` | this plugin (directory, `plugin.yaml` `name:`, `toolset=`) | the plugin slug — the only name that matters for loading/running the plugin |
+| `builder` | this plugin (directory, `plugin.yaml` `name:`, `toolset=`) | the plugin slug — the only name that matters for loading/running the plugin |
 | `bid_*` | this plugin's auth tools (`bid_login`, `bid_status`, `bid_show_identity`, `bid_logout`) | "BID" = **B**uilder **ID** (Amazon's "Build ID" / Builder ID). The `bid_` prefix is the plugin's own, consistent abbreviation |
-| `bid_token.json` / `bid_registration.json` / `bid_flow.json` | `HERMES_HOME/plugins/build/auth/` | the plugin's local token/flow mirror files (prefix matches the `bid_*` tools) |
+| `bid_token.json` / `bid_registration.json` / `bid_flow.json` | `HERMES_HOME/plugins/builder/auth/` | the plugin's local token/flow mirror files (prefix matches the `bid_*` tools) |
 | `aws-bid` | Hermes **core** CLI (`hermes auth add aws-bid`) | core's *separate* device-flow provider id — **not** this plugin's slug and **not** wired to this plugin's `auth/bid_token.json` store |
 
-Rule of thumb: the plugin is `build` everywhere it controls its own name;
+Rule of thumb: the plugin is `builder` everywhere it controls its own name;
 `aws-bid` belongs to Hermes core and is a different (currently un-integrated)
 path. Do not rename the plugin's `bid_*` tools to `build_*` — that would
 diverge from both the `.bid_*` file mirrors and AWS's `aws-bid` terminology.
@@ -299,12 +299,12 @@ access; aws-build is the reasoning backend behind it.
 ## Secrets
 
 These files hold live credentials and are **gitignored** (never commit them).
-They live under the plugin's own `auth/` directory (scoped to build, not
+They live under the plugin's own `auth/` directory (scoped to builder, not
 Hermes core's `auth/` namespace), written `chmod 600`:
 
-- `plugins/build/auth/bid_token.json`
-- `plugins/build/auth/bid_registration.json`
-- `plugins/build/auth/bid_flow.json`
+- `plugins/builder/auth/bid_token.json`
+- `plugins/builder/auth/bid_registration.json`
+- `plugins/builder/auth/bid_flow.json`
 
 A one-time migration reads any legacy `.bid_*.json` from the plugin root and
 moves it into `auth/`, so an existing session survives the layout change.

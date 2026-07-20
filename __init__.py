@@ -244,9 +244,9 @@ _TOOLS = (
 
 
 def register(ctx) -> None:
-    """Register all aws-build plugin tools + start the OpenAI adapter.
+    """Register all builder plugin tools + start the OpenAI adapter.
 
-    The adapter lets aws-build be a *selectable chat model* in the Hermes
+    The adapter lets builder be a *selectable chat model* in the Hermes
     TUI/CLI (Way A): it speaks OpenAI's /v1/chat/completions wire
     format on the Hermes side and translates to Q via backend.chat(). It is
     launched as a daemon background thread here (dies with the Hermes
@@ -256,14 +256,14 @@ def register(ctx) -> None:
     for name, schema, handler, check_fn, emoji in _TOOLS:
         ctx.register_tool(
             name=name,
-            toolset="build",
+            toolset="builder",
             schema=schema,
             handler=handler,
             check_fn=check_fn,
             emoji=emoji,
         )
     # Best-effort: start the local OpenAI-compatible adapter so Hermes can
-    # route chat turns to aws-build as a model. No-op if already running.
+    # route chat turns to builder as a model. No-op if already running.
     try:
         from . import adapter  # package import
     except ImportError:  # __main__ / direct
@@ -271,9 +271,9 @@ def register(ctx) -> None:
     port = int(__import__("os").environ.get("AWS_BUILD_ADAPTER_PORT", "8077"))
     try:
         srv, actual = adapter.start(port=port)
-        print(f"[aws-build] OpenAI adapter listening on :{actual} (model-provider mode)")
+        print(f"[builder] OpenAI adapter listening on :{actual} (model-provider mode)")
     except Exception as exc:  # noqa: BLE001
-        logger.warning("aws-build adapter failed to start (tool-only mode OK): %s", exc)
+        logger.warning("builder adapter failed to start (tool-only mode OK): %s", exc)
 
 
 def unregister(ctx) -> None:
@@ -288,6 +288,6 @@ def unregister(ctx) -> None:
         import adapter  # type: ignore
     try:
         adapter.stop()
-        print("[aws-build] OpenAI adapter stopped (model-provider mode off)")
+        print("[builder] OpenAI adapter stopped (model-provider mode off)")
     except Exception as exc:  # noqa: BLE001
-        logger.warning("aws-build adapter stop failed (ignore): %s", exc)
+        logger.warning("builder adapter stop failed (ignore): %s", exc)
