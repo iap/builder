@@ -1,0 +1,11 @@
+# Test/runtime dependencies for the aws-build plugin's test suite + verify.py.
+#
+# NOTE: the plugin is NOT self-contained for testing — its modules import
+# `hermes_constants` (and some tests import `hermes_cli`), which live in Hermes
+# core. CI therefore checks out Hermes core (hermes-agent) as a sibling and runs
+# the suite from that layout (see .github/workflows/ci.yml). These pins match
+# the versions in the hermes-agent venv so CI behaves like the real environment.
+pytest==8.3.4
+requests==2.33.0
+PyYAML==6.0.3
+botocore==1.42.97

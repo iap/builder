@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      plugin_ref:
+        description: "Ref of the aws-build plugin repo to test"
+        required: false
+        default: "main"
+
+# The aws-build plugin is tested INSIDE the Hermes core layout: its modules
+# import `hermes_constants` (and some tests import `hermes_cli`), which live in
+# hermes-agent. So we check out hermes-agent as a sibling and mount the plugin
+# under <HERMES_HOME>/plugins/aws-build, then run the suite from there.
+#
+# The plugin repo is fetched via PLUGIN_REPO below. Until the plugin is pushed
+# to a remote, set PLUGIN_REPO to a pushable URL (or run this workflow after
+# pushing). Core (hermes-agent) is public and fetched directly.
+
+env:
+  PLUGIN_REPO: "git@github.com:NousResearch/aws-build.git"
+  HERMES_HOME: "${{ github.workspace }}/hm"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Hermes core (public)
+        uses: actions/checkout@v4
+        with:
+          repository: NousResearch/hermes-agent
+          path: hermes-agent
+
+      - name: Checkout aws-build plugin
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.PLUGIN_REPO }}
+          ref: ${{ github.event.inputs.plugin_ref || 'main' }}
+          path: plugin-src
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Assemble Hermes home layout
+        run: |
+          set -euo pipefail
+          HM="${{ env.HERMES_HOME }}"
+          mkdir -p "$HM/plugins"
+          # Mount plugin at the canonical path Hermes core expects.
+          ln -s "${{ github.workspace }}/plugin-src" "$HM/plugins/aws-build"
+          echo "HERMES_HOME=$HM" >> "$GITHUB_ENV"
+
+      - name: Install test dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r "${{ github.workspace }}/plugin-src/requirements.txt"
+
+      - name: Run tests
+        working-directory: ${{ env.HERMES_HOME }}/plugins/aws-build
+        env:
+          HERMES_HOME: ${{ env.HERMES_HOME }}
+        run: |
+          set -euo pipefail
+          # Adapter tests bind a local port and can hang in CI; the same subset
+          # is excluded when running locally.
+          python -m pytest -q -k "not adapter"
+
+      - name: Run plugin self-checks (verify.py)
+        working-directory: ${{ env.HERMES_HOME }}/plugins/aws-build
+        env:
+          HERMES_HOME: ${{ env.HERMES_HOME }}
+        run: python verify.py
