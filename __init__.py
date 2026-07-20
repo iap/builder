@@ -146,7 +146,7 @@ _TOOLS = (
         {
             "name": "ask_q",
             "description": (
-                "Send a prompt to AWS Builder ID (Amazon Q / Claude) and return the answer. "
+                "Send a prompt to AWS Builder ID and return the answer. "
                 "Hermes drives the agentic loop; Q answers single prompts. "
                 "Optionally pass conversation_id to continue a prior Q conversation."
             ),
