@@ -74,10 +74,8 @@ def _import_sso_oidc():
 
 
 # --- Q endpoints / constants (source-verified) ---
-OIDC_URL = "https://oidc.us-east-1.amazonaws.com"
 CHAT_HOST = "q.us-east-1.amazonaws.com"
 CHAT_URL = f"https://{CHAT_HOST}"
-REFRESH_GRANT = "refresh_token"
 X_AMZ_TARGET = "AmazonCodeWhispererStreamingService.GenerateAssistantResponse"
 
 
