@@ -256,7 +256,7 @@ def register(ctx) -> None:
     for name, schema, handler, check_fn, emoji in _TOOLS:
         ctx.register_tool(
             name=name,
-            toolset="aws-build",
+            toolset="build",
             schema=schema,
             handler=handler,
             check_fn=check_fn,

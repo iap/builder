@@ -54,7 +54,7 @@ def _import_sso_oidc():
     """Import the auth.sso_oidc module robustly regardless of load style.
 
     Hermes core loads this plugin as a *package* submodule (e.g.
-    ``hermes_plugins.aws-build.backend``) WITHOUT placing the plugin directory
+    ``hermes_plugins.build.backend``) WITHOUT placing the plugin directory
     on the top-level ``sys.path``. In that case a bare ``from auth import
     sso_oidc`` raises ``ModuleNotFoundError: No module named 'auth'`` — which
     used to mask the real "please authenticate" message at chat time (the
@@ -146,7 +146,7 @@ def _resolve_model_id(model: Optional[str]) -> str:
     import logging
 
     logging.getLogger(__name__).warning(
-        "aws-build: unknown model %r not in catalog %s; using 'auto' "
+        "build: unknown model %r not in catalog %s; using 'auto' "
         "(Q returns HTTP 500 for unsupported modelId)",
         requested,
         sorted(allowed),
