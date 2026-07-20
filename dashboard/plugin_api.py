@@ -37,7 +37,7 @@ def _ensure_plugin_package() -> str:
     so the backend reuses the same functions (and the same on-disk token/flow
     files) as the agent tools — one auth state, no drift.
     """
-    root = Path(__file__).resolve().parent.parent  # ~/.hermes/plugins/builder
+    root = Path(__file__).resolve().parent.parent  # plugin root under HERMES_HOME/plugins/builder
     ns = "hermes_plugins"
     if ns not in sys.modules:
         ns_pkg = types.ModuleType(ns)

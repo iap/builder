@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # builder plugin: register builder as a selectable Hermes chat model.
 #
-# WHY: Hermes routes chat through providers declared in ~/.hermes/config.yaml
+# WHY: Hermes routes chat through providers declared in ${HERMES_HOME:-$HOME/.hermes}/config.yaml
 # with transport: openai_chat. The plugin ships a self-contained OpenAI-
 # compatible adapter (adapter.py, launched by register()) that translates to
 # Amazon Q. This script adds the providers: builder entry pointing at that
@@ -11,7 +11,7 @@
 # first. Does NOT touch any other provider. User-invoked (never auto-run by
 # the plugin) to respect Hermes' config-write guard.
 #
-# USAGE:  hermes plugins install <url> && ~/.hermes/plugins/builder/scripts/setup.sh
+# USAGE:  hermes plugins install <url> && ${HERMES_HOME:-$HOME/.hermes}/plugins/builder/scripts/setup.sh
 #         then restart Hermes.
 
 set -euo pipefail
@@ -54,7 +54,7 @@ cat > "$BLOCK_FILE" <<EOF
       - claude-haiku-4.5
 EOF
 
-"$HOME/.hermes/hermes-agent/venv/bin/python3" - "$CONFIG" "$BLOCK_FILE" <<'PY'
+python3 - "$CONFIG" "$BLOCK_FILE" <<'PY'
 import sys
 cfg, blockfile = sys.argv[1], sys.argv[2]
 block = open(blockfile).read().rstrip("\n")

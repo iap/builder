@@ -315,31 +315,6 @@ To rotate: `bid_logout` and re-authenticate via `bid_login`.
 
 ---
 
-## License
-
-Dual-licensed under your choice of **MIT** (`LICENSE-MIT`) or **Apache
-License 2.0** (`LICENSE-APACHE`). SPDX: `MIT OR Apache-2.0`. See
-[CONTRIBUTING.md](CONTRIBUTING.md) for development and submission guidelines.
-
-The dual license is intentional, not a generic "pick one" — see the top-level
-`LICENSE` file for the full mapping. In short:
-
-- **Apache License 2.0** is the license intended for the **Amazon-interfacing
-  code** — `backend.py` (chat with Amazon Q), `adapter.py` (the OpenAI bridge
-  to Q), `auth/sso_oidc.py` (AWS Builder ID login), and `__init__.py`. Apache-2.0's
-  `NOTICE`/attribution and trademark clauses keep the Amazon / AWS / Amazon Q /
-  Builder ID branding boundary explicit and respectful.
-- **MIT License** is the license intended for the **code not related to Amazon**
-  (generic helpers, dashboard UI shell, tests, tooling) — the simpler,
-  more permissive option for that code.
-
-You may still apply **either** license to the whole project (that is what
-`MIT OR Apache-2.0` means); the split above is the project's *intended* mapping,
-stated so redistributors are not confused about which license spirit applies
-where. **Amazon**, **AWS**, **Amazon Q**, and **Builder ID** are trademarks of
-Amazon.com, Inc. and are used only to describe interoperability. This project is
-not affiliated with, endorsed by, or sponsored by Amazon.
-
 ## Tests
 
 ```bash
@@ -351,7 +326,19 @@ local mirror / cache token loading, the dynamic model catalog, tag loading,
 and tool registration. `python3 verify.py` sanity-checks that all tools register
 and that no handler leaks a secret.
 
----
+## License
+
+Dual-licensed under your choice of **MIT** (`LICENSE-MIT`) or **Apache
+License 2.0** (`LICENSE-APACHE`). SPDX: `MIT OR Apache-2.0`.
+
+The split is intentional: **Apache-2.0** is intended for the Amazon-interfacing
+code (`backend.py`, `adapter.py`, `auth/sso_oidc.py`, `__init__.py`), while
+**MIT** is intended for non-Amazon code (dashboard shell, tests, helpers).
+See the top-level `LICENSE` file for the full mapping.
+
+**Amazon**, **AWS**, **Amazon Q**, and **Builder ID** are trademarks of
+Amazon.com, Inc. and are used only to describe interoperability. This project is
+not affiliated with, endorsed by, or sponsored by Amazon.
 
 ## Licenses
 

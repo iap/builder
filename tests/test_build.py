@@ -114,7 +114,7 @@ def test_adapter_surfaces_chat_errors_as_sse(monkeypatch):
 
 def test_adapter_does_not_forward_tools_to_q(monkeypatch):
     """Hermes sends the full tool catalog (MCP + skills + native) in `tools`
-    when aws-build is selected as a *model*. The adapter must NOT put `tools`
+    when builder is selected as a *model*. The adapter must NOT put `tools`
     into Q's request body (Q's GenerateAssistantResponse rejects a `tools`
     field) — it is chat-only at the wire level. Tool awareness is conveyed as
     text via the injected convention instead. This pins the contract so a
