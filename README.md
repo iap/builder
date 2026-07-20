@@ -289,15 +289,27 @@ To rotate: `bid_logout` and re-authenticate via `bid_login`.
 ## License
 
 Dual-licensed under your choice of **MIT** (`LICENSE-MIT`) or **Apache
-License 2.0** (`LICENSE-APACHE`). SPDX: `MIT OR Apache-2.0`.
+License 2.0** (`LICENSE-APACHE`). SPDX: `MIT OR Apache-2.0`. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for development and submission guidelines.
 
-The dual license is also chosen to respect third-party branding and product
-names — in particular **Amazon**, **AWS**, **Amazon Q**, and **Builder ID** are
-trademarks of Amazon.com, Inc. and are used here only to describe
-interoperability with those services. This project is not affiliated with,
-endorsed by, or sponsored by Amazon. The Apache-2.0 `NOTICE`/attribution
-provisions and trademark clauses help keep that boundary explicit, while MIT
-offers a permissive alternative.
+The dual license is intentional, not a generic "pick one" — see the top-level
+`LICENSE` file for the full mapping. In short:
+
+- **Apache License 2.0** is the license intended for the **Amazon-interfacing
+  code** — `backend.py` (chat with Amazon Q), `adapter.py` (the OpenAI bridge
+  to Q), `auth/sso_oidc.py` (AWS Builder ID login), and `__init__.py`. Apache-2.0's
+  `NOTICE`/attribution and trademark clauses keep the Amazon / AWS / Amazon Q /
+  Builder ID branding boundary explicit and respectful.
+- **MIT License** is the license intended for the **code not related to Amazon**
+  (generic helpers, dashboard UI shell, tests, tooling) — the simpler,
+  more permissive option for that code.
+
+You may still apply **either** license to the whole project (that is what
+`MIT OR Apache-2.0` means); the split above is the project's *intended* mapping,
+stated so redistributors are not confused about which license spirit applies
+where. **Amazon**, **AWS**, **Amazon Q**, and **Builder ID** are trademarks of
+Amazon.com, Inc. and are used only to describe interoperability. This project is
+not affiliated with, endorsed by, or sponsored by Amazon.
 
 ## Tests
 
@@ -316,7 +328,8 @@ and that no handler leaks a secret.
 
 - [MIT License](LICENSE-MIT)
 - [Apache License 2.0](LICENSE-APACHE)
+- [Contributing](CONTRIBUTING.md)
 
 “Amazon Web Services” and all related marks, including logos, graphic designs, and service names, are trademarks or trade dress of AWS in the U.S. and other countries. AWS’s trademarks and trade dress may not be used in connection with any product or service that is not AWS’s, in any manner that is likely to cause confusion among customers, or in any manner that disparages or discredits AWS.
 
-Copyright © 2026 Iko . Not affiliated with or endorsed by Amazon.com, Inc.
+Copyright © 2026 Iko and . Not affiliated with or endorsed by Amazon.com, Inc.
