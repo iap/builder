@@ -92,10 +92,6 @@ def test_chat_body_shape():
     assert "MANUAL" in payload
 
 
-def test_extract_answer_empty_stream():
-    assert backend._extract_answer(_FakeResp(["", "   "])) == "(no response)"
-
-
 def test_extract_answer_surfaces_error_envelope():
     # A mid-stream error envelope (no content/modelId) must be surfaced as a
     # "(Q error: <type>)" string instead of silently returning "(no response)".

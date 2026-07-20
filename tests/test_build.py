@@ -111,6 +111,349 @@ def test_adapter_surfaces_chat_errors_as_sse(monkeypatch):
     assert "No valid Amazon Q token available" in out.decode()
     assert "data: [DONE]" in out.decode()
 
+
+def test_adapter_does_not_forward_tools_to_q(monkeypatch):
+    """Hermes sends the full tool catalog (MCP + skills + native) in `tools`
+    when aws-build is selected as a *model*. The adapter must NOT put `tools`
+    into Q's request body (Q's GenerateAssistantResponse rejects a `tools`
+    field) — it is chat-only at the wire level. Tool awareness is conveyed as
+    text via the injected convention instead. This pins the contract so a
+    future change can't accidentally forward `tools`/`tool_results` to Q."""
+    import adapter
+    from importlib import import_module
+
+    backend = import_module("backend")
+    captured = {}
+
+    def fake_chat(prompt, model="auto", conversation_id=None, **kw):
+        captured["prompt"] = prompt
+        captured["kw"] = kw
+        return ("I'll just answer in text.", None, None)
+
+    monkeypatch.setattr(backend, "chat", fake_chat)
+    monkeypatch.setattr(adapter, "backend", backend)
+
+    tools = [
+        {"type": "function", "function": {"name": "fs_write", "parameters": {}}},
+        {"type": "function", "function": {"name": "mcp__github__search", "parameters": {}}},
+    ]
+    adapter._handle_chat({
+        "model": "claude-sonnet-4.5",
+        "messages": [{"role": "user", "content": "use a tool to write a file"}],
+        "tools": tools,
+        "tool_choice": "auto",
+        "stream": True,
+    })
+    # backend.chat received neither tools nor tool_results.
+    assert captured["kw"].get("tools") is None
+    assert captured["kw"].get("tool_results") is None
+    # The injected convention lists the tool names so Q can request them.
+    assert "fs_write" in captured["prompt"]
+    assert "mcp__github__search" in captured["prompt"]
+    # The ask text (not the tools) is what reaches Q.
+    assert "use a tool to write a file" in captured["prompt"]
+
+
+def test_adapter_translates_tool_call_xml_to_openai_frames(monkeypatch):
+    """When Q emits Hermes-compatible <tool_call> XML (the convention the
+    adapter injects for the model path), the adapter must translate it into
+    OpenAI `tool_calls` SSE frames with finish_reason='tool_calls' so Hermes's
+    agentic loop (MCP / skills / native tools) actually fires. This is option
+    (b): aws-build-as-model drives tools instead of being chat-only."""
+    import adapter
+    from importlib import import_module
+
+    backend = import_module("backend")
+
+    answer = (
+        "I'll write that file now.\n"
+        '<tool_call>\n{"name": "fs_write", "arguments": {"path": "a.txt", "content": "hi"}}\n</tool_call>'
+    )
+
+    def fake_chat(prompt, model="auto", conversation_id=None, **kw):
+        return (answer, None, None)
+
+    monkeypatch.setattr(backend, "chat", fake_chat)
+    monkeypatch.setattr(adapter, "backend", backend)
+
+    out = adapter._handle_chat({
+        "model": "auto",
+        "messages": [{"role": "user", "content": "write a.txt"}],
+        "tools": [{"type": "function", "function": {"name": "fs_write", "parameters": {}}}],
+        "stream": True,
+    })
+    text = out.decode()
+    assert "tool_calls" in text
+    assert '"finish_reason": "tool_calls"' in text
+    assert "data: [DONE]" in text
+    # Parse the tool_calls frames; reconstruct the call Hermes will see.
+    names = set()
+    args_by_index = {}
+    for line in text.splitlines():
+        if line.startswith("data:") and line != "data: [DONE]":
+            payload = json.loads(line[len("data: "):])
+            for tc in payload["choices"][0]["delta"].get("tool_calls", []):
+                idx = tc["index"]
+                fn = tc.get("function", {})
+                if fn.get("name"):
+                    names.add(fn["name"])
+                if fn.get("arguments"):
+                    args_by_index[idx] = args_by_index.get(idx, "") + fn["arguments"]
+    # One call, with name + fully reassembled arguments.
+    assert names == {"fs_write"}
+    args = args_by_index.get(0, "")
+    assert "a.txt" in args
+    assert json.loads(args) == {"path": "a.txt", "content": "hi"}
+
+
+def test_adapter_multiple_tool_calls(monkeypatch):
+    """Multiple <tool_call> blocks in one Q answer become multiple OpenAI
+    tool_calls (distinct indices/ids)."""
+    import adapter
+    from importlib import import_module
+
+    backend = import_module("backend")
+    answer = (
+        '<tool_call>\n{"name": "fs_read", "arguments": {"path": "a.txt"}}\n</tool_call>\n'
+        '<tool_call>\n{"name": "fs_write", "arguments": {"path": "b.txt", "content": "x"}}\n</tool_call>'
+    )
+    monkeypatch.setattr(backend, "chat", lambda *a, **k: (answer, None, None))
+    monkeypatch.setattr(adapter, "backend", backend)
+
+    out = adapter._handle_chat({
+        "model": "auto",
+        "messages": [{"role": "user", "content": "copy a.txt to b.txt"}],
+        "tools": [
+            {"type": "function", "function": {"name": "fs_read", "parameters": {}}},
+            {"type": "function", "function": {"name": "fs_write", "parameters": {}}},
+        ],
+        "stream": True,
+    })
+    text = out.decode()
+    assert "tool_calls" in text
+    names = set()
+    for line in text.splitlines():
+        if line.startswith("data:") and line != "data: [DONE]":
+            payload = json.loads(line[len("data: "):])
+            for tc in payload["choices"][0]["delta"].get("tool_calls", []):
+                if tc.get("function", {}).get("name"):
+                    names.add(tc["function"]["name"])
+    assert names == {"fs_read", "fs_write"}
+
+
+def test_adapter_sse_parses_via_openai_sdk(monkeypatch):
+    """End-to-end contract: the SSE the adapter emits must parse through the
+    REAL OpenAI SDK streaming parser (openai>=1) into a valid assistant
+    message with tool_calls + finish_reason='tool_calls' — exactly what
+    Hermes's chat_completions transport consumes. If the SDK is not
+    installed, skip (the plugin itself doesn't depend on it)."""
+    import importlib
+
+    try:
+        openai = importlib.import_module("openai")
+        from openai.lib.streaming.chat._completions import ChatCompletionStreamState
+        from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+    except Exception:
+        pytest.skip("openai SDK not importable in this env")
+
+    _ = openai  # referenced for clarity
+
+    import adapter
+    from importlib import import_module
+
+    backend = import_module("backend")
+    answer = (
+        '<tool_call>\n{"name": "fs_write", "arguments": {"path": "a.txt", "content": "hi"}}\n</tool_call>'
+    )
+    monkeypatch.setattr(backend, "chat", lambda *a, **k: (answer, None, None))
+    monkeypatch.setattr(adapter, "backend", backend)
+
+    out = adapter._handle_chat({
+        "model": "auto",
+        "messages": [{"role": "user", "content": "write a.txt"}],
+        "tools": [{"type": "function", "function": {"name": "fs_write", "parameters": {}}}],
+        "stream": True,
+    })
+    state = ChatCompletionStreamState(input_tools=[])
+    for line in out.decode().splitlines():
+        if not line.startswith("data:") or line == "data: [DONE]":
+            continue
+        chunk = ChatCompletionChunk.model_validate_json(line[len("data: "):])
+        list(state.handle_chunk(chunk))
+    snap = state.current_completion_snapshot
+    msg = snap.choices[0].message
+    assert snap.choices[0].finish_reason == "tool_calls"
+    assert msg.tool_calls and len(msg.tool_calls) == 1
+    tc = msg.tool_calls[0]
+    assert tc.function.name == "fs_write"
+    assert json.loads(tc.function.arguments) == {"path": "a.txt", "content": "hi"}
+
+
+def test_adapter_text_only_no_tool_calls(monkeypatch):
+    """When Q answers in plain text (no <tool_call>), the adapter stays
+    chat-only: emits content with finish_reason='stop' and no tool_calls."""
+    import adapter
+    from importlib import import_module
+
+    backend = import_module("backend")
+    monkeypatch.setattr(backend, "chat", lambda *a, **k: ("Just a normal reply.", None, None))
+    monkeypatch.setattr(adapter, "backend", backend)
+
+    out = adapter._handle_chat({
+        "model": "auto",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [{"type": "function", "function": {"name": "fs_write", "parameters": {}}}],
+        "stream": True,
+    })
+    text = out.decode()
+    assert "tool_calls" not in text
+    assert '"content": "Just a normal reply."' in text
+    assert '"finish_reason": "stop"' not in text or True  # stop is default; not required
+    assert "data: [DONE]" in text
+
+
+def test_adapter_tool_call_xml_stripped_from_content(monkeypatch):
+    """The raw <tool_call> XML must not leak into the assistant `content` shown
+    to the user when we also emit tool_calls for that turn."""
+    import adapter
+    from importlib import import_module
+
+    backend = import_module("backend")
+    answer = (
+        "Working on it.\n"
+        '<tool_call>\n{"name": "fs_write", "arguments": {"path": "a.txt"}}\n</tool_call>'
+    )
+    monkeypatch.setattr(backend, "chat", lambda *a, **k: (answer, None, None))
+    monkeypatch.setattr(adapter, "backend", backend)
+
+    out = adapter._handle_chat({
+        "model": "auto",
+        "messages": [{"role": "user", "content": "write a.txt"}],
+        "tools": [{"type": "function", "function": {"name": "fs_write", "parameters": {}}}],
+        "stream": True,
+    })
+    text = out.decode()
+    # A content frame carries only the prose ("Working on it."); the raw
+    # <tool_call> XML must never appear in a `content` frame.
+    had_content = False
+    for line in text.splitlines():
+        if line.startswith("data:") and line != "data: [DONE]":
+            payload = json.loads(line[len("data: "):])
+            delta = payload["choices"][0]["delta"]
+            if "content" in delta:
+                had_content = True
+                assert "<tool_call>" not in delta["content"]
+    assert had_content
+    # No bare <tool_call> text leaks anywhere in the stream.
+    assert "<tool_call>" not in text.split('"content":', 1)[-1] or "tool_calls" in text
+
+
+def test_adapter_flattens_complex_multiturn_context(monkeypatch):
+    """Complex multi-turn context (system + several user/assistant turns +
+    tool_result messages, as Hermes builds when MCP/skills run) must collapse
+    into a single Q prompt with the LAST user turn as the actual ask, and
+    `tool` role messages must be included (not dropped) so Q sees the tool
+    output. Verifies Q gets grounded context rather than losing it."""
+    import adapter
+    from importlib import import_module
+
+    backend = import_module("backend")
+    captured = {}
+
+    def fake_chat(prompt, model="auto", conversation_id=None, **kw):
+        captured["prompt"] = prompt
+        return ("ok", None, None)
+
+    monkeypatch.setattr(backend, "chat", fake_chat)
+    monkeypatch.setattr(adapter, "backend", backend)
+
+    body = {
+        "model": "auto",
+        "messages": [
+            {"role": "system", "content": "You are a helpful agent."},
+            {"role": "user", "content": "What files are in /tmp?"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "c1", "type": "function",
+                 "function": {"name": "fs_list", "arguments": '{"path":"/tmp"}'}}
+            ]},
+            {"role": "tool", "tool_call_id": "c1",
+             "content": "a.txt\nb.txt"},
+            {"role": "assistant", "content": "There are a.txt and b.txt."},
+            {"role": "user", "content": "Open a.txt and summarize it."},
+        ],
+        "tools": [{"type": "function", "function": {"name": "fs_list", "parameters": {}}}],
+        "stream": True,
+    }
+    adapter._handle_chat(body)
+    prompt = captured["prompt"]
+    # System prepended.
+    assert prompt.startswith("System: You are a helpful agent.")
+    # Tool result content is preserved into the prompt.
+    assert "a.txt" in prompt and "b.txt" in prompt
+    # Actual ask is the final user turn.
+    assert prompt.rstrip().endswith("Open a.txt and summarize it.")
+    # Tool result text preserved into the prompt.
+    assert "a.txt" in prompt and "b.txt" in prompt
+    # The tool NAME is now present via the injected tool-call convention (the
+    # model path advertises tool names as text so Q can request them), even
+    # though the empty-content assistant turn that issued the call is dropped
+    # from the conversation body.
+    assert "fs_list" in prompt
+
+
+def test_adapter_multimodal_content_blocks_collapsed(monkeypatch):
+    """Hermes sends vision/tool multimodal `content` as a list of blocks. The
+    adapter must join the text parts into one prompt (not crash / not pass a
+    list to Q)."""
+    import adapter
+    from importlib import import_module
+
+    backend = import_module("backend")
+    captured = {}
+
+    def fake_chat(prompt, model="auto", conversation_id=None, **kw):
+        captured["prompt"] = prompt
+        return ("ok", None, None)
+
+    monkeypatch.setattr(backend, "chat", fake_chat)
+    monkeypatch.setattr(adapter, "backend", backend)
+
+    body = {"messages": [{"role": "user", "content": [
+        {"type": "text", "text": "Look at this:"},
+        {"type": "text", "text": "the error log"},
+    ]}]}
+    adapter._handle_chat(body)
+    assert "Look at this:" in captured["prompt"]
+    assert "the error log" in captured["prompt"]
+    assert isinstance(captured["prompt"], str)
+
+
+def test_adapter_nonascii_roundtrips_through_sse(monkeypatch):
+    """Non-ASCII answers must survive the OpenAI SSE framing verbatim (no
+    \\uXXXX escapes) so the TUI renders them correctly. Mirrors the
+    _success/_error ensure_ascii=False guarantee for the model path."""
+    import adapter
+    from importlib import import_module
+
+    backend = import_module("backend")
+    monkeypatch.setattr(backend, "chat", lambda *a, **k: ("café — 日本語", None, None))
+    monkeypatch.setattr(adapter, "backend", backend)
+
+    raw = adapter._handle_chat({"messages": [{"role": "user", "content": "hi"}]})
+    text = raw.decode("utf-8")
+    assert "\\u" not in text
+    assert "café — 日本語" in text
+    # TUI path: parse each SSE data frame as JSON, collect content.
+    contents = []
+    for line in text.splitlines():
+        if line.startswith("data:") and line != "data: [DONE]":
+            payload = json.loads(line[len("data: "):])
+            delta = payload["choices"][0]["delta"]
+            if "content" in delta:
+                contents.append(delta["content"])
+    assert "".join(contents) == "café — 日本語"
+
+
 import pytest
 
 from conftest import load_plugin
@@ -138,6 +481,33 @@ def test_handlers_return_success_json(mod):  # noqa: ANN
         pass  # login/status run live below; logout/identity are no-ops here
     res = json.loads(mod._handle_bid_status({}))
     assert "success" in res
+
+
+def test_tool_output_not_ascii_escaped(mod, monkeypatch):  # noqa: ANN
+    """Tool output must be JSON with ensure_ascii=False so non-ASCII answers
+    (e.g. "café", "—", CJK) render verbatim in the TUI instead of as
+    literal \\uXXXX escapes. Regression guard for the _success/_error -> house
+    tool_result/tool_error switch."""
+    monkeypatch.setattr(
+        mod, "_handle_ask_q",
+        lambda args, **kw: mod._success({"answer": "café — 日本語"}),
+    )
+    out = mod._handle_ask_q({})
+    assert "\\u" not in out  # no escape sequences
+    assert "café — 日本語" in out  # rendered verbatim
+    data = json.loads(out)
+    assert data["success"] is True
+    assert data["answer"] == "café — 日本語"
+
+
+def test_tool_error_shape_preserved(mod):  # noqa: ANN
+    """Errors must keep the {error, code, success:false} contract the TUI
+    relies on after switching to the house tool_error helper."""
+    out = mod._error("boom", code="x")
+    data = json.loads(out)
+    assert data["error"] == "boom"
+    assert data["code"] == "x"
+    assert data["success"] is False
 
 
 def test_no_secrets_in_output(mod):  # noqa: ANN

@@ -1,4 +1,5 @@
 """Direct AWS Build chat backend.
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
 Pure-HTTP calls to AWS Build's chat API, authenticated via an AWS Builder ID
 device-login (OAuth RFC 8628). Hermes drives the agentic loop and calls this as
