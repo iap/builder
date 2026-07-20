@@ -1,11 +1,11 @@
 {
-  "name": "build",
+  "name": "builder",
   "label": "AWS Build",
   "description": "Self-contained Amazon Builder ID auth for Hermes Agent.",
   "icon": "Globe",
   "version": "1.0.0",
   "tab": {
-    "path": "/build",
+    "path": "/builder",
     "position": "after:env"
   },
   "entry": "dist/index.js",

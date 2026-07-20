@@ -1,4 +1,4 @@
-"""Self-contained OpenAI-compatible adapter for the aws-build plugin.
+"""Self-contained OpenAI-compatible adapter for the builder plugin.
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
 WHY THIS EXISTS
@@ -7,7 +7,7 @@ Hermes routes chat turns through providers declared in ``config.yaml`` with a
 known ``transport`` (e.g. ``openai_chat``). Plugins CANNOT register an LLM
 backend directly — core only reads ``providers:`` from config. Amazon Q's API is
 NOT OpenAI-compatible (different auth, endpoint, request body, and stream
-shape). So to make aws-build a *selectable chat model* in the Hermes TUI/CLI
+shape). So to make builder a *selectable chat model* in the Hermes TUI/CLI
 (Way A), we expose a tiny local HTTP endpoint that speaks OpenAI's
 ``/v1/chat/completions`` wire format on one side and calls Q (via
 ``backend.chat()``) on the other.
@@ -83,7 +83,7 @@ def _resolve_bind_host(requested: str) -> str:
     if os.environ.get("AWS_BUILD_ADAPTER_ALLOW_PUBLIC") == "1":
         return requested
     raise RuntimeError(
-        f"aws-build adapter refused to bind to non-loopback host {requested!r}. "
+        f"builder adapter refused to bind to non-loopback host {requested!r}. "
         "The adapter is a local-only token bridge and must not be network-exposed. "
         "Bind 127.0.0.1 (default) or set AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1 to override."
     )
@@ -94,7 +94,7 @@ _thread: Optional[threading.Thread] = None
 
 # Tool-call convention injected into Q's single prompt. Q's
 # GenerateAssistantResponse rejects a real `tools` field (it is chat-only and
-# cannot do native function calling), so to let aws-build drive Hermes's
+# cannot do native function calling), so to let builder drive Hermes's
 # agentic loop (MCP / skills / native tools) as a *model*, we ask Q to emit
 # Hermes-compatible <tool_call> XML blocks (the same shape Hermes's own
 # tool-call system prompt uses) and translate them back into OpenAI
@@ -258,7 +258,7 @@ def _strip_tool_call_xml(answer: str) -> str:
     return out.strip()
 
 
-def _sse(choices: list, model: str = "aws-build") -> bytes:
+def _sse(choices: list, model: str = "builder") -> bytes:
     # SSE / OpenAI streaming requires each event to be terminated by a BLANK
     # line, i.e. "\n\n" — not a single "\n". With only one newline, Hermes's
     # openai_chat parser reads two `data:` frames as a single chunk, strips the
@@ -328,7 +328,7 @@ def _handle_chat(body: dict[str, Any]) -> bytes:
     return b"".join(frames)
 
 
-def _tool_calls_frames(calls: list[dict[str, Any]], text: str = "", model: str = "aws-build") -> bytes:
+def _tool_calls_frames(calls: list[dict[str, Any]], text: str = "", model: str = "builder") -> bytes:
     """Emit OpenAI streaming `tool_calls` frames for parsed Q tool calls.
 
     Mirrors what a native function-calling model streams: a role frame, one
@@ -465,7 +465,7 @@ def stop() -> None:
 
 if __name__ == "__main__":
     srv, p = start()
-    print(f"aws-build adapter listening on http://{HOST}:{p}/v1/chat/completions")
+    print(f"builder adapter listening on http://{HOST}:{p}/v1/chat/completions")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
