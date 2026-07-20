@@ -6,6 +6,6 @@
 # the suite from that layout (see .github/workflows/ci.yml). These pins match
 # the versions in the hermes-agent venv so CI behaves like the real environment.
 pytest==8.3.4
-requests==2.33.0
+requests==2.34.2
 PyYAML==6.0.3
 botocore==1.42.97
