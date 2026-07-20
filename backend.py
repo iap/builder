@@ -1,7 +1,7 @@
-"""Direct AWS Build chat backend.
+"""Direct AWS Builder ID chat backend.
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-Pure-HTTP calls to AWS Build's chat API, authenticated via an AWS Builder ID
+Pure-HTTP calls to AWS Builder ID's chat API, authenticated via an AWS Builder ID
 device-login (OAuth RFC 8628). Hermes drives the agentic loop and calls this as
 a plain reasoning tool (`ask_q`); the plugin is a direct backend — just
 `requests` to Q's HTTPS endpoint, with no subprocess and no local HTTP bridge.
@@ -445,7 +445,7 @@ def _load_model_override() -> Optional[list[str]]:
 
 
 def list_models() -> list[str]:
-    """Return available AWS Build models.
+    """Return available AWS Builder ID models.
 
     Resolution order:
       1. `models:` override in plugin.yaml (operator-editable, no code change).

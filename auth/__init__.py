@@ -1,4 +1,4 @@
-"""Amazon BID (Build ID) auth package.
+"""Amazon BID (Builder ID) auth package.
 
 Re-exports the headless SSO-OIDC device-authorization library so plugin code
 and tests can `from .auth import start_login, get_status, ...`.

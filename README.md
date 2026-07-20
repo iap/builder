@@ -35,7 +35,7 @@ the device-flow access token is the chat bearer.
 | `bid_status` | Report current auth / device-login state (polls once if a flow is pending). Never returns the raw token. |
 | `bid_show_identity` | Return token identity metadata (type, scopes, expiry) — no raw token. |
 | `bid_logout` | Stop polling and delete all stored secrets (the local `.bid_*` mirror files). |
-| `models` | List available AWS Build models (`backend.list_models()`) and plugin tags. |
+| `models` | List available AWS Builder ID models (`backend.list_models()`) and plugin tags. |
 | `tags` | List free-form tags describing the plugin (`backend.load_tags()`). |
 
 |--
@@ -63,7 +63,7 @@ does not let a plugin register an LLM backend or edit `config.yaml` itself).
 The adapter it points at is launched inside the plugin on `register()` and
 dies with the Hermes session — there is no separate daemon to manage.
 
-After install you can pick **AWS Build** as a model in the TUI/CLI
+After install you can pick **AWS Builder ID** as a model in the TUI/CLI
 (`-m aws-build`) or keep using the `ask_q` tool directly.
 
 ## Uninstall
@@ -127,7 +127,7 @@ OIDC access token (Bearer only — **no SigV4**, verified live).
 
 ### `adapter.py` — OpenAI-compatible model path (optional)
 
-When AWS Build is registered as a model (`providers: aws-build` → `:8077`),
+When AWS Builder ID is registered as a model (`providers: aws-build` → `:8077`),
 `adapter.py` exposes a tiny stdlib HTTP server speaking OpenAI
 `/v1/chat/completions`. It receives Hermes's OpenAI-shaped request
 (`messages`, `tools`, `stream`), calls `backend.chat()` (single Q prompt —
@@ -234,11 +234,11 @@ can resume polling). Override the home with `HERMES_HOME`.
 
 ## Dashboard card
 
-The plugin ships a dashboard card (`dashboard/`) reachable at the **AWS Build**
+The plugin ships a dashboard card (`dashboard/`) reachable at the **AWS Builder ID**
 tab in the Hermes dashboard (after `env`). It is a thin web UI over the same
 `bid_*` tools:
 
-- **Login with Build ID** — starts the RFC 8628 device flow; opens the
+- **Login with Builder ID** — starts the RFC 8628 device flow; opens the
   verification URL in a new browser tab and shows the `user_code` to enter.
   The card polls `GET /status` (which actively polls the in-flight flow) and
   flips to *Authenticated* the moment you approve in your browser.
@@ -255,7 +255,7 @@ These names look similar but live in different layers. Mixing them up is what
 | Identifier | Where | Meaning |
 |------------|-------|---------|
 | `builder` | this plugin (directory, `plugin.yaml` `name:`, `toolset=`) | the plugin slug — the only name that matters for loading/running the plugin |
-| `bid_*` | this plugin's auth tools (`bid_login`, `bid_status`, `bid_show_identity`, `bid_logout`) | "BID" = **B**uilder **ID** (Amazon's "Build ID" / Builder ID). The `bid_` prefix is the plugin's own, consistent abbreviation |
+| `bid_*` | this plugin's auth tools (`bid_login`, `bid_status`, `bid_show_identity`, `bid_logout`) | "BID" = **B**uilder **ID** (Amazon's "Builder ID"). The `bid_` prefix is the plugin's own, consistent abbreviation |
 | `bid_token.json` / `bid_registration.json` / `bid_flow.json` | `HERMES_HOME/plugins/builder/auth/` | the plugin's local token/flow mirror files (prefix matches the `bid_*` tools) |
 | `aws-bid` | Hermes **core** CLI (`hermes auth add aws-bid`) | core's *separate* device-flow provider id — **not** this plugin's slug and **not** wired to this plugin's `auth/bid_token.json` store |
 
@@ -277,7 +277,7 @@ Two distinct paths, two distinct rules:
   you want Claude-via-Q's reasoning/answers and let Hermes drive any follow-up
   tool use.
 
-- **`-m aws-build` model path — tool calls DO fire.** When AWS Build is selected
+- **`-m aws-build` model path — tool calls DO fire.** When AWS Builder ID is selected
   as a *model*, the in-plugin adapter (`adapter.py`) speaks OpenAI
   `/v1/chat/completions`. Because Q can't receive a real `tools` field, the
   adapter injects the tool-call convention (plus the tool names) as text, asks Q
@@ -285,7 +285,7 @@ Two distinct paths, two distinct rules:
   back into OpenAI `tool_calls` SSE frames** (`finish_reason: "tool_calls"`).
   Hermes's `openai_chat` transport parses those frames exactly like a native
   function-calling model, so **MCP / skills / native tools actually run** through
-  the aws-build model. Multiple tool calls per turn are supported; surrounding
+  the AWS Builder ID model. Multiple tool calls per turn are supported; surrounding
   prose is stripped from content. This is a text-based function-calling shim — it
   depends on Q following the injected convention. Verified end-to-end against the
   real OpenAI SDK streaming parser (frames parse into a valid
