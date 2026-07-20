@@ -5,6 +5,8 @@
 > via Amazon Builder ID (AWS BID) and is not affiliated with or endorsed by Amazon.
 > See [Licenses](#licenses) for terms.
 
+**Repository:** https://github.com/iap/builder.git
+
 ## Overview
 
 The `builder` plugin lets the Hermes Agent talk to **Amazon Q Developer
