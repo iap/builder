@@ -38,7 +38,7 @@ the device-flow access token is the chat bearer.
 | `models` | List available AWS Builder ID models (`backend.list_models()`) and plugin tags. |
 | `tags` | List free-form tags describing the plugin (`backend.load_tags()`). |
 
-|--
+---
 
 ## Installation
 
@@ -86,7 +86,7 @@ The `:8077` adapter listener stops when the session ends; if the plugin is
 unloaded it also calls `unregister()` → `adapter.stop()` for an immediate
 release. No `:8088` bridge, no orphaned refs.
 
-|--
+---
 
 ## Architecture
 
@@ -277,7 +277,7 @@ Two distinct paths, two distinct rules:
   you want Claude-via-Q's reasoning/answers and let Hermes drive any follow-up
   tool use.
 
-|- **`-m builder` model path — tool calls DO fire.** When AWS Builder ID is selected
+- **`-m builder` model path — tool calls DO fire.** When AWS Builder ID is selected
   as a *model*, the in-plugin adapter (`adapter.py`) speaks OpenAI
   `/v1/chat/completions`. Because Q can't receive a real `tools` field, the
   adapter injects the tool-call convention (plus the tool names) as text, asks Q
