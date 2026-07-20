@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the build plugin loads + tools work (HEADLESS, no browser, no secrets)."""
+"""Verify the builder plugin loads + tools work (HEADLESS, no browser, no secrets)."""
 
 import json
 import sys

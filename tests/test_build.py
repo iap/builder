@@ -1,4 +1,4 @@
-"""Tests for the build plugin — headless SSO-OIDC device flow.
+"""Tests for the builder plugin — headless SSO-OIDC device flow.
 
 Set BUILD_LIVE=1 to also exercise the real OIDC registration + start_device_
 authorization against oidc.us-east-1.amazonaws.com (no credentials needed).
@@ -19,7 +19,7 @@ def test_adapter_translates_openai_request_to_q(monkeypatch):
     """The adapter must accept an OpenAI-shape /v1/chat/completions request,
     flatten `messages` into one prompt, and call backend.chat() exactly once
     with that prompt + the requested model. This is the contract that lets
-    Hermes treat aws-build as a selectable chat model (Way A) without the
+    Hermes treat builder as a selectable chat model (Way A) without the
     old standalone :8088 bridge."""
     import adapter
     from importlib import import_module
@@ -159,7 +159,7 @@ def test_adapter_translates_tool_call_xml_to_openai_frames(monkeypatch):
     adapter injects for the model path), the adapter must translate it into
     OpenAI `tool_calls` SSE frames with finish_reason='tool_calls' so Hermes's
     agentic loop (MCP / skills / native tools) actually fires. This is option
-    (b): aws-build-as-model drives tools instead of being chat-only."""
+    (b): builder-as-model drives tools instead of being chat-only."""
     import adapter
     from importlib import import_module
 
@@ -533,12 +533,12 @@ def test_mirror_path_prefers_canonical_build(monkeypatch, tmp_path):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    # Canonical (build/auth) file present -> read resolves to it.
-    canonical = tmp_path / "plugins" / "build" / "auth" / "bid_token.json"
+    # Canonical (builder/auth) file present -> read resolves to it.
+    canonical = tmp_path / "plugins" / "builder" / "auth" / "bid_token.json"
     canonical.parent.mkdir(parents=True)
     canonical.write_text("{}")
     assert sso_oidc._token_path() == canonical
-    # _canonical_path always points at build/auth regardless of what exists.
+    # _canonical_path always points at builder/auth regardless of what exists.
     assert sso_oidc._canonical_path("bid_token.json") == canonical
 
 
@@ -547,12 +547,12 @@ def test_mirror_path_ignores_legacy_aws_build_dir(monkeypatch, tmp_path):
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     # A token left in the old plugins/aws-build dir must NOT be picked up; the
-    # resolved path stays canonical (build) so state lives in one place.
+    # resolved path stays canonical (builder) so state lives in one place.
     legacy = tmp_path / "plugins" / "aws-build" / "auth" / "bid_token.json"
     legacy.parent.mkdir(parents=True)
     legacy.write_text("{}")
     assert sso_oidc._token_path() == (
-        tmp_path / "plugins" / "build" / "auth" / "bid_token.json"
+        tmp_path / "plugins" / "builder" / "auth" / "bid_token.json"
     )
 
 
@@ -577,8 +577,8 @@ def test_legacy_dotfile_token_migrates_to_auth_dir(monkeypatch, tmp_path):
     tok = sso_oidc._load_token()
     assert tok is not None
     assert tok["access_token"] == "LEGACY"
-    # migrated into the new canonical location (plugins/build/auth/).
-    new_path = tmp_path / "plugins" / "build" / "auth" / "bid_token.json"
+    # migrated into the new canonical location (plugins/builder/auth/).
+    new_path = tmp_path / "plugins" / "builder" / "auth" / "bid_token.json"
     assert new_path.exists(), "legacy token must be migrated to auth/"
     assert not legacy.exists(), "legacy dotted file should be removed after migrate"
     assert json.loads(new_path.read_text())["access_token"] == "LEGACY"
@@ -588,7 +588,7 @@ def test_get_status_prefers_newest_valid_token(monkeypatch, tmp_path):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "build"
+    base = tmp_path / "plugins" / "builder"
     base.mkdir(parents=True)
     (base / "auth").mkdir(parents=True, exist_ok=True)
     old = {"access_token": "OLD", "expires_at": time.time() + 3600}
@@ -619,7 +619,7 @@ def test_get_status_refreshes_expired_token(monkeypatch, tmp_path):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "build"
+    base = tmp_path / "plugins" / "builder"
     base.mkdir(parents=True)
     (base / "auth").mkdir(parents=True, exist_ok=True)
     # Expired access token but with a usable refresh token on disk.
@@ -656,7 +656,7 @@ def test_get_status_reports_expired_when_refresh_dead(monkeypatch, tmp_path):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "build"
+    base = tmp_path / "plugins" / "builder"
     base.mkdir(parents=True)
     (base / "auth").mkdir(parents=True, exist_ok=True)
     (base / "auth" / "bid_token.json").write_text(
@@ -682,7 +682,7 @@ def test_get_status_no_refresh_when_valid(monkeypatch, tmp_path):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "build"
+    base = tmp_path / "plugins" / "builder"
     base.mkdir(parents=True)
     (base / "auth").mkdir(parents=True, exist_ok=True)
     (base / "auth" / "bid_token.json").write_text(
@@ -706,7 +706,7 @@ def test_get_status_expired_no_refresh_token(monkeypatch, tmp_path):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "build"
+    base = tmp_path / "plugins" / "builder"
     base.mkdir(parents=True)
     (base / "auth").mkdir(parents=True, exist_ok=True)
     (base / "auth" / "bid_token.json").write_text(
@@ -732,7 +732,7 @@ def test_get_token_refresh_persists_to_origin_store(monkeypatch, tmp_path):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "build"
+    base = tmp_path / "plugins" / "builder"
     base.mkdir(parents=True)
     (base / "auth").mkdir(parents=True, exist_ok=True)
     sso_file = base / "auth" / "bid_token.json"
@@ -982,7 +982,7 @@ def test_adapter_healthz():
 # --- build_cli.py: standalone copy-device-link login method ---
 
 def test_cli_login_prints_copyable_link_and_polls_to_success(monkeypatch, tmp_path, capsys):
-    """`build login` must print the verification URL + user_code (the
+    """`builder login` must print the verification URL + user_code (the
     copy-device-link UX) and then poll get_status() to completion, writing the
     token into the plugin's OWN store (auth/bid_token.json), never the Hermes
     credential pool."""
@@ -990,7 +990,7 @@ def test_cli_login_prints_copyable_link_and_polls_to_success(monkeypatch, tmp_pa
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "build"
+    base = tmp_path / "plugins" / "builder"
     (base / "auth").mkdir(parents=True, exist_ok=True)
 
     # start_login returns a pending flow (no token yet).
@@ -1043,7 +1043,7 @@ def test_cli_login_already_authenticated(monkeypatch, tmp_path, capsys):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "build"
+    base = tmp_path / "plugins" / "builder"
     (base / "auth").mkdir(parents=True, exist_ok=True)
     (base / "auth" / "bid_token.json").write_text(
         json.dumps({"access_token": "T", "refresh_token": "R", "expires_at": time.time() + 3600})
@@ -1073,7 +1073,7 @@ def test_cli_status_and_whoami_report_store_state(monkeypatch, tmp_path, capsys)
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "build"
+    base = tmp_path / "plugins" / "builder"
     (base / "auth").mkdir(parents=True, exist_ok=True)
     (base / "auth" / "bid_token.json").write_text(
         json.dumps({"access_token": "T", "refresh_token": "R", "expires_at": time.time() + 3600,
@@ -1095,7 +1095,7 @@ def test_cli_logout_clears_store(monkeypatch, tmp_path, capsys):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "build"
+    base = tmp_path / "plugins" / "builder"
     (base / "auth").mkdir(parents=True, exist_ok=True)
     (base / "auth" / "bid_token.json").write_text(
         json.dumps({"access_token": "T", "refresh_token": "R", "expires_at": time.time() + 3600})
@@ -1121,7 +1121,7 @@ class _FakeResp:
 
 
 def test_chat_wires_userinputmessagecontext_and_modelid(monkeypatch):
-    """chat() must build a faithful Q body: modelId coerced to a catalog value,
+    """chat() must builder a faithful Q body: modelId coerced to a catalog value,
     and tools/tool_results/history folded into userInputMessageContext. This
     exercises the branch that ask_q never hits (Hermes drives tools itself), so
     it must be covered explicitly rather than left unverified in the hot path."""

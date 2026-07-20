@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Convenience shim: run the build CLI from anywhere.
-# Usage: build login | status | whoami | logout | models
+# Convenience shim: run the builder CLI from anywhere.
+# Usage: builder login | status | whoami | logout | models
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 exec "${HERMES_AGENT_PYTHON:-python3}" "$SCRIPT_DIR/build_cli.py" "$@"

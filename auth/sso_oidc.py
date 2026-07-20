@@ -1,7 +1,7 @@
 """Amazon BID (Build ID) — headless SSO-OIDC device authorization (RFC 8628).
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-Wraps the Amazon BID (Build ID) device flow for the Amazon build CLI,
+Wraps the Amazon BID (Build ID) device flow for the Amazon builder CLI,
 but requires neither that binary nor any AWS credentials on the client side.
 The OIDC server (oidc.us-east-1.amazonaws.com) accepts the public client
 registration anonymously, so the whole flow runs headless: the agent starts it,
@@ -60,10 +60,10 @@ def _home() -> Path:
 
 
 # Canonical directory for this plugin. Matches the plugin's actual
-# directory name (`build`). Secrets live in an `auth/` subdir (scoped to
+# directory name (`builder`). Secrets live in an `auth/` subdir (scoped to
 # this plugin, NOT Hermes core's `auth/` namespace) as plain, non-hidden
 # JSON files written chmod 600.
-_PLUGIN_DIR_NAME = "build"
+_PLUGIN_DIR_NAME = "builder"
 _AUTH_DIR_NAME = "auth"
 
 # De-dotted, non-hidden secret filenames under <plugin>/auth/.
@@ -83,7 +83,7 @@ def _auth_dir() -> Path:
 
 
 def _canonical_path(filename: str) -> Path:
-    """Return the canonical secret path under `plugins/build/auth/`."""
+    """Return the canonical secret path under `plugins/builder/auth/`."""
     return _auth_dir() / filename
 
 
@@ -121,8 +121,8 @@ def _read_secret(path: Path) -> Optional[dict]:
         except Exception:  # noqa: BLE001 - corrupt state => treat as absent
             return None
     # Legacy files lived as dotted names directly in the plugin root
-    # (plugins/build/.bid_token.json), not inside auth/. Also support the older
-    # plugin directory name `aws-build` so a directory rename (aws-build -> build)
+    # (plugins/builder/.bid_token.json), not inside auth/. Also support the older
+    # plugin directory name `aws-build` so a directory rename (aws-build -> builder)
     # migrates an existing session's secrets without forcing a re-login.
     legacy_candidates = [
         _home() / "plugins" / _PLUGIN_DIR_NAME / ("." + path.name),
