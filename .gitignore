@@ -8,3 +8,4 @@ auth/oidc_client_secret.json
 __pycache__/
 *.pyc
 .pytest_cache/
+node_modules/

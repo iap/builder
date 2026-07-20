@@ -70,6 +70,24 @@ except ImportError:  # __main__ / direct execution
 DEFAULT_PORT = int(os.environ.get("AWS_BUILD_ADAPTER_PORT", "8077"))
 HOST = os.environ.get("AWS_BUILD_ADAPTER_HOST", "127.0.0.1")
 
+# The adapter is a LOCAL-ONLY bridge: it forwards requests to Amazon Q using the
+# plugin's stored Builder ID token. It must never be reachable from the network.
+# Bind loopback by default; refuse to publish on a non-loopback host unless the
+# operator opts in explicitly via AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1.
+_LOOPBACK = ("127.0.0.1", "::1", "localhost")
+
+
+def _resolve_bind_host(requested: str) -> str:
+    if requested in _LOOPBACK:
+        return requested
+    if os.environ.get("AWS_BUILD_ADAPTER_ALLOW_PUBLIC") == "1":
+        return requested
+    raise RuntimeError(
+        f"aws-build adapter refused to bind to non-loopback host {requested!r}. "
+        "The adapter is a local-only token bridge and must not be network-exposed. "
+        "Bind 127.0.0.1 (default) or set AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1 to override."
+    )
+
 _server: Optional["ThreadingHTTPServer"] = None
 _thread: Optional[threading.Thread] = None
 
@@ -416,12 +434,20 @@ def start(host: str = HOST, port: int = DEFAULT_PORT) -> tuple[ThreadingHTTPServ
 
     Returns (server, actual_port). Idempotent: calling twice returns the
     already-running server. Safe to call from ``register()``.
+
+    SECURITY — LOCAL-ONLY BRIDGE: the adapter proxies requests to Amazon Q
+    using the plugin's stored Builder ID token, so it must never be reachable
+    from the network. It binds loopback (``127.0.0.1`` / ``::1`` / ``localhost``)
+    by default. Binding any other host is rejected by ``_resolve_bind_host``
+    unless ``AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1`` is set explicitly. There is no
+    auth on the endpoint itself — that is safe ONLY because it is loopback-only.
     """
     global _server, _thread
     if _server is not None:
         return _server, _server.server_address[1]  # type: ignore[union-attr]
 
-    srv = ThreadingHTTPServer((host, port), _Handler)
+    bind_host = _resolve_bind_host(host)
+    srv = ThreadingHTTPServer((bind_host, port), _Handler)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
     _server, _thread = srv, t
