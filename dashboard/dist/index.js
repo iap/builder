@@ -356,5 +356,5 @@
   }
 
   // REQUIRED: register the tab component with the host.
-  PLUGINS.register("build", App);
+  PLUGINS.register("builder", App);
 })();
