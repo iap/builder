@@ -10,7 +10,7 @@
 # SAFE: idempotent (no-op if already absent), always backs up config.yaml first.
 # User-invoked (never auto-run by the plugin) to respect Hermes' config-write guard.
 #
-# USAGE:  ~/.hermes/plugins/builder/scripts/uninstall.sh
+# USAGE:  ${HERMES_HOME:-$HOME/.hermes}/plugins/builder/scripts/uninstall.sh
 #         then restart Hermes.
 
 set -euo pipefail
@@ -35,7 +35,7 @@ else
   # Remove the providers: builder block (the 'builder:' key, which is
   # indented under 'providers:', plus its child lines). Match on stripped
   # line == 'builder:' (unique key, any indentation).
-  "$HOME/.hermes/hermes-agent/venv/bin/python3" - "$CONFIG" <<'PY'
+  python3 - "$CONFIG" <<'PY'
 import sys
 cfg = sys.argv[1]
 lines = open(cfg).read().splitlines()
@@ -56,7 +56,7 @@ PY
 fi
 
 # Normalize plugins.enabled (remove builder if present) — backup-safe.
-"$HOME/.hermes/hermes-agent/venv/bin/python3" - "$CONFIG" <<'PY'
+python3 - "$CONFIG" <<'PY'
 import sys, yaml
 cfg = sys.argv[1]
 c = yaml.safe_load(open(cfg))
