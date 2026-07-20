@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""aws-build — standalone CLI for the Amazon Builder ID (BID) auth + chat plugin.
+"""build — standalone CLI for the Amazon Builder ID (BID) auth + chat plugin.
 
 This is the copy-device-link method you can run from a terminal, without the
 Hermes dashboard. It reuses the plugin's own auth/chat modules exactly as the
@@ -9,11 +9,11 @@ aws-bid`` writes to a different store and will not make ``ask_q``/``bid_status``
 report logged-in).
 
 USAGE:
-    python3 aws_build_cli.py login      # start device flow, print copyable link
-    python3 aws_build_cli.py status     # show auth/flow state
-    python3 aws_build_cli.py whoami     # token identity (no raw token)
-    python3 aws_build_cli.py logout     # clear stored secrets
-    python3 aws_build_cli.py models     # list advertised models + tags
+    python3 build_cli.py login      # start device flow, print copyable link
+    python3 build_cli.py status     # show auth/flow state
+    python3 build_cli.py whoami     # token identity (no raw token)
+    python3 build_cli.py logout     # clear stored secrets
+    python3 build_cli.py models     # list advertised models + tags
 
 Set HERMES_HOME to point at a non-default Hermes home (same var the plugin uses).
 # SPDX-License-Identifier: MIT OR Apache-2.0

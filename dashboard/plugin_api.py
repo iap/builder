@@ -1,7 +1,7 @@
-"""Dashboard backend for the aws-build plugin.
+"""Dashboard backend for the build plugin.
 
 Exposes the Amazon Builder ID (Build ID) device-login flow over the Hermes
-plugin API surface, mounted at ``/api/plugins/aws-build/...``. Reuses the
+plugin API surface, mounted at ``/api/plugins/build/...``. Reuses the
 plugin's own ``sso_oidc`` module so the auth state lives in one place (no core
 files touched). The plugin's tools (bid_login / bid_status / bid_logout) call
 the *same* functions, so the dashboard and the conversation stay in sync.
@@ -29,22 +29,22 @@ router = APIRouter()
 
 
 def _ensure_plugin_package() -> str:
-    """Make the aws-build plugin importable as ``hermes_plugins.aws_build``.
+    """Make the build plugin importable as ``hermes_plugins.build``.
 
     The dashboard backend is mounted by the web server as a standalone module,
     so a bare ``from auth.sso_oidc import ...`` fails. We register the plugin
-    package the same way the agent plugin loader does (``hermes_plugins.aws_build``)
+    package the same way the agent plugin loader does (``hermes_plugins.build``)
     so the backend reuses the same functions (and the same on-disk token/flow
     files) as the agent tools — one auth state, no drift.
     """
-    root = Path(__file__).resolve().parent.parent  # ~/.hermes/plugins/aws-build
+    root = Path(__file__).resolve().parent.parent  # ~/.hermes/plugins/build
     ns = "hermes_plugins"
     if ns not in sys.modules:
         ns_pkg = types.ModuleType(ns)
         ns_pkg.__path__ = []
         ns_pkg.__package__ = ns
         sys.modules[ns] = ns_pkg
-    pkg_name = "hermes_plugins.aws_build"
+    pkg_name = "hermes_plugins.build"
     if pkg_name not in sys.modules:
         pkg = types.ModuleType(pkg_name)
         pkg.__path__ = [str(root)]
@@ -56,7 +56,7 @@ def _ensure_plugin_package() -> str:
 def _sso():
     """Return the shared sso_oidc module (no heavy imports at module load)."""
     _ensure_plugin_package()
-    from hermes_plugins.aws_build.auth import sso_oidc
+    from hermes_plugins.build.auth import sso_oidc
 
     return sso_oidc
 
@@ -67,7 +67,7 @@ async def status() -> dict[str, Any]:
     try:
         return _sso().get_status()
     except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("aws-build status failed", exc_info=True)
+        logger.debug("build status failed", exc_info=True)
         return {"authenticated": False, "phase": "error", "error": str(exc)}
 
 
@@ -89,7 +89,7 @@ async def login() -> dict[str, Any]:
             ),
         }
     except Exception as exc:
-        logger.exception("aws-build dashboard login failed")
+        logger.exception("build dashboard login failed")
         return {"success": False, "error": str(exc), "code": "login_failed"}
 
 
@@ -100,5 +100,5 @@ async def logout() -> dict[str, Any]:
         _sso().logout()
         return {"success": True, "message": "Logged out; secrets cleared."}
     except Exception as exc:
-        logger.exception("aws-build dashboard logout failed")
+        logger.exception("build dashboard logout failed")
         return {"success": False, "error": str(exc), "code": "logout_failed"}
