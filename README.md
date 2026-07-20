@@ -34,7 +34,7 @@ the device-flow access token is the chat bearer.
 | `bid_login` | Start an Amazon BID device login; returns a `user_code` + verification URL to approve in a browser. |
 | `bid_status` | Report current auth / device-login state (polls once if a flow is pending). Never returns the raw token. |
 | `bid_show_identity` | Return token identity metadata (type, scopes, expiry) — no raw token. |
-| `bid_logout` | Stop polling and delete all stored secrets (the local `.bid_*` mirror files). |
+| `bid_logout` | Stop polling and delete all stored secrets (the local `auth/bid_*` mirror files). |
 | `models` | List available AWS Builder ID models (`backend.list_models()`) and plugin tags. |
 | `tags` | List free-form tags describing the plugin (`backend.load_tags()`). |
 
@@ -44,10 +44,10 @@ the device-flow access token is the chat bearer.
 
 ```bash
 # 1) install the plugin (git URL or owner/repo)
-hermes plugins install <aws-build-repo-url>
+hermes plugins install <builder-repo-url>
 
-# 2) register aws-build as a selectable chat model in Hermes
-#    (backs up ~/.hermes/config.yaml, then adds providers: aws-build
+# 2) register builder as a selectable chat model in Hermes
+#    (backs up ~/.hermes/config.yaml, then adds providers: builder
 #     pointing at the in-plugin adapter on :8077 — no :8088 bridge)
 ~/.hermes/plugins/builder/scripts/setup.sh
 
@@ -56,7 +56,7 @@ hermes plugins install <aws-build-repo-url>
 bid_login   # approve the user_code in your browser
 ```
 
-`setup.sh` is **idempotent** (skips if `providers: aws-build` is already
+`setup.sh` is **idempotent** (skips if `providers: builder` is already
 present) and **always backs up `config.yaml` first**. It does NOT write
 the guarded config file silently — it is user-invoked by design (Hermes core
 does not let a plugin register an LLM backend or edit `config.yaml` itself).
@@ -64,21 +64,21 @@ The adapter it points at is launched inside the plugin on `register()` and
 dies with the Hermes session — there is no separate daemon to manage.
 
 After install you can pick **AWS Builder ID** as a model in the TUI/CLI
-(`-m aws-build`) or keep using the `ask_q` tool directly.
+(`-m builder`) or keep using the `ask_q` tool directly.
 
 ## Uninstall
 
-`hermes plugins uninstall aws-build` only deletes the plugin **directory** —
-Hermes core does NOT auto-remove the `providers: aws-build` config entry it
+`hermes plugins uninstall builder` only deletes the plugin **directory** —
+Hermes core does NOT auto-remove the `providers: builder` config entry it
 added via `setup.sh`, so an uninstall otherwise leaves a dangling provider
 pointing at a dead `:8077` endpoint plus a stale `plugins.enabled` entry.
 
 Run the companion script first (it backs up `config.yaml`, is idempotent,
-and only touches aws-build's own entries):
+and only touches builder's own entries):
 
 ```bash
-~/.hermes/plugins/builder/scripts/uninstall.sh   # removes providers:aws-build + enabled entry
-hermes plugins uninstall aws-build                  # drops the plugin dir
+~/.hermes/plugins/builder/scripts/uninstall.sh   # removes providers:builder + enabled entry
+hermes plugins uninstall builder                  # drops the plugin dir
 # restart Hermes
 ```
 
@@ -127,7 +127,7 @@ OIDC access token (Bearer only — **no SigV4**, verified live).
 
 ### `adapter.py` — OpenAI-compatible model path (optional)
 
-When AWS Builder ID is registered as a model (`providers: aws-build` → `:8077`),
+When AWS Builder ID is registered as a model (`providers: builder` → `:8077`),
 `adapter.py` exposes a tiny stdlib HTTP server speaking OpenAI
 `/v1/chat/completions`. It receives Hermes's OpenAI-shaped request
 (`messages`, `tools`, `stream`), calls `backend.chat()` (single Q prompt —
@@ -206,7 +206,7 @@ bid_status     # report current auth / device-login state
 bid_logout     # stop polling and delete all stored secrets
 ```
 
-Do **not** use `hermes auth add/status/logout aws-build` for this plugin:
+Do **not** use `hermes auth add/status/logout builder` for this plugin:
 that CLI path is unrelated to this plugin's token store and will not affect
 `ask_q`. The `bid_*` tools above are the only supported auth interface.
 
@@ -242,7 +242,7 @@ tab in the Hermes dashboard (after `env`). It is a thin web UI over the same
   verification URL in a new browser tab and shows the `user_code` to enter.
   The card polls `GET /status` (which actively polls the in-flight flow) and
   flips to *Authenticated* the moment you approve in your browser.
-- **Logout** — stops polling and deletes the local `~/.bid_*` mirror files.
+- **Logout** — stops polling and deletes the local `auth/bid_*` mirror files.
 
 The card's backend (`dashboard/plugin_api.py`) reuses the plugin's own
 `auth/sso_oidc` module, so the dashboard and the in-conversation `bid_*` tools
@@ -262,7 +262,7 @@ These names look similar but live in different layers. Mixing them up is what
 Rule of thumb: the plugin is `builder` everywhere it controls its own name;
 `aws-bid` belongs to Hermes core and is a different (currently un-integrated)
 path. Do not rename the plugin's `bid_*` tools to `build_*` — that would
-diverge from both the `.bid_*` file mirrors and AWS's `aws-bid` terminology.
+diverge from both the `auth/bid_*` file mirrors and AWS's `aws-bid` terminology.
 
 ---
 
@@ -277,7 +277,7 @@ Two distinct paths, two distinct rules:
   you want Claude-via-Q's reasoning/answers and let Hermes drive any follow-up
   tool use.
 
-- **`-m aws-build` model path — tool calls DO fire.** When AWS Builder ID is selected
+|- **`-m builder` model path — tool calls DO fire.** When AWS Builder ID is selected
   as a *model*, the in-plugin adapter (`adapter.py`) speaks OpenAI
   `/v1/chat/completions`. Because Q can't receive a real `tools` field, the
   adapter injects the tool-call convention (plus the tool names) as text, asks Q
@@ -292,7 +292,7 @@ Two distinct paths, two distinct rules:
   `assistant(tool_calls)` message).
 
 Hermes remains the agent in both paths: it owns the tool loop, context, and file
-access; aws-build is the reasoning backend behind it.
+access; builder is the reasoning backend behind it.
 
 ---
 
