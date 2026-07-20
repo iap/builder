@@ -83,7 +83,7 @@ def _handle_ask_q(args: dict[str, Any], **kwargs: Any) -> str:
 
 def _handle_bid_login(args: dict[str, Any], **kwargs: Any) -> str:
     try:
-        # Single token store (auth/sso_oidc .bid_token.json). start_login()
+        # Single token store (auth/sso_oidc auth/bid_token.json). start_login()
         # guards re-auth when already authenticated, so no stale-token
         # cleanup is needed here.
         info = start_login()
@@ -122,7 +122,7 @@ def _handle_bid_show_identity(args: dict[str, Any], **kwargs: Any) -> str:
 
 def _handle_bid_logout(args: dict[str, Any], **kwargs: Any) -> str:
     try:
-        # logout() clears the sso mirror (.bid_token/.bid_registration/.bid_flow).
+        # logout() clears the sso mirror (auth/bid_token.json, auth/bid_registration.json, auth/bid_flow.json).
         logout()
         return _success({"message": "Logged out; secrets cleared."})
     except Exception as exc:  # noqa: BLE001
