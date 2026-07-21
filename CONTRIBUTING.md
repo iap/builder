@@ -22,6 +22,10 @@ set up, test, and submit changes.
   `test(builder):`, `refactor(builder):`, `sec(builder):`. Bodies only
   when a critical bug/security reason must be recorded. Keep subjects ≤ ~72
   chars.
+- **Branches:** use one of `fix/`, `bugs/`, or `feature/` plus a short
+  descriptor. Examples: `fix/setup-dual-activation`, `feature/chat-tools`.
+  This repo uses lightweight auto-labeling, so matching these prefixes keeps
+  PRs labeled automatically.
 
 ## Development setup
 
