@@ -24,8 +24,16 @@ fi
 
 # Resolve a Python that can execute the inline config-edit scripts.
 PYTHON="$(command -v python3 || true)"
-if [[ -z "$PYTHON" && -x "/home/iap/.hermes/hermes-agent/venv/bin/python3" ]]; then
-  PYTHON="/home/iap/.hermes/hermes-agent/venv/bin/python3"
+if [[ -z "$PYTHON" ]]; then
+  HM="${HERMES_HOME:-$HOME/.hermes}"
+  for candidate in \
+    "$HM/hermes-agent/venv/bin/python3" \
+    "$HM/venv/bin/python3"; do
+    if [[ -x "$candidate" ]]; then
+      PYTHON="$candidate"
+      break
+    fi
+  done
 fi
 if [[ -z "$PYTHON" ]]; then
   echo "✗ python3 is required for config edits (install Python or add it to PATH)." >&2

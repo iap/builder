@@ -325,7 +325,8 @@ def test_chat_bounded_refresh_retry(monkeypatch):
     # Refresh "succeeds" but the next 401 still happens -> bounded retry.
     monkeypatch.setattr(sso_oidc, "refresh_token", lambda: True)
     with pytest.raises(RuntimeError):
-        backend.chat("hi", model="claude-sonnet-4")
+        # The first call retries once after refresh; the second 401 must raise
+        # rather than recursing forever.
         backend.chat("hi", model="claude-sonnet-4")
 
 

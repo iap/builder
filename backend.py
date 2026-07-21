@@ -145,7 +145,7 @@ def _resolve_model_id(model: Optional[str]) -> str:
         return requested
     import logging
 
-    logging.getLogger(__name__).warning(
+    logging.getLogger(__name__).debug(
         "builder: unknown model %r not in catalog %s; using 'auto' "
         "(Q returns HTTP 500 for unsupported modelId)",
         requested,

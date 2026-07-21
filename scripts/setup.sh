@@ -29,10 +29,19 @@ if [[ ! -f "$CONFIG" ]]; then
 fi
 
 # Resolve a Python that has PyYAML. Prefer `python3` on PATH; fall back to
-# the Hermes venv if the user's PATH is minimal (common under mise/Nix/WSL).
+# the Hermes venv if the user's PATH is minimal.
 PYTHON="$(command -v python3 || true)"
-if [[ -z "$PYTHON" && -x "/home/iap/.hermes/hermes-agent/venv/bin/python3" ]]; then
-  PYTHON="/home/iap/.hermes/hermes-agent/venv/bin/python3"
+if [[ -z "$PYTHON" ]]; then
+  # Try the Hermes venv under HERMES_HOME or ~/.hermes.
+  HM="${HERMES_HOME:-$HOME/.hermes}"
+  for candidate in \
+    "$HM/hermes-agent/venv/bin/python3" \
+    "$HM/venv/bin/python3"; do
+    if [[ -x "$candidate" ]]; then
+      PYTHON="$candidate"
+      break
+    fi
+  done
 fi
 if [[ -z "$PYTHON" ]]; then
   echo "✗ python3 is required for config edits (install Python or add it to PATH)." >&2
@@ -83,6 +92,9 @@ block = open(blockfile).read().rstrip("\n")
 lines = open(cfg).read().splitlines()
 if any(l.strip() == "builder:" for l in lines):
     sys.exit(0)
+# If no providers: block exists, insert one first.
+if not any(l.strip() == "providers:" for l in lines):
+    lines.append("providers:")
 out, i, n, in_prov, done = [], 0, len(lines), False, False
 while i < n:
     out.append(lines[i])
@@ -91,9 +103,9 @@ while i < n:
     ):
         out.extend(block.splitlines())
         done = True
-    if lines[i] == "providers:":
+    if lines[i].strip() == "providers:":
         in_prov = True
-    elif lines[i] and not lines[i].startswith("  ") and lines[i] != "providers:":
+    elif lines[i] and not lines[i].startswith("  ") and lines[i].strip() != "providers:":
         in_prov = False
     i += 1
 open(cfg, "w").write("\n".join(out) + "\n")
