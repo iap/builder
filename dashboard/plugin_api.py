@@ -68,7 +68,7 @@ async def status() -> dict[str, Any]:
         return _sso().get_status()
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("builder status failed", exc_info=True)
-        return {"authenticated": False, "phase": "error", "error": str(exc)}
+        return {"authenticated": False, "phase": "error", "error": "internal_error"}
 
 
 @router.post("/login")
@@ -90,7 +90,7 @@ async def login() -> dict[str, Any]:
         }
     except Exception as exc:
         logger.exception("builder dashboard login failed")
-        return {"success": False, "error": str(exc), "code": "login_failed"}
+        return {"success": False, "error": "internal_error", "code": "login_failed"}
 
 
 @router.post("/logout")
@@ -101,4 +101,4 @@ async def logout() -> dict[str, Any]:
         return {"success": True, "message": "Logged out; secrets cleared."}
     except Exception as exc:
         logger.exception("builder dashboard logout failed")
-        return {"success": False, "error": str(exc), "code": "logout_failed"}
+        return {"success": False, "error": "internal_error", "code": "logout_failed"}
