@@ -102,9 +102,9 @@ def _flow_path() -> Path:
 def _write_secret(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    # Intentionally stores credentials locally for Builder ID device-flow reuse.
-    # Access is restricted by 0o600 file permissions below; encryption would
-    # require a key derivation/store that this plugin is not designed to manage.
+    # This local auth store is intentionally left as cleartext JSON. The plugin
+    # relies on OS-level access control instead: Hermes home is private to the
+    # user, and the file is created with 0o600 so only the owner can read it.
     tmp.write_text(json.dumps(data))
     os.chmod(tmp, 0o600)
     tmp.replace(path)
