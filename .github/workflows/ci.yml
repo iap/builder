@@ -25,6 +25,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       # The default checkout (this plugin repo) lands at github.workspace root.
       - name: Checkout builder plugin (this repo)
