@@ -22,20 +22,23 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 1
 fi
 
-# Idempotency: nothing to remove?
-if ! grep -qE '^[[:space:]]*builder:' "$CONFIG"; then
-  echo "✓ providers: builder already absent from $CONFIG — nothing to do."
-  # still normalize plugins.enabled (in case it lists builder without a provider block)
-else
-  # Backup (once)
-  BACKUP="${CONFIG}.bak.$(date +%Y%m%d_%H%M%S)"
-  cp "$CONFIG" "$BACKUP"
-  echo "✓ backed up config → $BACKUP"
+# Resolve a Python that can execute the inline config-edit scripts.
+PYTHON="$(command -v python3 || true)"
+if [[ -z "$PYTHON" && -x "/home/iap/.hermes/hermes-agent/venv/bin/python3" ]]; then
+  PYTHON="/home/iap/.hermes/hermes-agent/venv/bin/python3"
+fi
+if [[ -z "$PYTHON" ]]; then
+  echo "✗ python3 is required for config edits (install Python or add it to PATH)." >&2
+  exit 1
+fi
 
-  # Remove the providers: builder block (the 'builder:' key, which is
-  # indented under 'providers:', plus its child lines). Match on stripped
-  # line == 'builder:' (unique key, any indentation).
-  python3 - "$CONFIG" <<'PY'
+# Backup once
+BACKUP="${CONFIG}.bak.$(date +%Y%m%d_%H%M%S)"
+cp "$CONFIG" "$BACKUP"
+echo "✓ backed up config → $BACKUP"
+
+# 1) Remove the providers: builder block (idempotent)
+"$PYTHON" - "$CONFIG" <<'PY'
 import sys
 cfg = sys.argv[1]
 lines = open(cfg).read().splitlines()
@@ -52,21 +55,26 @@ for ln in lines:
     out.append(ln)
 open(cfg, "w").write("\n".join(out).rstrip("\n") + "\n")
 PY
+
+if grep -qE '^[[:space:]]*builder:' "$CONFIG"; then
+  echo "✓ providers: builder still present — check backup $BACKUP"
+else
   echo "✓ removed providers: builder from $CONFIG"
 fi
 
-# Normalize plugins.enabled (remove builder if present) — backup-safe.
-python3 - "$CONFIG" <<'PY'
+# 2) Normalize plugins.enabled (remove builder if present)
+"$PYTHON" - "$CONFIG" <<'PY'
 import sys, yaml
 cfg = sys.argv[1]
-c = yaml.safe_load(open(cfg))
+c = yaml.safe_load(open(cfg)) or {}
 en = (c.get("plugins") or {}).get("enabled") or []
+en = [str(x) for x in en]
 if "builder" in en:
     c.setdefault("plugins", {})["enabled"] = [x for x in en if x != "builder"]
     yaml.safe_dump(c, open(cfg, "w"), sort_keys=False, default_flow_style=False)
-    print("✓ removed builder from plugins.enabled")
+    print("removed_builder_from_enabled")
 else:
-    print("✓ builder not in plugins.enabled — nothing to do.")
+    print("builder_not_in_enabled")
 PY
 
 echo
