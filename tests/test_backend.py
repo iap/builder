@@ -536,3 +536,104 @@ def test_import_sso_oidc_returns_module():
     assert hasattr(mod, "refresh_token")
     assert hasattr(mod, "_load_token")
 
+
+def test_parse_tool_calls_fenced_json_block():
+    """A ```json fenced function-call block is parsed into a tool call."""
+    from adapter import _parse_tool_calls
+
+    assert _parse_tool_calls(
+        "Here you go:\n```json\n"
+        '{"name": "fs_write", "arguments": {"path": "a.txt", "content": "x"}}\n'
+        "```\nDone."
+    ) == [
+        {
+            "name": "fs_write",
+            "arguments": json.dumps({"path": "a.txt", "content": "x"}, ensure_ascii=False),
+        }
+    ]
+
+
+def test_parse_tool_calls_inline_backtick_json():
+    """Q sometimes emits inline backtick-wrapped JSON tool-call objects."""
+    from adapter import _parse_tool_calls
+
+    assert _parse_tool_calls(
+        'hi `{ "name": "fs_write", "arguments": {"path":"a.txt","content":"x"} }` bye'
+    ) == [
+        {
+            "name": "fs_write",
+            "arguments": json.dumps({"path": "a.txt", "content": "x"}, ensure_ascii=False),
+        }
+    ]
+
+
+def test_parse_tool_calls_bare_json_object():
+    """Bare JSON objects shaped like tool calls are still extracted."""
+    from adapter import _parse_tool_calls
+
+    assert _parse_tool_calls(
+        'plain {"name":"fs_write","arguments":{"path":"b.txt","content":"y"}} end'
+    ) == [
+        {
+            "name": "fs_write",
+            "arguments": json.dumps({"path": "b.txt", "content": "y"}, ensure_ascii=False),
+        }
+    ]
+
+
+def test_parse_tool_calls_skips_unrelated_json():
+    """JSON objects without tool-call shape are ignored."""
+    from adapter import _parse_tool_calls
+
+    assert _parse_tool_calls(
+        'random {"hello":"world","nested":{"a":1,"b":2}} tail'
+    ) == []
+
+
+def test_parse_tool_calls_missing_arguments_defaults_to_empty():
+    """A JSON object with name but no arguments should produce empty args."""
+    from adapter import _parse_tool_calls
+
+    assert _parse_tool_calls(
+        '```json\n{"name": "fs_write"}\n```'
+    ) == [{"name": "fs_write", "arguments": json.dumps({}, ensure_ascii=False)}]
+
+
+def test_parse_tool_calls_multiple_calls_hard_capped():
+    """Many valid tool-call objects are collected, but pathological answers are capped."""
+    from adapter import _parse_tool_calls
+
+    answer = " ".join(f'{{"name": "tool_{idx}", "arguments": {{}}}}' for idx in range(30))
+    calls = _parse_tool_calls(answer)
+    assert len(calls) <= 20
+    assert all(c["name"].startswith("tool_") for c in calls)
+
+
+def test_parse_tool_calls_no_tool_intent_returns_empty():
+    """Plain text without tool-call intent must return an empty list."""
+    from adapter import _parse_tool_calls
+
+    assert _parse_tool_calls("just normal chat reply") == []
+    assert _parse_tool_calls("a {} b") == []
+
+
+def test_parse_tool_calls_malformed_json_is_skipped():
+    """Malformed JSON blocks are skipped rather than crashing."""
+    from adapter import _parse_tool_calls
+
+    assert _parse_tool_calls(
+        "bad: ```json\n{name: fs_write, arguments: {}}\n```"
+    ) == []
+    assert _parse_tool_calls(
+        'ok then `{"name":"ok","arguments":{}}` then `not-a-json`'
+    ) == [{"name": "ok", "arguments": json.dumps({}, ensure_ascii=False)}]
+
+
+def test_parse_tool_calls_non_dict_arguments_coerced():
+    """Non-dict arguments are coerced to {} so downstream never sees nonstandard types."""
+    from adapter import _parse_tool_calls
+
+    assert _parse_tool_calls(
+        '```json\n{"name": "t", "arguments": null}\n```'
+    ) == [{"name": "t", "arguments": json.dumps({}, ensure_ascii=False)}]
+

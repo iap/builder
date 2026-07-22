@@ -210,7 +210,7 @@ def _parse_tool_calls(answer: str) -> list[dict[str, Any]]:
             if not isinstance(args, dict):
                 args = {}
             calls.append({"name": name, "arguments": json.dumps(args, ensure_ascii=False)})
-            if len(calls) > 20:
+            if len(calls) >= 20:
                 # Hard cap to avoid pathological answers with many JSON objects.
                 break
     return calls
