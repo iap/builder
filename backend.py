@@ -237,15 +237,12 @@ def chat(
     if r.status_code != 200:
         err = r.text[:600]
         err_low = err.lower()
-        # Entitlement / subscription failures: Q returns a non-200 with an
-        # AccessDenied / subscription-style body. Surface it clearly and point
-        # at activation — do NOT treat it as a token problem (no refresh here).
+        # Entitlement / subscription failures: Q returns non-200 with AccessDenied / subscription body.
+        # Surface it clearly but avoid exposing internal auth flow details in CLI output.
         if any(k in err_low for k in ("subscri", "accessdenied", "not.*entitled", "not activat", "free tier", "q developer")):
             raise RuntimeError(
-                "Amazon Q rejected the chat request due to entitlement/subscription. "
-                "This Builder ID may not have Amazon Q Developer activated. Activate it "
-                "(one-time, free) at console.aws.amazon.com/amazonq using 'Sign in with "
-                "Builder ID', or retry with model='auto'. Underlying error: " + err[:300]
+                "Amazon Q rejected the chat request due to entitlement/subscription."
+                "Activate Amazon Q Developer (free) at console.aws.amazon.com/amazonq."
             )
         # Auth failure (expired/revoked bearer). Attempt a silent refresh and
         # ONE retry before giving up — don't nuke a possibly-valid token on a

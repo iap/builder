@@ -317,12 +317,8 @@ def _handle_chat(body: dict[str, Any]) -> bytes:
         )
 
     frames = [
-        b"data: "
-        + _sse([{"delta": {"role": "assistant"}, "index": 0}], model=model),
-        b"data: "
-        + _sse(
-            [{"delta": {"content": answer}, "index": 0}], model=model
-        ),
+        b"data: " + _sse([{"delta": {"role": "assistant", "index": 0}}], model=model),
+        b"data: " + _sse([{"delta": {"content": answer}, "index": 0}], model=model),
         b"data: [DONE]\n\n",
     ]
     return b"".join(frames)

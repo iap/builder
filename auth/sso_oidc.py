@@ -54,9 +54,18 @@ _poll_thread: Optional[threading.Thread] = None
 # wired up in core, so the plugin owns its own token store end-to-end).
 # --- Paths (always HERMES_HOME, never hardcoded ~/.hermes) ---
 def _home() -> Path:
-    from hermes_constants import get_hermes_home
-
-    return Path(get_hermes_home())
+    """Return HERMES_HOME as a Path, preferring env or core."""
+    # 1. Env var (tests set this explicitly)
+    if "HERMES_HOME" in os.environ:
+        return Path(os.environ["HERMES_HOME"])
+    # 2. Core Hermes path mechanism
+    try:
+        from hermes_constants import get_hermes_home
+        return Path(get_hermes_home())
+    except ImportError:
+        pass
+    # 3. Standalone fallback: plugin dir parent
+    return Path(__file__).resolve().parent.parent
 
 
 # Canonical directory for this plugin. Matches the plugin's actual
@@ -173,6 +182,7 @@ def _client():
 
 # --- Client registration (cached to disk, server-recommended) ---
 
+
 def _load_registration() -> Optional[dict]:
     data = _read_secret(_reg_path())
     if not data:
@@ -202,6 +212,8 @@ def _register() -> dict:
 
 
 # --- Token persistence ---
+
+
 def _save_token(out: dict, reg: dict) -> None:
     expires_at = time.time() + out.get("expiresIn", 0)
     data = {
@@ -219,6 +231,8 @@ def _load_token() -> Optional[dict]:
 
 
 # --- Flow persistence (so any process can complete the poll) ---
+
+
 def _save_flow(flow: dict) -> None:
     _write_secret(_canonical_path(_FLOW_FILENAME), flow)
 
@@ -228,6 +242,8 @@ def _load_flow() -> Optional[dict]:
 
 
 # --- Single poll attempt (shared by daemon thread + get_status) ---
+
+
 def _poll_once(reg: dict, flow: dict) -> str:
     """Attempt one create_token call. Returns phase: authenticated/pending/error."""
     from botocore.exceptions import ClientError, EndpointConnectionError, ConnectionError
@@ -313,6 +329,8 @@ def _start_poll_thread(reg: dict, flow: dict) -> None:
 
 
 # --- Public API ---
+
+
 def start_login() -> dict:
     """Start the device flow. Returns the user_code + verification URL only.
 
@@ -464,7 +482,6 @@ def get_status() -> dict:
         "refreshed": False,
         "token_expires_at": None,
         "token_expires_at_iso": None,
-        "scopes": None,
     }
 
 
