@@ -4,7 +4,7 @@
 Pure-HTTP calls to AWS Builder ID's chat API, authenticated via an AWS Builder ID
 device-login (OAuth RFC 8628). Hermes drives the agentic loop and calls this as
 a plain reasoning tool (`ask_q`); the plugin is a direct backend — just
-`requests` to Q's HTTPS endpoint, with no subprocess and no local HTTP bridge.
+``requests`` to Q's HTTPS endpoint, with no subprocess and no local HTTP server.
 
 Wire protocol (verified live against Amazon Q's endpoints):
 
@@ -395,7 +395,7 @@ def _extract_answer_with_conversation_id(response: requests.Response) -> tuple[s
             continue
         try:
             parts.append(json.loads(m.group(1)))
-        except Exception:
+        except (json.JSONDecodeError, ValueError):
             continue
     answer = "".join(parts).strip()
     if not answer:

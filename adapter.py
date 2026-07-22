@@ -12,7 +12,7 @@ shape). So to make builder a *selectable chat model* in the Hermes TUI/CLI
 ``/v1/chat/completions`` wire format on one side and calls Q (via
 ``backend.chat()``) on the other.
 
-This is intentionally NOT the old ``:8088`` bridge daemon:
+This is intentionally NOT the old ``:8088`` daemon:
   * it lives inside the plugin (stdlib only, no separate binary),
   * the plugin launches it on ``register()`` (background thread, dies with the
     Hermes session — no orphaned process to forget about),
@@ -180,7 +180,7 @@ def _parse_tool_calls(answer: str) -> list[dict[str, Any]]:
             continue
         try:
             parsed = json.loads(obj)
-        except Exception:
+        except (json.JSONDecodeError, KeyError):
             continue
         name = parsed.get("name")
         if not isinstance(name, str) or not name:
@@ -201,7 +201,7 @@ def _parse_tool_calls(answer: str) -> list[dict[str, Any]]:
                 continue
             try:
                 parsed = json.loads(obj)
-            except Exception:
+            except (json.JSONDecodeError, KeyError):
                 continue
             name = parsed.get("name")
             if not isinstance(name, str) or not name:
