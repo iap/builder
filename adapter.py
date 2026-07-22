@@ -317,12 +317,8 @@ def _handle_chat(body: dict[str, Any]) -> bytes:
         )
 
     frames = [
-        b"data: "
-        + _sse([{"delta": {"role": "assistant"}, "index": 0}], model=model),
-        b"data: "
-        + _sse(
-            [{"delta": {"content": answer}, "index": 0}], model=model
-        ),
+        b"data: " + _sse([{"index": 0, "delta": {"role": "assistant"}}], model=model),
+        b"data: " + _sse([{"index": 0, "delta": {"content": answer}}], model=model),
         b"data: [DONE]\n\n",
     ]
     return b"".join(frames)
@@ -341,12 +337,12 @@ def _tool_calls_frames(calls: list[dict[str, Any]], text: str = "", model: str =
     """
     frames: list[bytes] = [
         b"data: "
-        + _sse([{"delta": {"role": "assistant"}, "index": 0}], model=model),
+        + _sse([{"index": 0, "delta": {"role": "assistant"}}], model=model),
     ]
     if text:
         frames.append(
             b"data: "
-            + _sse([{"delta": {"content": text}, "index": 0}], model=model)
+            + _sse([{"index": 0, "delta": {"content": text}}], model=model)
         )
     for i, call in enumerate(calls):
         call_id = f"call_awsbuild_{i}"
