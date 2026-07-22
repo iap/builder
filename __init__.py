@@ -138,6 +138,40 @@ def _handle_tags(args: dict[str, Any], **kwargs: Any) -> str:
     return _success({"tags": load_tags()})
 
 
+def _handle_q_debug(args: dict[str, Any], **kwargs: Any) -> str:
+    """Lightweight calibration/debug snapshot for Hermes TUI/CLI tuning.
+
+    Returns auth/model metadata only. No raw token, no client secret.
+    """
+    try:
+        status = get_status()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("q_debug status failed")
+        return _error(str(exc), code="status_failed")
+    try:
+        identity = show_identity()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("q_debug identity failed")
+        return _error(str(exc), code="identity_failed")
+    payload = {
+        "auth": {
+            "authenticated": bool(status.get("authenticated")),
+            "phase": status.get("phase"),
+            "token_expires_at": status.get("token_expires_at"),
+            "refreshed": status.get("refreshed"),
+        },
+        "identity": {
+            "token_type": identity.get("token_type"),
+            "has_refresh_token": identity.get("has_refresh_token"),
+            "scopes": identity.get("scopes"),
+            "expires_at": identity.get("expires_at"),
+        },
+        "models": list_models(),
+        "tags": load_tags(),
+    }
+    return _success(payload)
+
+
 # --- tool registry ---
 
 _TOOLS = (
@@ -157,7 +191,7 @@ _TOOLS = (
                     "model": {
                         "type": "string",
                         "description": "Model to use; sent to Q as modelId. Defaults to 'auto' (Q picks). Named Claude variants are advertised but the account's entitlement decides which are usable.",
-                        "enum": ["auto", *list_models()],
+                        "enum": ["auto"],
                     },
                     "conversation_id": {
                         "type": "string",
@@ -240,6 +274,17 @@ _TOOLS = (
         lambda: True,
         "🏷️",
     ),
+    (
+        "q_debug",
+        {
+            "name": "q_debug",
+            "description": "Lightweight calibration snapshot: auth state, identity metadata, models, and tags. No raw secrets.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        _handle_q_debug,
+        _check_available,
+        "🔬",
+    ),
 )
 
 
@@ -272,6 +317,11 @@ def register(ctx) -> None:
     try:
         srv, actual = adapter.start(port=port)
         print(f"[builder] OpenAI adapter listening on :{actual} (model-provider mode)")
+    except OSError as exc:
+        # If the adapter is already running (active Hermes session bound the
+        # port), that is healthy — skip the warning. Surface everything else.
+        if not (hasattr(adapter, "is_running") and adapter.is_running()):
+            logger.warning("builder adapter failed to start (tool-only mode OK): %s", exc)
     except Exception as exc:  # noqa: BLE001
         logger.warning("builder adapter failed to start (tool-only mode OK): %s", exc)
 

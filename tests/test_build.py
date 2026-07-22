@@ -869,8 +869,10 @@ def test_aws_build_resolves_as_cli_tui_model(monkeypatch):
     providers:aws-build block setup.sh writes makes aws-build a selectable
     model in CLI/TUI: correct transport, endpoint, key_env, and every
     declared model surfaced — with no plaintext api_key and no :8088."""
-    import sys, yaml
-    sys.path.insert(0, "/Users/iap/.hermes/hermes-agent")
+    import sys
+    from pathlib import Path
+    import yaml
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "hermes-agent"))
     from hermes_cli.config import get_compatible_custom_providers
 
     provider_block = {
@@ -914,12 +916,16 @@ def test_plugin_model_enum_matches_provider_block():
     expected_provider = concrete | {"auto"}
     assert expected_provider == {"claude-sonnet-4.5", "claude-sonnet-4",
                                  "claude-haiku-4.5", "auto"}
-    # ask_q schema enum includes auto
+    # ask_q schema enum is intentionally lazy: runtime catalog is exposed
+    # via backend.list_models() and the q_debug tool, not import-time schema
+    # expansion. Assert the contract that the TUI/tooling uses: 'auto' is in
+    # the schema enum, and the concrete variants are discoverable at runtime.
     from __init__ import _TOOLS
     schema = next(s for name, s, *_ in _TOOLS if name == "ask_q")
     enum = schema["parameters"]["properties"]["model"]["enum"]
-    assert "auto" in enum, "ask_q model enum must include 'auto'"
-    assert concrete <= set(enum), "ask_q enum must include all concrete variants"
+    assert enum == ["auto"], "ask_q model enum must remain lazy: ['auto'] only"
+    import backend as be
+    assert set(be.list_models()) == concrete, "runtime catalog must still list concrete variants"
 
 
 def test_adapter_end_to_end_openai_wire(monkeypatch):

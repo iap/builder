@@ -12,7 +12,7 @@ shape). So to make builder a *selectable chat model* in the Hermes TUI/CLI
 ``/v1/chat/completions`` wire format on one side and calls Q (via
 ``backend.chat()``) on the other.
 
-This is intentionally NOT the old ``:8088`` bridge daemon:
+This is intentionally NOT the old ``:8088`` daemon:
   * it lives inside the plugin (stdlib only, no separate binary),
   * the plugin launches it on ``register()`` (background thread, dies with the
     Hermes session — no orphaned process to forget about),
@@ -180,7 +180,7 @@ def _parse_tool_calls(answer: str) -> list[dict[str, Any]]:
             continue
         try:
             parsed = json.loads(obj)
-        except Exception:
+        except (json.JSONDecodeError, KeyError):
             continue
         name = parsed.get("name")
         if not isinstance(name, str) or not name:
@@ -190,21 +190,29 @@ def _parse_tool_calls(answer: str) -> list[dict[str, Any]]:
             args = {}
         calls.append({"name": name, "arguments": json.dumps(args, ensure_ascii=False)})
 
-    # 2) fenced ```json blocks shaped like {"name":..,"arguments":..}
+    # 2) Any JSON object shaped like {"name": ..., "arguments": ...}
+    #    This covers ```json fences, inline backticks, or bare JSON in Q's
+    #    answer. Brace-aware scanning avoids the nested-brace bug in the
+    #    previous non-greedy regex fallback.
     if not calls:
-        for m in re.finditer(r"```(?:json)?\s*(\{.*?\})\s*```", answer, re.DOTALL):
-            try:
-                obj = json.loads(m.group(1))
-            except Exception:
+        for m in re.finditer(r"\{", answer):
+            obj, end = _extract_balanced_brace(answer, m.start())
+            if obj is None or end <= m.start():
                 continue
-            name = obj.get("name")
-            if isinstance(name, str) and name:
-                args = obj.get("arguments", {})
-                if not isinstance(args, dict):
-                    args = {}
-                calls.append(
-                    {"name": name, "arguments": json.dumps(args, ensure_ascii=False)}
-                )
+            try:
+                parsed = json.loads(obj)
+            except (json.JSONDecodeError, KeyError):
+                continue
+            name = parsed.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            args = parsed.get("arguments")
+            if not isinstance(args, dict):
+                args = {}
+            calls.append({"name": name, "arguments": json.dumps(args, ensure_ascii=False)})
+            if len(calls) >= 20:
+                # Hard cap to avoid pathological answers with many JSON objects.
+                break
     return calls
 
 
@@ -454,12 +462,33 @@ def start(host: str = HOST, port: int = DEFAULT_PORT) -> tuple[ThreadingHTTPServ
     return srv, srv.server_address[1]  # return the ACTUAL bound port (port=0 -> OS picks)
 
 
+def is_running() -> bool:
+    """Return True if something is listening on the adapter port.
+
+    Uses a socket-level probe so this works across process boundaries:
+    the active Hermes session binds the port in a different process, and
+    verification / test processes can detect that without importing the
+    same module instance.
+    """
+    probe = __import__("socket").socket(__import__("socket").AF_INET, __import__("socket").SOCK_STREAM)
+    probe.settimeout(0.5)
+    try:
+        probe.connect((HOST, DEFAULT_PORT))
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
 def stop() -> None:
     """Stop the adapter (tests / cleanup). No-op if not running."""
     global _server, _thread
     if _server is not None:
         _server.shutdown()
         _server.server_close()
+        if _thread is not None:
+            _thread.join(timeout=2.0)
     _server, _thread = None, None
 
 

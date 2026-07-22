@@ -5,9 +5,9 @@
 # core. CI therefore checks out Hermes core (hermes-agent) as a sibling and runs
 # the suite from that layout (see .github/workflows/ci.yml). These pins match
 # the versions in the hermes-agent venv so CI behaves like the real environment.
-hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git@main#egg=hermes-agent
+hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git@a88512b114059fff642d60d54cbf30d5793c6c37#egg=hermes-agent
 pytest==9.0.3
 requests==2.33.0
 PyYAML==6.0.3
 botocore==1.42.97
-cryptography==48.0.1
+cryptography>=46.0.7
