@@ -25,11 +25,11 @@ logger = logging.getLogger(__name__)
 
 def _tool_result_helpers():
     """Return Hermes's house (success, error) serializers with ensure_ascii=False.
-
+    
     Delegates to ``tools.registry.tool_result`` / ``tool_error`` so plugin
     output is byte-identical to core tools: valid JSON with ``ensure_ascii=False``
-    (non-ASCII text like "café" / "—" / CJK is NOT escaped to ``\\uXXXX`` — escapes
-    corrupt the answer when the TUI renders it verbatim). Relative-first/absolute
+    (non-ASCII text like "café" / "—" / CJK is NOT escaped to ``\\uXXXX`` escapes
+    (corrupt the answer when the TUI renders it verbatim). Relative-first/absolute
     fallback import matches the pattern auth/sso_oidc uses under Hermes core.
     """
     try:
