@@ -64,8 +64,8 @@ def _home() -> Path:
         return Path(get_hermes_home())
     except ImportError:
         pass
-    # 3. Standalone fallback: plugin dir parent
-    return Path(__file__).resolve().parent.parent
+    # 3. Standalone fallback: HERMES_HOME assumed to be plugin dir grandparent
+    return Path(__file__).resolve().parent.parent.parent
 
 
 # Canonical directory for this plugin. Matches the plugin's actual
