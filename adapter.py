@@ -454,12 +454,33 @@ def start(host: str = HOST, port: int = DEFAULT_PORT) -> tuple[ThreadingHTTPServ
     return srv, srv.server_address[1]  # return the ACTUAL bound port (port=0 -> OS picks)
 
 
+def is_running() -> bool:
+    """Return True if something is listening on the adapter port.
+
+    Uses a socket-level probe so this works across process boundaries:
+    the active Hermes session binds the port in a different process, and
+    verification / test processes can detect that without importing the
+    same module instance.
+    """
+    probe = __import__("socket").socket(__import__("socket").AF_INET, __import__("socket").SOCK_STREAM)
+    probe.settimeout(0.5)
+    try:
+        probe.connect((HOST, DEFAULT_PORT))
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
 def stop() -> None:
     """Stop the adapter (tests / cleanup). No-op if not running."""
     global _server, _thread
     if _server is not None:
         _server.shutdown()
         _server.server_close()
+        if _thread is not None:
+            _thread.join(timeout=2.0)
     _server, _thread = None, None
 
 
