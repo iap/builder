@@ -124,3 +124,48 @@ jobs:
           HERMES_HOME: ${{ env.HERMES_HOME }}
           PYTHONPATH: ${{ github.workspace }}/hermes-agent
         run: python verify.py
+
+  adapter-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout builder plugin (this repo)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: plugin-src
+
+      - name: Checkout Hermes core (public)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: NousResearch/hermes-agent
+          path: hermes-agent
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Assemble Hermes home layout
+        run: |
+          set -euo pipefail
+          HM="${{ github.workspace }}/hm"
+          mkdir -p "$HM/plugins"
+          ln -s "${{ github.workspace }}/plugin-src" "$HM/plugins/builder"
+          echo "HERMES_HOME=$HM" >> "$GITHUB_ENV"
+
+      - name: Install test dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r "${{ github.workspace }}/plugin-src/requirements.txt"
+
+      - name: Run adapter tests (port collision, bind guard, etc.)
+        working-directory: ${{ env.HERMES_HOME }}/plugins/builder
+        env:
+          HERMES_HOME: ${{ env.HERMES_HOME }}
+          PYTHONPATH: ${{ github.workspace }}/hermes-agent
+        run: |
+          set -euo pipefail
+          python -m pytest -q -k "adapter"
