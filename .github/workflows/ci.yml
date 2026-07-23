@@ -18,6 +18,9 @@ on:
 #
 # Core (NousResearch/hermes-agent) is public and verified. The plugin is the
 # repository this workflow runs in, so no plugin URL is assumed.
+#
+# Hermes upstream does not support building an installable wheel from git, so
+# we expose the checked-out core on PYTHONPATH instead of installing it.
 
 jobs:
   test:
@@ -25,13 +28,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      # The default checkout (this plugin repo) lands at github.workspace root.
       - name: Checkout builder plugin (this repo)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           path: plugin-src
 
-      # Override with an explicit repo only when dispatched from elsewhere.
       - name: Override plugin checkout (if plugin_repo provided)
         if: ${{ github.event.inputs.plugin_repo != '' }}
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -56,7 +57,6 @@ jobs:
           set -euo pipefail
           HM="${{ github.workspace }}/hm"
           mkdir -p "$HM/plugins"
-          # Mount the plugin at the canonical path Hermes core expects.
           ln -s "${{ github.workspace }}/plugin-src" "$HM/plugins/builder"
           echo "HERMES_HOME=$HM" >> "$GITHUB_ENV"
 
@@ -70,10 +70,9 @@ jobs:
         working-directory: ${{ env.HERMES_HOME }}/plugins/builder
         env:
           HERMES_HOME: ${{ env.HERMES_HOME }}
+          PYTHONPATH: ${{ github.workspace }}/hermes-agent
         run: |
           set -euo pipefail
-          # Adapter tests bind a local port and can hang in CI; the same subset
-          # is excluded when running locally.
           python -m pytest -q -k "not adapter"
 
   verify:
@@ -123,4 +122,5 @@ jobs:
         working-directory: ${{ env.HERMES_HOME }}/plugins/builder
         env:
           HERMES_HOME: ${{ env.HERMES_HOME }}
+          PYTHONPATH: ${{ github.workspace }}/hermes-agent
         run: python verify.py
