@@ -871,7 +871,8 @@ def test_aws_build_resolves_as_cli_tui_model(monkeypatch):
     model in CLI/TUI: correct transport, endpoint, key_env, and every
     declared model surfaced — with no plaintext api_key and using :8088."""
     import sys, yaml
-    sys.path.insert(0, "/Users/iap/.hermes/hermes-agent")
+    from conftest import HERMES_AGENT_DIR
+    sys.path.insert(0, str(HERMES_AGENT_DIR))
     from hermes_cli.config import get_compatible_custom_providers
 
     provider_block = {

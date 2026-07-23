@@ -17,9 +17,14 @@ from pathlib import Path
 import yaml
 
 PLUGIN_DIR = Path(__file__).resolve().parent
-# Plugin lives at <HERMES_HOME>/plugins/builder; hermes-agent is at
-# <HERMES_HOME>/hermes-agent, i.e. two levels up from PLUGIN_DIR.
-HERMES_AGENT_DIR = PLUGIN_DIR.parent.parent / "hermes-agent"
+# Hermes core (hermes-agent) lives at <HERMES_HOME>/hermes-agent. Resolve from
+# the REAL HERMES_HOME (env or the conventional ~/.hermes default) BEFORE this
+# module redirects HERMES_HOME to a throwaway test profile below. Resolving by
+# relative parent depth breaks when the repo is checked out at a path other than
+# <HERMES_HOME>/plugins/builder (e.g. CI's `plugin-src` checkout); resolving from
+# HERMES_HOME keeps the same source of truth the plugin itself uses.
+_REAL_HERMES_HOME = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+HERMES_AGENT_DIR = _REAL_HERMES_HOME / "hermes-agent"
 
 # Make the plugin and hermes-agent importable.
 for p in (str(PLUGIN_DIR), str(HERMES_AGENT_DIR)):

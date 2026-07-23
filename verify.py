@@ -41,8 +41,14 @@ def main() -> int:
     out = json.loads(mod._handle_bid_status({}))
     check("success" in out, "bid_status returns success key")
 
-    # No secret leak in any handler output
+    # No secret leak in handler output. Only probe READ-ONLY handlers here:
+    # bid_login/bid_status/bid_logout have live side effects (network calls,
+    # token writes, poll threads) that contradict this script's "HEADLESS,
+    # no browser, no secrets" contract and are not safe to invoke with {}.
+    _READONLY = {"models", "tags", "bid_show_identity"}
     for name, spec in captured.items():
+        if name not in _READONLY:
+            continue
         res = json.loads(spec["handler"]({}))
         blob = json.dumps(res)
         check(
