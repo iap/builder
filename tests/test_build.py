@@ -980,6 +980,38 @@ def test_adapter_healthz():
         real_adapter.stop()
 
 
+def test_adapter_non_localhost_requires_allow_public(monkeypatch):
+    """Deny binding public/host interfaces by default; only allow opt-in via
+    `AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1` so the token bridge stays local-only."""
+    import adapter
+
+    with pytest.raises(RuntimeError, match="refused to bind to non-loopback host"):
+        adapter.start(host="0.0.0.0", port=0)
+
+    with pytest.raises(RuntimeError, match="refused to bind to non-loopback host"):
+        adapter.start(host="192.168.1.1", port=0)
+
+    with monkeypatch.context() as m:
+        m.setenv("AWS_BUILD_ADAPTER_ALLOW_PUBLIC", "1")
+        srv, port = adapter.start(host="127.0.0.1", port=0)
+        assert port > 0
+        adapter.stop()
+
+
+def test_backend_unknown_model_falls_back_to_auto():
+    """Q returns HTTP 500 for unsupported modelIds, so the adapter must never
+    forward an arbitrary unknown modelId. backend should coerce it to 'auto'."""
+    import backend
+
+    assert backend._resolve_model_id("claude-sonnet-4.5") == "claude-sonnet-4.5"
+    assert backend._resolve_model_id("") == "auto"
+    assert backend._resolve_model_id(None) == "auto"
+    assert backend._resolve_model_id("claude-sonnet-4-5") == "auto"
+    assert backend._resolve_model_id("gpt-4-turbo") == "auto"
+    assert backend._resolve_model_id("CLAUDE-SONNET-4-5") == "auto"
+    assert backend._resolve_model_id("builder/iap/builder") == "auto"
+
+
 # --- build_cli.py: standalone copy-device-link login method ---
 
 def test_cli_login_prints_copyable_link_and_polls_to_success(monkeypatch, tmp_path, capsys):
