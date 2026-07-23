@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # builder plugin: remove builder as a selectable Hermes chat model.
 #
-# WHY: install (setup.sh) adds a `providers: builder` entry + `plugins.enabled`
-# entry so Hermes can route chat to the in-plugin adapter on :8088. Hermes core
-# does NOT auto-clean a plugin's config on `hermes plugins uninstall` (that only
-# rmtree's the plugin dir), so without this step an uninstall leaves a dangling
-# provider pointing at a dead :8088 endpoint and a stale enabled entry.
+# WHY: install (`hermes plugins install` + setup.sh) adds a `providers: builder`
+# entry (setup.sh) and a `plugins.enabled` entry (the plugin installer) so Hermes
+# can route chat to the in-plugin adapter on :8088. Hermes core does NOT auto-clean
+# a plugin's config on `hermes plugins uninstall` (that only rmtree's the plugin
+# dir), so without this step an uninstall leaves a dangling provider pointing at a
+# dead :8088 endpoint and a stale enabled entry.
 #
 # SAFE: idempotent (no-op if already absent), always backs up config.yaml first.
 # User-invoked (never auto-run by the plugin) to respect Hermes' config-write guard.
