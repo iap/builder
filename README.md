@@ -52,9 +52,9 @@ hermes plugins install iap/builder
 # hermes plugins install https://github.com/iap/builder.git
 
 # 2) register builder as a selectable chat model in Hermes
-#    (backs up config.yaml, then adds providers: builder
+#    (backs up ~/.hermes/config.yaml, then adds providers: builder
 #     pointing at the in-plugin adapter on :8088)
-${HERMES_HOME:-$HOME/.hermes}/plugins/builder/scripts/setup.sh
+~/.hermes/plugins/builder/scripts/setup.sh
 
 # 3) restart Hermes so config reloads + the adapter launches on register()
 # 4) one-time auth, then chat via the model or the ask_q tool

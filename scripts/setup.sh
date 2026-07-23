@@ -82,6 +82,7 @@ PY
 rm -f "$BLOCK_FILE"
 
 if grep -qE '^[[:space:]]*builder:' "$CONFIG"; then
+  echo "✓ added providers: builder → http://127.0.0.1:${PORT}/v1 (transport: openai_chat)"
   echo "✓ added providers: builder → http://127.0.0.1:${PORT}/v1 (transport: openai_chat, in-process adapter on :8088)"
   echo
   echo "NEXT: restart Hermes, then in TUI/CLI use '-m builder' or pick 'AWS Builder ID'."
