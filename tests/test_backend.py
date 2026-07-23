@@ -326,7 +326,6 @@ def test_chat_bounded_refresh_retry(monkeypatch):
     monkeypatch.setattr(sso_oidc, "refresh_token", lambda: True)
     with pytest.raises(RuntimeError):
         backend.chat("hi", model="claude-sonnet-4")
-        backend.chat("hi", model="claude-sonnet-4")
 
 
 def test_chat_sends_model_id(monkeypatch):
