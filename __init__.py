@@ -25,18 +25,35 @@ logger = logging.getLogger(__name__)
 
 def _tool_result_helpers():
     """Return Hermes's house (success, error) serializers with ensure_ascii=False.
-    
+
     Delegates to ``tools.registry.tool_result`` / ``tool_error`` so plugin
     output is byte-identical to core tools: valid JSON with ``ensure_ascii=False``
-    (non-ASCII text like "café" / "—" / CJK is NOT escaped to ``\\uXXXX`` escapes
-    (corrupt the answer when the TUI renders it verbatim). Relative-first/absolute
+    (non-ASCII text like "café" / "—" / CJK is NOT escaped to ``\u0058\u0058\u0058\u0058`` escapes
+    in JSON, which corrupts the answer when the TUI renders it verbatim). Relative-first/absolute
     fallback import matches the pattern auth/sso_oidc uses under Hermes core.
     """
     try:
         from tools.registry import tool_result, tool_error  # type: ignore
-    except ImportError:  # standalone / tests where hermes-agent is on sys.path
+        return tool_result, tool_error
+    except ImportError:  # __main__ / tests where hermes-agent is on sys.path
+        pass
+    try:
         from registry import tool_result, tool_error  # type: ignore
-    return tool_result, tool_error
+        return tool_result, tool_error
+    except ImportError:
+        pass
+    # Standalone / test fallback: same JSON contract, no hard dependency on core.
+    import json as _json
+
+    def _result(*, success: bool, **payload):
+        payload["success"] = success
+        return _json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+    def _error(message: str, code: str = "error", *, success: bool = False):
+        payload = {"error": message, "code": code, "success": success}
+        return _json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+    return _result, _error
 
 
 def _success(data: dict[str, Any]) -> str:
