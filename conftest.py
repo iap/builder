@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """Shared pytest/conftest for the builder plugin.
 
 Single source of truth for path resolution so every test + the standalone

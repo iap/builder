@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """Verify the builder plugin loads + tools work (HEADLESS, no browser, no secrets)."""
 
 import json

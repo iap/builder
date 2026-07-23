@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """Dashboard backend for the builder plugin.
 
 Exposes the Amazon Builder ID (BID) device-login flow over the Hermes
