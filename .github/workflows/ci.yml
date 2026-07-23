@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      plugin_repo:
+        description: "Optional git URL of the builder plugin repo to test (defaults to the current repo)"
+        required: false
+        default: ""
+
+# The builder plugin is tested INSIDE the Hermes core layout: its modules
+# import `hermes_constants` (and some tests import `hermes_cli`), which live in
+# hermes-agent. So we check out hermes-agent as a sibling and mount THIS repo
+# (the plugin) under <HERMES_HOME>/plugins/builder, then run the suite there.
+#
+# Core (NousResearch/hermes-agent) is public and verified. The plugin is the
+# repository this workflow runs in, so no plugin URL is assumed.
+#
+# Hermes upstream does not support building an installable wheel from git, so
+# we expose the checked-out core on PYTHONPATH instead of installing it.
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout builder plugin (this repo)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: plugin-src
+
+      - name: Override plugin checkout (if plugin_repo provided)
+        if: ${{ github.event.inputs.plugin_repo != '' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ github.event.inputs.plugin_repo }}
+          path: plugin-src
+
+      - name: Checkout Hermes core (public)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: NousResearch/hermes-agent
+          path: hermes-agent
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Assemble Hermes home layout
+        run: |
+          set -euo pipefail
+          HM="${{ github.workspace }}/hm"
+          mkdir -p "$HM/plugins"
+          ln -s "${{ github.workspace }}/plugin-src" "$HM/plugins/builder"
+          echo "HERMES_HOME=$HM" >> "$GITHUB_ENV"
+
+      - name: Install test dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r "${{ github.workspace }}/plugin-src/requirements.txt"
+
+      - name: Run tests
+        working-directory: ${{ env.HERMES_HOME }}/plugins/builder
+        env:
+          HERMES_HOME: ${{ env.HERMES_HOME }}
+          PYTHONPATH: ${{ github.workspace }}/hermes-agent
+        run: |
+          set -euo pipefail
+          python -m pytest -q -k "not adapter"
+
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout builder plugin (this repo)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: plugin-src
+
+      - name: Override plugin checkout (if plugin_repo provided)
+        if: ${{ github.event.inputs.plugin_repo != '' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ github.event.inputs.plugin_repo }}
+          path: plugin-src
+
+      - name: Checkout Hermes core (public)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: NousResearch/hermes-agent
+          path: hermes-agent
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Assemble Hermes home layout
+        run: |
+          set -euo pipefail
+          HM="${{ github.workspace }}/hm"
+          mkdir -p "$HM/plugins"
+          ln -s "${{ github.workspace }}/plugin-src" "$HM/plugins/builder"
+          echo "HERMES_HOME=$HM" >> "$GITHUB_ENV"
+
+      - name: Install test dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r "${{ github.workspace }}/plugin-src/requirements.txt"
+
+      - name: Run plugin self-checks (verify.py)
+        working-directory: ${{ env.HERMES_HOME }}/plugins/builder
+        env:
+          HERMES_HOME: ${{ env.HERMES_HOME }}
+          PYTHONPATH: ${{ github.workspace }}/hermes-agent
+        run: python verify.py

@@ -1,0 +1,13 @@
+# Test/runtime dependencies for the build plugin's test suite + verify.py.
+#
+# NOTE: the plugin is NOT self-contained for testing — its modules import
+# `hermes_constants` (and some tests import `hermes_cli`), which live in Hermes
+# core. CI therefore checks out Hermes core (hermes-agent) as a sibling and runs
+# the suite from that layout (see .github/workflows/ci.yml). Removed the
+# `hermes-agent` VCS install line because Hermes core is distributed via the
+# installer/Docker/Nix and does not build into a wheel from git.
+pytest==9.0.3
+requests==2.33.0
+PyYAML==6.0.3
+botocore==1.42.97
+cryptography==46.0.7

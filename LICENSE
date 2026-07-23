@@ -1,0 +1,33 @@
+builder plugin — dual-licensed (MIT OR Apache-2.0).
+
+This project is offered under BOTH licenses at once, and you may use, copy,
+modify, and distribute it under the terms of EITHER license:
+
+  * MIT License       — see LICENSE-MIT
+  * Apache License 2.0 — see LICENSE-APACHE
+
+SPDX-License-Identifier: MIT OR Apache-2.0
+
+How the two licenses map to the code
+-------------------------------------
+The dual license is intentional, not a generic "pick one". The two licenses
+cover different parts of the project:
+
+  * Apache License 2.0 is the license intended for the AMAZON-INTERFACING
+    code — the parts that talk to Amazon services / use Amazon product names:
+    backend.py (chat with Amazon Q), adapter.py (OpenAI-compatible bridge to
+    Q), auth/sso_oidc.py (AWS Builder ID device login), and __init__.py
+    (which wraps those). Apache-2.0's NOTICE / attribution and trademark
+    clauses are what keep the Amazon / AWS / Amazon Q / Builder ID branding
+    boundary explicit and respectful.
+
+  * MIT License is the license intended for the code NOT related to Amazon —
+    generic helpers, the dashboard UI shell, tests, and tooling. MIT is the
+    simpler, more permissive option for that code.
+
+You may still apply EITHER license to the WHOLE project (that is what
+"MIT OR Apache-2.0" means). The split above is the project's INTENDED
+mapping, stated so contributors and redistributors are not confused about
+which license spirit applies where. Amazon, AWS, Amazon Q, and Builder ID
+are trademarks of Amazon.com, Inc.; this project is not affiliated with,
+endorsed by, or sponsored by Amazon.
