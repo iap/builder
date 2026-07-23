@@ -52,9 +52,9 @@ hermes plugins install iap/builder
 # hermes plugins install https://github.com/iap/builder.git
 
 # 2) register builder as a selectable chat model in Hermes
-#    (backs up ~/.hermes/config.yaml, then adds providers: builder
+#    (backs up config.yaml, then adds providers: builder
 #     pointing at the in-plugin adapter on :8088)
-~/.hermes/plugins/builder/scripts/setup.sh
+${HERMES_HOME:-$HOME/.hermes}/plugins/builder/scripts/setup.sh
 
 # 3) restart Hermes so config reloads + the adapter launches on register()
 # 4) one-time auth, then chat via the model or the ask_q tool
@@ -62,11 +62,13 @@ bid_login   # approve the user_code in your browser
 ```
 
 `setup.sh` is **idempotent** (skips if `providers: builder` is already
-present) and **always backs up `config.yaml` first**. It does NOT write
-the guarded config file silently — it is user-invoked by design (Hermes core
-does not let a plugin register an LLM backend or edit `config.yaml` itself).
-The adapter it points at is launched inside the plugin on `register()` and
-dies with the Hermes session — there is no separate daemon to manage.
+present) and **always backs up `config.yaml` first**. `uninstall.sh` is also
+idempotent and backs up `config.yaml` only when there is a builder entry to
+remove (no-op when builder is already absent). Both are user-invoked by
+design — Hermes core does not let a plugin register an LLM backend or edit
+`config.yaml` itself. The adapter they point at is launched inside the plugin
+on `register()` and dies with the Hermes session — there is no separate daemon
+to manage.
 
 After install you can pick **AWS Builder ID** as a model in the TUI/CLI
 (`-m builder`) or keep using the `ask_q` tool directly.
@@ -82,7 +84,7 @@ Run the companion script first (it backs up `config.yaml`, is idempotent,
 and only touches builder's own entries):
 
 ```bash
-~/.hermes/plugins/builder/scripts/uninstall.sh   # removes providers:builder + enabled entry
+${HERMES_HOME:-$HOME/.hermes}/plugins/builder/scripts/uninstall.sh   # removes providers:builder + enabled entry
 hermes plugins uninstall builder                  # drops the plugin dir
 # restart Hermes
 ```
@@ -228,7 +230,7 @@ python3 build_cli.py status    # current auth / device-flow state
 python3 build_cli.py whoami    # token identity (no raw token)
 python3 build_cli.py logout     # clear stored secrets
 python3 build_cli.py models     # list advertised models + tags
-# convenience shim (anywhere): ~/.hermes/plugins/builder/bin/builder login
+# convenience shim (anywhere): ${HERMES_HOME:-$HOME/.hermes}/plugins/builder/bin/builder login
 ```
 
 `login` prints the `verification_uri_complete` link to copy into a browser and
