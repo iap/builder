@@ -812,7 +812,7 @@ def test_invalid_grant_downgraded_when_token_present(monkeypatch):
 
 
 def test_unregister_stops_adapter(monkeypatch):
-    """unregister() must call adapter.stop() so the :8077 listener releases
+    """unregister() must call adapter.stop() so the :8088 listener releases
     (core doesn't invoke this hook yet, but it's the correct contract)."""
     import __init__ as p
     import adapter as real_adapter
@@ -826,16 +826,17 @@ def test_unregister_stops_adapter(monkeypatch):
 
 
 def test_uninstall_removes_aws_build_block_and_enabled(tmp_path, monkeypatch):
-    """Mirror of scripts/uninstall.sh logic: drop the providers:aws-build
-    block (any indentation) and the enabled entry; leave siblings intact."""
+    """Mirror of scripts/uninstall.sh logic: drop the providers:builder
+    block (any indentation) and the enabled entry; leave siblings intact.
+    Uses the same provider key (builder) that setup.sh/uninstall.sh write."""
     import yaml, io, sys
     sys.path.insert(0, ".")
     cfg = {
         "providers": {
-            "g4f-auth": {"name": "G4F.dev"},
-            "aws-build": {"name": "AWS Builder ID", "transport": "openai_chat"},
+            "example-provider": {"name": "Example Provider (fixture sibling)"},
+            "builder": {"name": "AWS Builder ID", "transport": "openai_chat"},
         },
-        "plugins": {"enabled": ["aws-build", "continual-learning"]},
+        "plugins": {"enabled": ["builder", "continual-learning"]},
         "model": {"provider": "kilo"},
     }
     path = tmp_path / "config.yaml"
@@ -845,7 +846,7 @@ def test_uninstall_removes_aws_build_block_and_enabled(tmp_path, monkeypatch):
     lines = open(path).read().splitlines()
     out, drop = [], False
     for ln in lines:
-        if ln.strip() == "aws-build:":
+        if ln.strip() == "builder:":
             drop = True
             continue
         if drop:
@@ -857,18 +858,18 @@ def test_uninstall_removes_aws_build_block_and_enabled(tmp_path, monkeypatch):
     open(path, "w").write("\n".join(out).rstrip("\n") + "\n")
 
     c = yaml.safe_load(open(path))
-    assert "aws-build" not in c.get("providers", {})
-    assert "g4f-auth" in c["providers"]
-    c["plugins"]["enabled"] = [x for x in c["plugins"]["enabled"] if x != "aws-build"]
-    assert "aws-build" not in c["plugins"]["enabled"]
+    assert "builder" not in c.get("providers", {})
+    assert "example-provider" in c["providers"]
+    c["plugins"]["enabled"] = [x for x in c["plugins"]["enabled"] if x != "builder"]
+    assert "builder" not in c["plugins"]["enabled"]
     assert c["plugins"]["enabled"] == ["continual-learning"]
 
 
 def test_aws_build_resolves_as_cli_tui_model(monkeypatch):
-    """Robust check (against the REAL Hermes core resolver) that the
-    providers:aws-build block setup.sh writes makes aws-build a selectable
+    """Robust check (against the REAL Hermes core resolver) that a
+    providers:builder block (the key setup.sh writes) resolves as a selectable
     model in CLI/TUI: correct transport, endpoint, key_env, and every
-    declared model surfaced — with no plaintext api_key and no :8088."""
+    declared model surfaced — with no plaintext api_key and using :8088."""
     import sys, yaml
     sys.path.insert(0, "/Users/iap/.hermes/hermes-agent")
     from hermes_cli.config import get_compatible_custom_providers
@@ -876,20 +877,19 @@ def test_aws_build_resolves_as_cli_tui_model(monkeypatch):
     provider_block = {
         "name": "AWS Builder ID",
         "transport": "openai_chat",
-        "base_url": "http://127.0.0.1:8077/v1",
+        "base_url": "http://127.0.0.1:8088/v1",
         "key_env": "AWS_BUILD_ADAPTER_DUMMY",
         "models": ["claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5", "auto"],
     }
-    cfg = {"providers": {"aws-build": provider_block}}
+    cfg = {"providers": {"builder": provider_block}}
     cps = get_compatible_custom_providers(cfg)
-    matches = [c for c in cps if c.get("provider_key") == "aws-build"]
-    assert matches, "aws-build must appear in resolved providers"
+    matches = [c for c in cps if c.get("provider_key") == "builder"]
+    assert matches, "builder must appear in resolved providers"
     e = matches[0]
     assert e["api_mode"] == "openai_chat"
-    assert e["base_url"].rstrip("/") == "http://127.0.0.1:8077/v1"
+    assert e["base_url"].rstrip("/") == "http://127.0.0.1:8088/v1"
     assert e["key_env"] == "AWS_BUILD_ADAPTER_DUMMY"
     assert "api_key" not in e, "no plaintext api_key allowed"
-    assert "8088" not in e["base_url"], "no dead :8088 bridge"
     surfaced = set(e.get("models", {}).keys())
     assert surfaced == {"claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5", "auto"}
 
@@ -1188,3 +1188,31 @@ def test_chat_omits_context_when_no_tools(monkeypatch):
     msg = json.loads(captured["data"])["conversationState"]["currentMessage"]["userInputMessage"]
     assert "userInputMessageContext" not in msg
     assert msg["content"] == "plain prompt"
+
+
+def test_get_token_handles_none_status(monkeypatch):
+    """get_token() must surface a clear 'no token' error (not a cryptic
+    AttributeError) when get_status() returns None (e.g. no token store).
+    Regression: the old code did sso_oidc.get_status().get(...) which
+    blows up on None and masks the real auth message."""
+    import backend
+    from auth import sso_oidc
+
+    monkeypatch.setattr(sso_oidc, "get_status", lambda: None)
+    monkeypatch.setattr(sso_oidc, "refresh_token", lambda: False)
+    import pytest
+    with pytest.raises(RuntimeError, match="No valid Amazon Q token"):
+        backend.get_token()
+
+
+def test_adapter_default_port_avoids_gateway_8077():
+    """Regression: the adapter must NOT default to :8077 — the Hermes gateway
+    already binds that port for its own internal socket, so defaulting to 8077
+    caused a silent '[Errno 48]' whenever the gateway ran. DEFAULT_PORT must be
+    8088."""
+    import adapter as real_adapter
+    assert real_adapter.DEFAULT_PORT == 8088
+    import os
+    os.environ.pop("AWS_BUILD_ADAPTER_PORT", None)
+    assert int(os.environ.get("AWS_BUILD_ADAPTER_PORT", "8088")) == 8088
+

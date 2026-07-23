@@ -267,7 +267,8 @@ def register(ctx) -> None:
     TUI/CLI (Way A): it speaks OpenAI's /v1/chat/completions wire
     format on the Hermes side and translates to Q via backend.chat(). It is
     launched as a daemon background thread here (dies with the Hermes
-    session) — NOT the old standalone `:8088` bridge. If it fails to bind
+    session) — the plugin's own in-process OpenAI adapter on :8088
+    (NOT a separate standalone bridge). If it fails to bind
     we log and continue; the ask_q tool still works tool-only.
     """
     for name, schema, handler, check_fn, emoji in _TOOLS:
@@ -285,7 +286,7 @@ def register(ctx) -> None:
         from . import adapter  # package import
     except ImportError:  # __main__ / direct
         import adapter  # type: ignore
-    port = int(__import__("os").environ.get("AWS_BUILD_ADAPTER_PORT", "8077"))
+    port = int(__import__("os").environ.get("AWS_BUILD_ADAPTER_PORT", "8088"))
     try:
         srv, actual = adapter.start(port=port)
         print(f"[builder] OpenAI adapter listening on :{actual} (model-provider mode)")
@@ -294,7 +295,7 @@ def register(ctx) -> None:
 
 
 def unregister(ctx) -> None:
-    """Best-effort teardown: stop the local OpenAI adapter so the :8077
+    """Best-effort teardown: stop the local OpenAI adapter so the :8088
     listener is released immediately (otherwise it lingers until process
     exit). Hermes core does not currently invoke this hook, but defining
     it is the correct plugin contract and makes reinstall/rebind clean.

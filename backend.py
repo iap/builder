@@ -4,7 +4,11 @@
 Pure-HTTP calls to AWS Builder ID's chat API, authenticated via an AWS Builder ID
 device-login (OAuth RFC 8628). Hermes drives the agentic loop and calls this as
 a plain reasoning tool (`ask_q`); the plugin is a direct backend — just
-`requests` to Q's HTTPS endpoint, with no subprocess and no local HTTP bridge.
+`requests` to Q's HTTPS endpoint, with no subprocess. A lightweight in-process
+OpenAI-compatible adapter (`adapter.py`, started by `register()`) exposes builder
+as a *selectable chat model* on http://127.0.0.1:8088/v1; it translates
+Hermes's OpenAI-shaped request to `backend.chat()` and back. No separate
+bridge daemon, no local HTTP server beyond that in-process listener.
 
 Wire protocol (verified live against Amazon Q's endpoints):
 
@@ -89,8 +93,8 @@ def get_token() -> dict:
     valid token exists.
     """
     sso_oidc = _import_sso_oidc()
-
-    if sso_oidc.get_status().get("authenticated"):
+    _status = sso_oidc.get_status() or {}
+    if _status.get("authenticated"):
         tok = sso_oidc._load_token()
         if tok:
             return tok
@@ -266,6 +270,9 @@ def chat(
                     prompt,
                     model=model,
                     conversation_id=conversation_id,
+                    tools=tools,
+                    tool_results=tool_results,
+                    history=history,
                     _retries=_retries + 1,
                 )
             raise RuntimeError(

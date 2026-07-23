@@ -53,7 +53,7 @@ hermes plugins install iap/builder
 
 # 2) register builder as a selectable chat model in Hermes
 #    (backs up ~/.hermes/config.yaml, then adds providers: builder
-#     pointing at the in-plugin adapter on :8077 — no :8088 bridge)
+#     pointing at the in-plugin adapter on :8088)
 ~/.hermes/plugins/builder/scripts/setup.sh
 
 # 3) restart Hermes so config reloads + the adapter launches on register()
@@ -76,7 +76,7 @@ After install you can pick **AWS Builder ID** as a model in the TUI/CLI
 `hermes plugins uninstall builder` only deletes the plugin **directory** —
 Hermes core does NOT auto-remove the `providers: builder` config entry it
 added via `setup.sh`, so an uninstall otherwise leaves a dangling provider
-pointing at a dead `:8077` endpoint plus a stale `plugins.enabled` entry.
+pointing at a dead `:8088` endpoint plus a stale `plugins.enabled` entry.
 
 Run the companion script first (it backs up `config.yaml`, is idempotent,
 and only touches builder's own entries):
@@ -87,7 +87,7 @@ hermes plugins uninstall builder                  # drops the plugin dir
 # restart Hermes
 ```
 
-The `:8077` adapter listener stops when the session ends; if the plugin is
+The `:8088` adapter listener stops when the session ends; if the plugin is
 unloaded it also calls `unregister()` → `adapter.stop()` for an immediate
 release. No `:8088` bridge, no orphaned refs.
 
@@ -99,7 +99,7 @@ release. No `:8088` bridge, no orphaned refs.
 __init__.py            registers tools via ctx.register_tool
   ├── backend.py       direct HTTPS chat with Amazon Q (ask_q, models)
   ├── adapter.py       OpenAI-compatible /v1/chat/completions SSE server
-  │                    (the model path) — runs on :8077, launched on register()
+  │                    (the model path) — runs on :8088, launched on register()
   └── auth/
         ├── __init__.py    re-exports the public auth API
         └── sso_oidc.py    RFC 8628 device authorization (botocore, anonymous)
@@ -132,7 +132,7 @@ OIDC access token (Bearer only — **no SigV4**, verified live).
 
 ### `adapter.py` — OpenAI-compatible model path (optional)
 
-When AWS Builder ID is registered as a model (`providers: builder` → `:8077`),
+When AWS Builder ID is registered as a model (`providers: builder` → `:8088`),
 `adapter.py` exposes a tiny stdlib HTTP server speaking OpenAI
 `/v1/chat/completions`. It receives Hermes's OpenAI-shaped request
 (`messages`, `tools`, `stream`), calls `backend.chat()` (single Q prompt —
@@ -148,7 +148,7 @@ plugin's stored Builder ID token, so it is **loopback-only by design**
 (`AWS_BUILD_ADAPTER_HOST` defaults to `127.0.0.1`). There is intentionally no
 auth on the endpoint — safe *only* because it is not network-reachable. Binding
 any non-loopback host is rejected unless `AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1` is
-explicitly set. Never expose `:8077` on a shared/multi-user host.
+explicitly set. Never expose `:8088` on a shared/multi-user host.
 
 ### `auth/sso_oidc.py` — headless device login
 
