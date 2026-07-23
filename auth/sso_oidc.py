@@ -64,7 +64,7 @@ def _home() -> Path:
         return Path(get_hermes_home())
     except ImportError:
         pass
-    # 3. Standalone fallback: HERMES_HOME is the plugin dir's great-grandparent
+    # 3. Standalone fallback: HERMES_HOME is the plugin dir's great-great-grandparent
     #    (auth/sso_oidc.py -> auth/ -> builder/ -> plugins/ -> <HERMES_HOME>).
     return Path(__file__).resolve().parent.parent.parent.parent
 
