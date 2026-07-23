@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """Amazon BID (Builder ID) auth package.
 
 Re-exports the headless SSO-OIDC device-authorization library so plugin code

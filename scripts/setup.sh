@@ -5,7 +5,7 @@
 # with transport: openai_chat. The plugin ships a self-contained OpenAI-
 # compatible adapter (adapter.py, launched by register()) that translates to
 # Amazon Q. This script adds the providers: builder entry pointing at that
-# adapter (localhost :8077) — NO :8088 bridge daemon, no orphaned ref.
+# adapter (localhost :8088) — no bridge daemon, no orphaned ref.
 #
 # SAFE: idempotent (skips if already present), always backs up config.yaml
 # first. Does NOT touch any other provider. User-invoked (never auto-run by
@@ -18,7 +18,7 @@ set -euo pipefail
 
 CONFIG="${HERMES_HOME:-$HOME/.hermes}/config.yaml"
 BACKUP="${CONFIG}.bak.$(date +%Y%m%d_%H%M%S)"
-PORT="${AWS_BUILD_ADAPTER_PORT:-8077}"
+PORT="${AWS_BUILD_ADAPTER_PORT:-8088}"
 
 
 if [[ ! -f "$CONFIG" ]]; then
@@ -82,8 +82,7 @@ PY
 rm -f "$BLOCK_FILE"
 
 if grep -qE '^[[:space:]]*builder:' "$CONFIG"; then
-  echo "✓ added providers: builder → http://127.0.0.1:${PORT}/v1 (transport: openai_chat)"
-  echo "✓ NO :8088 bridge — adapter launches inside the plugin on register()."
+  echo "✓ added providers: builder → http://127.0.0.1:${PORT}/v1 (transport: openai_chat, in-process adapter on :8088)"
   echo
   echo "NEXT: restart Hermes, then in TUI/CLI use '-m builder' or pick 'AWS Builder ID'."
   echo "      (login once with: bid_login  — approve in browser)"

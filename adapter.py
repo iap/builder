@@ -12,12 +12,12 @@ shape). So to make builder a *selectable chat model* in the Hermes TUI/CLI
 ``/v1/chat/completions`` wire format on one side and calls Q (via
 ``backend.chat()``) on the other.
 
-This is intentionally NOT the old ``:8088`` bridge daemon:
-  * it lives inside the plugin (stdlib only, no separate binary),
+This is an in-process, stdlib-only HTTP server (NOT a separate bridge daemon):
+  * it lives inside the plugin (no separate binary),
   * the plugin launches it on ``register()`` (background thread, dies with the
     Hermes session — no orphaned process to forget about),
-  * ``config.yaml`` points a ``providers: builder`` entry at this listener, so
-    there is no dead/roted pointer.
+  * ``config.yaml`` points a ``providers: builder`` entry at this listener
+    (http://127.0.0.1:8088/v1), so there is no dead/roted pointer.
 
 REQUEST (OpenAI shape, received from Hermes)
 -----------------------------------------------
@@ -55,6 +55,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -67,7 +68,11 @@ except ImportError:  # __main__ / direct execution
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import backend  # type: ignore
 
-DEFAULT_PORT = int(os.environ.get("AWS_BUILD_ADAPTER_PORT", "8077"))
+# Default adapter port. The Hermes gateway already binds 127.0.0.1:8077
+# for its own internal socket, so we avoid 8077. :8088 is free and has no
+# special meaning in this repo (the old standalone :8088 bridge daemon is
+# gone), so it's a clean choice. Overridable via AWS_BUILD_ADAPTER_PORT.
+DEFAULT_PORT = int(os.environ.get("AWS_BUILD_ADAPTER_PORT", "8088"))
 HOST = os.environ.get("AWS_BUILD_ADAPTER_HOST", "127.0.0.1")
 
 # The adapter is a LOCAL-ONLY bridge: it forwards requests to Amazon Q using the
@@ -431,6 +436,17 @@ def start(host: str = HOST, port: int = DEFAULT_PORT) -> tuple[ThreadingHTTPServ
     Returns (server, actual_port). Idempotent: calling twice returns the
     already-running server. Safe to call from ``register()``.
 
+    CROSS-PROCESS GUARD: before binding, probe whether *another* process
+    already holds the requested loopback port (e.g. a second Hermes process /
+    the gateway). If so, we do NOT clobber it — we raise ``OSError`` with a
+    clear message naming the likely culprit, which ``register()`` catches and
+    downgrades to a warning (tool-only mode). This replaces the old silent
+    ``[Errno 48] Address already in use`` that left Way A (builder as a
+    selectable chat model) silently dead whenever the gateway already bound
+    :8077 (the gateway's internal socket). Verified: when the gateway
+    owns :8077, ``register()`` now logs the real cause instead of an opaque
+    bind error.
+
     SECURITY — LOCAL-ONLY BRIDGE: the adapter proxies requests to Amazon Q
     using the plugin's stored Builder ID token, so it must never be reachable
     from the network. It binds loopback (``127.0.0.1`` / ``::1`` / ``localhost``)
@@ -443,6 +459,34 @@ def start(host: str = HOST, port: int = DEFAULT_PORT) -> tuple[ThreadingHTTPServ
         return _server, _server.server_address[1]  # type: ignore[union-attr]
 
     bind_host = _resolve_bind_host(host)
+
+    # Cross-process probe: if a foreign listener already owns this port, fail
+    # fast with an actionable message instead of raising a bare OSError:48.
+    import socket
+
+    _probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        _probe.settimeout(0.4)
+        code = _probe.connect_ex((bind_host, port))
+    finally:
+        _probe.close()
+    if code == 0:  # connection succeeded => port already in use by another proc
+        owner = ""
+        try:
+            _raw = subprocess.run(  # noqa: S603 - localhost path probe, no shell
+                ["lsof", "-t", "-i", f"{bind_host}:{port}"],
+                capture_output=True, text=True, timeout=3,
+            ).stdout.strip()
+            if _raw:
+                owner = f" (held by PID {_raw.split()[0]})"
+        except Exception:  # noqa: BLE001 - best-effort identification only
+            pass
+        raise OSError(
+            f"builder adapter cannot bind {bind_host}:{port}{owner} — port already "
+            f"in use by another process. Builder stays in tool-only mode; the "
+            f"'-m builder' chat path is unavailable until that port is free."
+        )
+
     srv = ThreadingHTTPServer((bind_host, port), _Handler)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
