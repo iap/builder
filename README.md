@@ -45,8 +45,11 @@ the device-flow access token is the chat bearer.
 ## Installation
 
 ```bash
-# 1) install the plugin (git URL or owner/repo)
-hermes plugins install <builder-repo-url>
+# 1) install the plugin from GitHub
+hermes plugins install iap/builder
+
+# 1-alt) from a git URL
+# hermes plugins install https://github.com/iap/builder.git
 
 # 2) register builder as a selectable chat model in Hermes
 #    (backs up ~/.hermes/config.yaml, then adds providers: builder
