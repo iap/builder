@@ -3,8 +3,15 @@
 """Verify the builder plugin loads + tools work (HEADLESS, no browser, no secrets)."""
 
 import json
+import os
+import subprocess
 import sys
 import types
+
+# Capture the REAL Hermes home BEFORE importing conftest — conftest redirects
+# HERMES_HOME to a throwaway test profile at import time, so reading it later
+# would point at the temp dir, not the real installed plugin.
+_REAL_HERMES_HOME = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
 
 from conftest import load_plugin
 
@@ -18,7 +25,63 @@ def check(cond: bool, msg: str) -> None:
         errors.append(msg)
 
 
+def _warn(msg: str) -> None:
+    """Non-blocking notice (drift is degraded, not broken)."""
+    print(f"[WARN] {msg}")
+
+
+def check_drift() -> None:
+    """Warn when the installed plugin copy is behind the source repo HEAD.
+
+    setup.sh stamps <plugin>/REVISION with the source git SHA at install time.
+    A stale install still works but misses merged fixes — surface it without
+    failing the run (per issue #10).
+    """
+    home = _REAL_HERMES_HOME
+    rev_file = os.path.join(home, "plugins", "builder", "REVISION")
+    if not os.path.isfile(rev_file):
+        return  # not installed, or pre-stamp install — nothing to compare
+    installed = open(rev_file).read().strip()
+    repo_root = os.path.dirname(os.path.abspath(__file__))
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo_root,
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return  # not a git repo — can't compare
+    if installed == head:
+        return
+    # Date fallback stamps (non-SHA) can't be compared reliably — skip.
+    if len(installed) != 40 or len(head) != 40:
+        return
+    # Distinguish "behind" (installed is an ancestor of HEAD → missing merged
+    # fixes) from "diverged/ahead" (different or newer history). Only the
+    # former warrants the reinstall prompt; the latter is informational.
+    behind = False
+    try:
+        behind = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", installed, head],
+            cwd=repo_root, capture_output=True, check=True,
+        ).returncode == 0
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        behind = False
+    if behind:
+        _warn(
+            f"installed plugin REVISION ({installed[:10]}) is behind repo HEAD "
+            f"({head[:10]}). Reinstall to pick up merged fixes: "
+            "`hermes plugins uninstall builder && hermes plugins install <repo>`"
+        )
+    else:
+        _warn(
+            f"installed plugin REVISION ({installed[:10]}) differs from repo HEAD "
+            f"({head[:10]}) — install predates or diverged from current source. "
+            "Reinstall if you want the current build."
+        )
+
+
 def main() -> int:
+    check_drift()
     mod = load_plugin()
     check(hasattr(mod, "register"), "plugin has register(ctx)")
 

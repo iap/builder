@@ -63,12 +63,22 @@ bid_login   # approve the user_code in your browser
 
 `setup.sh` is **idempotent** (skips if `providers: builder` is already
 present) and **always backs up `config.yaml` first**. `uninstall.sh` is also
-idempotent and backs up `config.yaml` only when there is a builder entry to
-remove (no-op when builder is already absent). Both are user-invoked by
+idempotent and backs up `config.yaml` once before any rewrite (no-op when
+builder is already absent). Both are user-invoked by
 design — Hermes core does not let a plugin register an LLM backend or edit
 `config.yaml` itself. The adapter they point at is launched inside the plugin
 on `register()` and dies with the Hermes session — there is no separate daemon
 to manage.
+
+`setup.sh` also stamps the installed copy with its source revision
+(`plugins/builder/REVISION`) so drift can be detected. `verify.py` warns (does
+not fail) when the installed copy is behind the repo HEAD — meaning a newer
+merge exists that your install does not have. To sync:
+
+```bash
+hermes plugins uninstall builder
+hermes plugins install iap/builder   # then re-run setup.sh + restart Hermes
+```
 
 After install you can pick **AWS Builder ID** as a model in the TUI/CLI
 (`-m builder`) or keep using the `ask_q` tool directly.
