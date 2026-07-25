@@ -91,3 +91,18 @@ else
   cp "$BACKUP" "$CONFIG"
   exit 1
 fi
+
+# Stamp the installed copy with the source revision so a later merge can be
+# detected as drift (see verify.py's staleness check). Source repo = parent of
+# this script's dir (scripts/). Fall back to a date stamp if not a git repo.
+PLUGIN_DIR="${HERMES_HOME:-$HOME/.hermes}/plugins/builder"
+SRC_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if command -v git >/dev/null 2>&1 && git -C "$SRC_ROOT" rev-parse >/dev/null 2>&1; then
+  git -C "$SRC_ROOT" rev-parse HEAD > "$PLUGIN_DIR/REVISION" 2>/dev/null \
+    && echo "✓ stamped plugin REVISION ($(cat "$PLUGIN_DIR/REVISION"))" \
+    || echo "  (skipped REVISION stamp: not a git repo)" >&2
+else
+  date +%Y-%m-%d > "$PLUGIN_DIR/REVISION" 2>/dev/null \
+    && echo "✓ stamped plugin REVISION (date fallback)" \
+    || echo "  (skipped REVISION stamp)" >&2
+fi
