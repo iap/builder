@@ -268,7 +268,7 @@ def register(ctx) -> None:
     format on the Hermes side and translates to Q via backend.chat(). It is
     launched as a daemon background thread here (dies with the Hermes
     session) — the plugin's own in-process OpenAI adapter on :8088
-    (NOT a separate standalone bridge). If it fails to bind
+    (NOT a separate standalone server). If it fails to bind
     we log and continue; the ask_q tool still works tool-only.
     """
     for name, schema, handler, check_fn, emoji in _TOOLS:

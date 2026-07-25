@@ -12,7 +12,7 @@ shape). So to make builder a *selectable chat model* in the Hermes TUI/CLI
 ``/v1/chat/completions`` wire format on one side and calls Q (via
 ``backend.chat()``) on the other.
 
-This is an in-process, stdlib-only HTTP server (NOT a separate bridge daemon):
+This is an in-process, stdlib-only HTTP server (NOT a separate daemon):
   * it lives inside the plugin (no separate binary),
   * the plugin launches it on ``register()`` (background thread, dies with the
     Hermes session — no orphaned process to forget about),
@@ -55,11 +55,22 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
+
+# IPv6-capable server: the stdlib ThreadingHTTPServer binds AF_INET only,
+# so a loopback IPv6 host (::1) raises gaierror "Address family for
+# hostname not supported" on Linux. Override address_family so the socket
+# family matches the requested host (AF_INET6 for v6, AF_INET otherwise).
+class _FamilyAwareHTTPServer(ThreadingHTTPServer):
+    def __init__(self, server_address: tuple[str, int], *args, **kwargs) -> None:
+        host = server_address[0]
+        self.address_family = socket.AF_INET6 if ":" in host else socket.AF_INET
+        super().__init__(server_address, *args, **kwargs)
 
 # backend.chat() is the single source of truth for Q's wire format + token.
 try:
@@ -70,12 +81,12 @@ except ImportError:  # __main__ / direct execution
 
 # Default adapter port. The Hermes gateway already binds 127.0.0.1:8077
 # for its own internal socket, so we avoid 8077. :8088 is free and has no
-# special meaning in this repo (the old standalone :8088 bridge daemon is
+# special meaning in this repo (the old standalone :8088 daemon is
 # gone), so it's a clean choice. Overridable via AWS_BUILD_ADAPTER_PORT.
 DEFAULT_PORT = int(os.environ.get("AWS_BUILD_ADAPTER_PORT", "8088"))
 HOST = os.environ.get("AWS_BUILD_ADAPTER_HOST", "127.0.0.1")
 
-# The adapter is a LOCAL-ONLY bridge: it forwards requests to Amazon Q using the
+# The adapter is a LOCAL-ONLY server: it forwards requests to Amazon Q using the
 # plugin's stored Builder ID token. It must never be reachable from the network.
 # Bind loopback by default; refuse to publish on a non-loopback host unless the
 # operator opts in explicitly via AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1.
@@ -89,8 +100,8 @@ def _resolve_bind_host(requested: str) -> str:
         return requested
     raise RuntimeError(
         f"builder adapter refused to bind to non-loopback host {requested!r}. "
-        "The adapter is a local-only token bridge and must not be network-exposed. "
-        "Bind 127.0.0.1 (default) or set AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1 to override."
+        "The adapter is a local-only token server and must not be network-exposed. "
+        "Bind 127.0.0.1 (default) or set AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1 to override. "
     )
 
 _server: Optional["ThreadingHTTPServer"] = None
@@ -447,7 +458,7 @@ def start(host: str = HOST, port: int = DEFAULT_PORT) -> tuple[ThreadingHTTPServ
     owns :8077, ``register()`` now logs the real cause instead of an opaque
     bind error.
 
-    SECURITY — LOCAL-ONLY BRIDGE: the adapter proxies requests to Amazon Q
+    SECURITY — LOCAL-ONLY SERVER: the adapter proxies requests to Amazon Q
     using the plugin's stored Builder ID token, so it must never be reachable
     from the network. It binds loopback (``127.0.0.1`` / ``::1`` / ``localhost``)
     by default. Binding any other host is rejected by ``_resolve_bind_host``
@@ -464,7 +475,10 @@ def start(host: str = HOST, port: int = DEFAULT_PORT) -> tuple[ThreadingHTTPServ
     # fast with an actionable message instead of raising a bare OSError:48.
     import socket
 
-    _probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # Family-aware probe: bind_host may be IPv6 loopback (::1) — an AF_INET
+    # socket cannot connect to it (Errno 47), so pick the family to match.
+    _family = socket.AF_INET6 if ":" in bind_host else socket.AF_INET
+    _probe = socket.socket(_family, socket.SOCK_STREAM)
     try:
         _probe.settimeout(0.4)
         code = _probe.connect_ex((bind_host, port))
@@ -487,7 +501,7 @@ def start(host: str = HOST, port: int = DEFAULT_PORT) -> tuple[ThreadingHTTPServ
             f"'-m builder' chat path is unavailable until that port is free."
         )
 
-    srv = ThreadingHTTPServer((bind_host, port), _Handler)
+    srv = _FamilyAwareHTTPServer((bind_host, port), _Handler)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
     _server, _thread = srv, t

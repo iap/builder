@@ -5,7 +5,7 @@
 # with transport: openai_chat. The plugin ships a self-contained OpenAI-
 # compatible adapter (adapter.py, launched by register()) that translates to
 # Amazon Q. This script adds the providers: builder entry pointing at that
-# adapter (localhost :8088) — no bridge daemon, no orphaned ref.
+# adapter (localhost :8088) — no daemon, no orphaned ref.
 #
 # SAFE: idempotent (skips if already present), always backs up config.yaml
 # first. Does NOT touch any other provider. User-invoked (never auto-run by

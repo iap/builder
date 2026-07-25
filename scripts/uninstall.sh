@@ -3,16 +3,19 @@
 #
 # WHY: install (`hermes plugins install` + setup.sh) adds a `providers: builder`
 # entry (setup.sh) and a `plugins.enabled` entry (the plugin installer) so Hermes
-# can route chat to the in-plugin adapter on :8088. Hermes core does NOT auto-clean
-# a plugin's config on `hermes plugins uninstall` (that only rmtree's the plugin
-# dir), so without this step an uninstall leaves a dangling provider pointing at a
-# dead :8088 endpoint and a stale enabled entry.
+# can route chat to the in-plugin adapter on :8088. `hermes plugins install` also
+# registers the builder toolset under `platform_toolsets.cli` and
+# `known_plugin_toolsets.cli`. Hermes core does NOT auto-clean any of these on
+# `hermes plugins uninstall` (that only rmtree's the plugin dir), so without this
+# step an uninstall leaves a dangling provider (dead :8088 endpoint), a stale
+# enabled entry, and dangling toolset-list entries pointing at a removed plugin.
 #
-# SAFE: idempotent (no-op if already absent), always backs up config.yaml first.
-# User-invoked (never auto-run by the plugin) to respect Hermes' config-write guard.
+# SAFE: idempotent (no-op if builder is already absent everywhere), backs up
+# config.yaml once before any rewrite. User-invoked (never auto-run by the
+# plugin) to respect Hermes' config-write guard.
 #
 # USAGE:  ${HERMES_HOME:-$HOME/.hermes}/plugins/builder/scripts/uninstall.sh
-#         then restart Hermes.
+#         then run 'hermes plugins uninstall builder' to drop the dir, and restart Hermes.
 
 set -euo pipefail
 
@@ -23,53 +26,65 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 1
 fi
 
-# Idempotency: nothing to remove?
-if ! grep -qE '^[[:space:]]*builder:' "$CONFIG"; then
-  echo "✓ providers: builder already absent from $CONFIG — nothing to do."
-  # still normalize plugins.enabled (in case it lists builder without a provider block)
-else
-  # Backup (once)
-  BACKUP="${CONFIG}.bak.$(date +%Y%m%d_%H%M%S)"
-  cp "$CONFIG" "$BACKUP"
-  echo "✓ backed up config → $BACKUP"
-
-  # Remove the providers: builder block (the 'builder:' key, which is
-  # indented under 'providers:', plus its child lines). Match on stripped
-  # line == 'builder:' (unique key, any indentation).
-  python3 - "$CONFIG" <<'PY'
-import sys
-cfg = sys.argv[1]
-lines = open(cfg).read().splitlines()
-out, drop = [], False
-for ln in lines:
-    if ln.strip() == "builder:":
-        drop = True            # start dropping this block
-        continue
-    if drop:
-        if ln and not ln.startswith("  "):
-            drop = False       # next top-level (or sibling) key -> stop dropping
-        else:
-            continue           # still inside the builder block
-    out.append(ln)
-open(cfg, "w").write("\n".join(out).rstrip("\n") + "\n")
-PY
-  echo "✓ removed providers: builder from $CONFIG"
-fi
-
-# Normalize plugins.enabled (remove builder if present) — backup-safe.
+# One-pass, YAML-aware cleanup. Removes ONLY builder's own entries:
+#   * providers.builder            (setup.sh)
+#   * plugins.enabled entry        (the plugin installer)
+#   * platform_toolsets.cli        (the plugin installer)
+#   * known_plugin_toolsets.cli    (the plugin installer)
+# Sibling keys/providers are preserved — we never delete a line by indentation
+# alone, so an unrelated provider block after `builder` is left intact.
 python3 - "$CONFIG" <<'PY'
 import sys, yaml
-cfg = sys.argv[1]
-c = yaml.safe_load(open(cfg))
-en = (c.get("plugins") or {}).get("enabled") or []
-if "builder" in en:
-    c.setdefault("plugins", {})["enabled"] = [x for x in en if x != "builder"]
-    yaml.safe_dump(c, open(cfg, "w"), sort_keys=False, default_flow_style=False)
+
+cfg_path = sys.argv[1]
+with open(cfg_path) as fh:
+    raw = fh.read()
+
+# Idempotency: nothing to remove at all?
+if "builder" not in raw:
+    print("✓ builder already absent from", cfg_path, "— nothing to do.")
+    sys.exit(0)
+
+# Back up once, before any rewrite.
+import os
+from datetime import datetime
+backup = f"{cfg_path}.bak.{datetime.now():%Y%m%d_%H%M%S}"
+with open(backup, "w") as bf:
+    bf.write(raw)
+print("✓ backed up config →", backup)
+
+c = yaml.safe_load(raw) or {}
+
+# 1) providers.builder block
+providers = c.get("providers")
+if isinstance(providers, dict) and "builder" in providers:
+    del providers["builder"]
+    if not providers:
+        c.pop("providers", None)
+    print("✓ removed providers: builder")
+
+# 2) plugins.enabled entry
+plugins = c.setdefault("plugins", {})
+enabled = plugins.get("enabled") or []
+if "builder" in enabled:
+    plugins["enabled"] = [x for x in enabled if x != "builder"]
     print("✓ removed builder from plugins.enabled")
-else:
-    print("✓ builder not in plugins.enabled — nothing to do.")
+
+# 3) toolset lists (platform / known_plugin)
+removed_lists = []
+for key in ("platform_toolsets", "known_plugin_toolsets"):
+    block = c.get(key)
+    if isinstance(block, dict):
+        for sub, val in block.items():
+            if isinstance(val, list) and "builder" in val:
+                block[sub] = [x for x in val if x != "builder"]
+                removed_lists.append(f"{key}.{sub}")
+if removed_lists:
+    print("✓ removed builder from toolset lists:", ", ".join(removed_lists))
+
+yaml.safe_dump(c, open(cfg_path, "w"), sort_keys=False, default_flow_style=False)
 PY
 
 echo
-echo "NEXT: restart Hermes (and run 'hermes plugins uninstall builder' to drop the dir)."
+echo "NEXT: run 'hermes plugins uninstall builder' to drop the dir, then restart Hermes."
 echo "      The :8088 adapter stops when the session ends (or on unregister())."

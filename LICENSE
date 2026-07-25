@@ -15,7 +15,7 @@ cover different parts of the project:
 
   * Apache License 2.0 is the license intended for the AMAZON-INTERFACING
     code — the parts that talk to Amazon services / use Amazon product names:
-    backend.py (chat with Amazon Q), adapter.py (OpenAI-compatible bridge to
+    backend.py (chat with Amazon Q), adapter.py (OpenAI-compatible server to
     Q), auth/sso_oidc.py (AWS Builder ID device login), and __init__.py
     (which wraps those). Apache-2.0's NOTICE / attribution and trademark
     clauses are what keep the Amazon / AWS / Amazon Q / Builder ID branding

@@ -12,7 +12,7 @@
 The `builder` plugin lets the Hermes Agent talk to **Amazon Q Developer
 (Claude models)** through a **direct HTTPS backend** — `backend.py` calls
 Amazon Q's `GenerateAssistantResponse` API straight over the wire, with no
-HTTP bridge and no subprocess. Hermes drives the agentic loop; this plugin
+HTTP server and no subprocess. Hermes drives the agentic loop; this plugin
 exposes Q as a single chat tool:
 
 ```
@@ -77,21 +77,23 @@ After install you can pick **AWS Builder ID** as a model in the TUI/CLI
 
 `hermes plugins uninstall builder` only deletes the plugin **directory** —
 Hermes core does NOT auto-remove the `providers: builder` config entry it
-added via `setup.sh`, so an uninstall otherwise leaves a dangling provider
-pointing at a dead `:8088` endpoint plus a stale `plugins.enabled` entry.
+added via `setup.sh`, nor the `plugins.enabled` entry or the `platform_toolsets.cli` /
+`known_plugin_toolsets.cli` toolset-list entries the installer registered, so an
+uninstall otherwise leaves a dangling provider pointing at a dead `:8088`
+endpoint plus stale enabled and toolset-list entries.
 
-Run the companion script first (it backs up `config.yaml`, is idempotent,
-and only touches builder's own entries):
+Run the companion script first (it backs up `config.yaml` once, is idempotent,
+and only touches builder's own entries — sibling providers are preserved):
 
 ```bash
-${HERMES_HOME:-$HOME/.hermes}/plugins/builder/scripts/uninstall.sh   # removes providers:builder + enabled entry
+${HERMES_HOME:-$HOME/.hermes}/plugins/builder/scripts/uninstall.sh   # removes providers:builder + enabled + toolset-list entries
 hermes plugins uninstall builder                  # drops the plugin dir
 # restart Hermes
 ```
 
 The `:8088` adapter listener stops when the session ends; if the plugin is
 unloaded it also calls `unregister()` → `adapter.stop()` for an immediate
-release. No `:8088` bridge, no orphaned refs.
+release. No `:8088` server, no orphaned refs.
 
 ---
 
@@ -143,9 +145,9 @@ rejects it server-side), then streams SSE back. For turns where Q emits
 `<tool_call>` blocks, it emits OpenAI `tool_calls` frames with
 `finish_reason: "tool_calls"` so Hermes's agentic loop (MCP/skills/native tools)
 fires. Launched on `register()` in a daemon thread, dies with the session — no
-`:8088` bridge, no orphaned process.
+`:8088` server, no orphaned process.
 
-**Security — local-only bridge.** The endpoint proxies to Amazon Q with the
+**Security — local-only server.** The endpoint proxies to Amazon Q with the
 plugin's stored Builder ID token, so it is **loopback-only by design**
 (`AWS_BUILD_ADAPTER_HOST` defaults to `127.0.0.1`). There is intentionally no
 auth on the endpoint — safe *only* because it is not network-reachable. Binding
