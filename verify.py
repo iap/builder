@@ -55,11 +55,29 @@ def check_drift() -> None:
     # Date fallback stamps (non-SHA) can't be compared reliably — skip.
     if len(installed) != 40 or len(head) != 40:
         return
-    _warn(
-        f"installed plugin REVISION ({installed[:10]}) is behind repo HEAD "
-        f"({head[:10]}). Reinstall to pick up merged fixes: "
-        "`hermes plugins uninstall builder && hermes plugins install <repo>`"
-    )
+    # Distinguish "behind" (installed is an ancestor of HEAD → missing merged
+    # fixes) from "diverged/ahead" (different or newer history). Only the
+    # former warrants the reinstall prompt; the latter is informational.
+    behind = False
+    try:
+        behind = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", installed, head],
+            cwd=repo_root, capture_output=True, check=True,
+        ).returncode == 0
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        behind = False
+    if behind:
+        _warn(
+            f"installed plugin REVISION ({installed[:10]}) is behind repo HEAD "
+            f"({head[:10]}). Reinstall to pick up merged fixes: "
+            "`hermes plugins uninstall builder && hermes plugins install <repo>`"
+        )
+    else:
+        _warn(
+            f"installed plugin REVISION ({installed[:10]}) differs from repo HEAD "
+            f"({head[:10]}) — install predates or diverged from current source. "
+            "Reinstall if you want the current build."
+        )
 
 
 def main() -> int:
