@@ -57,7 +57,7 @@ never read or write your real Hermes state.
 - `backend.py` — direct HTTPS chat with Amazon Q (`GenerateAssistantResponse`),
   Bearer-only (no SigV4). Owns token resolution via `auth/sso_oidc`.
 - `adapter.py` — optional OpenAI-compatible `/v1/chat/completions` server so
-  builder can be a *selectable chat model*. **Loopback-only bridge**: it
+  builder can be a *selectable chat model*. **Loopback-only server**: it
   proxies Q with the stored token and has no auth; it refuses to bind any
   non-loopback host unless `AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1` is set. Do not
   weaken this.

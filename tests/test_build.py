@@ -20,7 +20,7 @@ def test_adapter_translates_openai_request_to_q(monkeypatch):
     flatten `messages` into one prompt, and call backend.chat() exactly once
     with that prompt + the requested model. This is the contract that lets
     Hermes treat builder as a selectable chat model (Way A) without the
-    old standalone :8088 bridge."""
+    old standalone :8088 server."""
     import adapter
     from importlib import import_module
 

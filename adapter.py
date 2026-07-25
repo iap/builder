@@ -12,7 +12,7 @@ shape). So to make builder a *selectable chat model* in the Hermes TUI/CLI
 ``/v1/chat/completions`` wire format on one side and calls Q (via
 ``backend.chat()``) on the other.
 
-This is an in-process, stdlib-only HTTP server (NOT a separate bridge daemon):
+This is an in-process, stdlib-only HTTP server (NOT a separate daemon):
   * it lives inside the plugin (no separate binary),
   * the plugin launches it on ``register()`` (background thread, dies with the
     Hermes session — no orphaned process to forget about),
@@ -70,12 +70,12 @@ except ImportError:  # __main__ / direct execution
 
 # Default adapter port. The Hermes gateway already binds 127.0.0.1:8077
 # for its own internal socket, so we avoid 8077. :8088 is free and has no
-# special meaning in this repo (the old standalone :8088 bridge daemon is
+# special meaning in this repo (the old standalone :8088 daemon is
 # gone), so it's a clean choice. Overridable via AWS_BUILD_ADAPTER_PORT.
 DEFAULT_PORT = int(os.environ.get("AWS_BUILD_ADAPTER_PORT", "8088"))
 HOST = os.environ.get("AWS_BUILD_ADAPTER_HOST", "127.0.0.1")
 
-# The adapter is a LOCAL-ONLY bridge: it forwards requests to Amazon Q using the
+# The adapter is a LOCAL-ONLY server: it forwards requests to Amazon Q using the
 # plugin's stored Builder ID token. It must never be reachable from the network.
 # Bind loopback by default; refuse to publish on a non-loopback host unless the
 # operator opts in explicitly via AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1.
@@ -89,8 +89,8 @@ def _resolve_bind_host(requested: str) -> str:
         return requested
     raise RuntimeError(
         f"builder adapter refused to bind to non-loopback host {requested!r}. "
-        "The adapter is a local-only token bridge and must not be network-exposed. "
-        "Bind 127.0.0.1 (default) or set AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1 to override."
+        "The adapter is a local-only token server and must not be network-exposed. "
+        "Bind 127.0.0.1 (default) or set AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1 to override. "
     )
 
 _server: Optional["ThreadingHTTPServer"] = None
@@ -447,7 +447,7 @@ def start(host: str = HOST, port: int = DEFAULT_PORT) -> tuple[ThreadingHTTPServ
     owns :8077, ``register()`` now logs the real cause instead of an opaque
     bind error.
 
-    SECURITY — LOCAL-ONLY BRIDGE: the adapter proxies requests to Amazon Q
+    SECURITY — LOCAL-ONLY SERVER: the adapter proxies requests to Amazon Q
     using the plugin's stored Builder ID token, so it must never be reachable
     from the network. It binds loopback (``127.0.0.1`` / ``::1`` / ``localhost``)
     by default. Binding any other host is rejected by ``_resolve_bind_host``

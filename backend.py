@@ -8,7 +8,7 @@ a plain reasoning tool (`ask_q`); the plugin is a direct backend — just
 OpenAI-compatible adapter (`adapter.py`, started by `register()`) exposes builder
 as a *selectable chat model* on http://127.0.0.1:8088/v1; it translates
 Hermes's OpenAI-shaped request to `backend.chat()` and back. No separate
-bridge daemon, no local HTTP server beyond that in-process listener.
+daemon, no local HTTP server beyond that in-process listener.
 
 Wire protocol (verified live against Amazon Q's endpoints):
 
