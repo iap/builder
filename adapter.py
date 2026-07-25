@@ -64,15 +64,13 @@ from typing import Any, Optional
 
 # IPv6-capable server: the stdlib ThreadingHTTPServer binds AF_INET only,
 # so a loopback IPv6 host (::1) raises gaierror "Address family for
-# hostname not supported". Override address_family so an IPv6 bind_host
-# actually binds; AF_INET6 dual-stack also accepts IPv4 on the same port.
-class _DualStackHTTPServer(ThreadingHTTPServer):
-    address_family = socket.AF_INET6
-
-    def server_bind(self) -> None:
-        # On dual-stack hosts, refuse IPv4-mapped clients unless explicitly
-        # needed; keep default v6-only bind which is correct for loopback.
-        super().server_bind()
+# hostname not supported" on Linux. Override address_family so the socket
+# family matches the requested host (AF_INET6 for v6, AF_INET otherwise).
+class _FamilyAwareHTTPServer(ThreadingHTTPServer):
+    def __init__(self, server_address: tuple[str, int], *args, **kwargs) -> None:
+        host = server_address[0]
+        self.address_family = socket.AF_INET6 if ":" in host else socket.AF_INET
+        super().__init__(server_address, *args, **kwargs)
 
 # backend.chat() is the single source of truth for Q's wire format + token.
 try:
@@ -503,7 +501,7 @@ def start(host: str = HOST, port: int = DEFAULT_PORT) -> tuple[ThreadingHTTPServ
             f"'-m builder' chat path is unavailable until that port is free."
         )
 
-    srv = _DualStackHTTPServer((bind_host, port), _Handler)
+    srv = _FamilyAwareHTTPServer((bind_host, port), _Handler)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
     _server, _thread = srv, t
