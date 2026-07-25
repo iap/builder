@@ -11,8 +11,17 @@
 # SAFE: idempotent (no-op if already absent), always backs up config.yaml first.
 # User-invoked (never auto-run by the plugin) to respect Hermes' config-write guard.
 #
+# This script cleans the config that BOTH install steps add:
+#   * `providers: builder`   (setup.sh)
+#   * `plugins.enabled`       (the plugin installer)
+#   * `platform_toolsets.cli` and `known_plugin_toolsets.cli` entries (the plugin
+#     installer registers the toolset under these lists). Hermes core does NOT
+#     auto-clean any of these on `hermes plugins uninstall` (that only rmtree's
+#     the plugin dir), so without this step an uninstall leaves dangling refs
+#     pointing at a removed plugin.
+#
 # USAGE:  ${HERMES_HOME:-$HOME/.hermes}/plugins/builder/scripts/uninstall.sh
-#         then restart Hermes.
+#         then run 'hermes plugins uninstall builder' to drop the dir, and restart Hermes.
 
 set -euo pipefail
 
@@ -70,6 +79,29 @@ else:
     print("✓ builder not in plugins.enabled — nothing to do.")
 PY
 
+# Normalize toolset lists (remove builder if present) — backup-safe.
+# `hermes plugins install` registers the builder toolset under
+# platform_toolsets.cli and known_plugin_toolsets.cli; core does not remove these.
+python3 - "$CONFIG" <<'PY'
+import sys, yaml
+cfg = sys.argv[1]
+c = yaml.safe_load(open(cfg))
+removed = []
+for key in ("platform_toolsets", "known_plugin_toolsets"):
+    block = c.get(key)
+    if isinstance(block, dict):
+        for sub, val in block.items():
+            if isinstance(val, list) and "builder" in val:
+                block[sub] = [x for x in val if x != "builder"]
+                removed.append(f"{key}.{sub}")
+if removed:
+    yaml.safe_dump(c, open(cfg, "w"), sort_keys=False, default_flow_style=False)
+    print("✓ removed builder from toolset lists:", ", ".join(removed))
+else:
+    print("✓ builder not in toolset lists — nothing to do.")
+
+PY
+
 echo
-echo "NEXT: restart Hermes (and run 'hermes plugins uninstall builder' to drop the dir)."
+echo "NEXT: run 'hermes plugins uninstall builder' to drop the dir, then restart Hermes."
 echo "      The :8088 adapter stops when the session ends (or on unregister())."
