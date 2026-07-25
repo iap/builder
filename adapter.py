@@ -55,11 +55,24 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
+
+# IPv6-capable server: the stdlib ThreadingHTTPServer binds AF_INET only,
+# so a loopback IPv6 host (::1) raises gaierror "Address family for
+# hostname not supported". Override address_family so an IPv6 bind_host
+# actually binds; AF_INET6 dual-stack also accepts IPv4 on the same port.
+class _DualStackHTTPServer(ThreadingHTTPServer):
+    address_family = socket.AF_INET6
+
+    def server_bind(self) -> None:
+        # On dual-stack hosts, refuse IPv4-mapped clients unless explicitly
+        # needed; keep default v6-only bind which is correct for loopback.
+        super().server_bind()
 
 # backend.chat() is the single source of truth for Q's wire format + token.
 try:
@@ -490,7 +503,7 @@ def start(host: str = HOST, port: int = DEFAULT_PORT) -> tuple[ThreadingHTTPServ
             f"'-m builder' chat path is unavailable until that port is free."
         )
 
-    srv = ThreadingHTTPServer((bind_host, port), _Handler)
+    srv = _DualStackHTTPServer((bind_host, port), _Handler)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
     _server, _thread = srv, t
