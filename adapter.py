@@ -464,7 +464,10 @@ def start(host: str = HOST, port: int = DEFAULT_PORT) -> tuple[ThreadingHTTPServ
     # fast with an actionable message instead of raising a bare OSError:48.
     import socket
 
-    _probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # Family-aware probe: bind_host may be IPv6 loopback (::1) — an AF_INET
+    # socket cannot connect to it (Errno 47), so pick the family to match.
+    _family = socket.AF_INET6 if ":" in bind_host else socket.AF_INET
+    _probe = socket.socket(_family, socket.SOCK_STREAM)
     try:
         _probe.settimeout(0.4)
         code = _probe.connect_ex((bind_host, port))

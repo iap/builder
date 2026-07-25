@@ -77,14 +77,16 @@ After install you can pick **AWS Builder ID** as a model in the TUI/CLI
 
 `hermes plugins uninstall builder` only deletes the plugin **directory** —
 Hermes core does NOT auto-remove the `providers: builder` config entry it
-added via `setup.sh`, so an uninstall otherwise leaves a dangling provider
-pointing at a dead `:8088` endpoint plus a stale `plugins.enabled` entry.
+added via `setup.sh`, nor the `plugins.enabled` entry or the `platform_toolsets.cli` /
+`known_plugin_toolsets.cli` toolset-list entries the installer registered, so an
+uninstall otherwise leaves a dangling provider pointing at a dead `:8088`
+endpoint plus stale enabled and toolset-list entries.
 
-Run the companion script first (it backs up `config.yaml`, is idempotent,
-and only touches builder's own entries):
+Run the companion script first (it backs up `config.yaml` once, is idempotent,
+and only touches builder's own entries — sibling providers are preserved):
 
 ```bash
-${HERMES_HOME:-$HOME/.hermes}/plugins/builder/scripts/uninstall.sh   # removes providers:builder + enabled entry
+${HERMES_HOME:-$HOME/.hermes}/plugins/builder/scripts/uninstall.sh   # removes providers:builder + enabled + toolset-list entries
 hermes plugins uninstall builder                  # drops the plugin dir
 # restart Hermes
 ```
