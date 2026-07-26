@@ -150,13 +150,18 @@ def main() -> int:
             )
         finally:
             unregister_provider()
-            # Restore any user-managed entry we may have displaced.
-            cfg3 = load_config()
-            if prior is not None:
-                cfg3.setdefault("providers", {})[PROVIDER_SLUG] = prior
-            else:
-                cfg3.get("providers", {}).pop(PROVIDER_SLUG, None)
-            save_config(cfg3)
+            # Restore any user-managed entry we may have displaced. Guard the
+            # restore write so a save failure is reported, not silently lost
+            # (Greptile P1: a failed restore must not delete state quietly).
+            try:
+                cfg3 = load_config()
+                if prior is not None:
+                    cfg3.setdefault("providers", {})[PROVIDER_SLUG] = prior
+                else:
+                    cfg3.get("providers", {}).pop(PROVIDER_SLUG, None)
+                save_config(cfg3)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"provider restore failed: {exc}")
         # If no entry pre-existed, assert it's gone after cleanup. If a
         # user-managed entry pre-existed, assert it was preserved (the
         # correct outcome — not a failure). Greptile P1.

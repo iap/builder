@@ -75,6 +75,11 @@ def register_provider(port: int) -> bool:
     except Exception as exc:  # noqa: BLE001
         logger.warning("builder: load_config failed, skipping provider registration: %s", exc)
         return False
+    # A malformed config can parse to a non-mapping value (e.g. a scalar or
+    # list); guard against AttributeError on .get() below (Greptile P1).
+    if not isinstance(config, dict):
+        logger.warning("builder: config is not a mapping, skipping provider registration")
+        return False
     providers = config.get("providers")
     if not isinstance(providers, dict):
         providers = {}
