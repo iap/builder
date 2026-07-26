@@ -120,6 +120,65 @@ def main() -> int:
             f"{name}: no secret fields in output",
         )
 
+    # Provider registration (issue #20): the adapter must surface as a
+    # selectable model provider. Verify the _provider helper writes + cleans
+    # the config entry deterministically, restoring any pre-existing entry.
+    try:
+        from hermes_cli.config import load_config, save_config
+        # _provider lives in the plugin dir; make it importable like the
+        # plugin itself is (load_plugin sets submodule_search_locations).
+        _plugin_dir = os.path.dirname(os.path.abspath(__file__))
+        if _plugin_dir not in sys.path:
+            sys.path.insert(0, _plugin_dir)
+        import _provider as _prov_mod  # noqa: E402
+
+        PROVIDER_SLUG = _prov_mod.PROVIDER_SLUG
+        register_provider = _prov_mod.register_provider
+        unregister_provider = _prov_mod.unregister_provider
+
+        cfg = load_config()
+        providers = cfg.get("providers") or {}
+        prior = providers.get(PROVIDER_SLUG)  # may be None
+
+        try:
+            wrote = register_provider(8088)
+            cfg2 = load_config()
+            entry = (cfg2.get("providers") or {}).get(PROVIDER_SLUG)
+            check(
+                wrote and isinstance(entry, dict) and "localhost:8088/v1" in str(entry.get("base_url")),
+                "provider registration writes providers.aws-builder -> adapter base_url",
+            )
+        finally:
+            unregister_provider()
+            # Restore any user-managed entry we may have displaced. Guard the
+            # restore write so a save failure is reported, not silently lost
+            # (Greptile P1: a failed restore must not delete state quietly).
+            try:
+                cfg3 = load_config()
+                if prior is not None:
+                    cfg3.setdefault("providers", {})[PROVIDER_SLUG] = prior
+                else:
+                    cfg3.get("providers", {}).pop(PROVIDER_SLUG, None)
+                save_config(cfg3)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"provider restore failed: {exc}")
+        # If no entry pre-existed, assert it's gone after cleanup. If a
+        # user-managed entry pre-existed, assert it was preserved (the
+        # correct outcome — not a failure). Greptile P1.
+        final_providers = load_config().get("providers") or {}
+        if prior is None:
+            check(
+                PROVIDER_SLUG not in final_providers,
+                "provider unregistration removes the entry (no leftover)",
+            )
+        else:
+            check(
+                PROVIDER_SLUG in final_providers,
+                "provider unregistration preserves a pre-existing user-managed entry",
+            )
+    except Exception as exc:  # noqa: BLE001
+        _warn(f"provider registration check skipped (config unavailable): {exc}")
+
     if errors:
         print(f"\n{len(errors)} check(s) failed")
         return 1

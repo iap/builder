@@ -292,6 +292,16 @@ def register(ctx) -> None:
         print(f"[builder] OpenAI adapter listening on :{actual} (model-provider mode)")
     except Exception as exc:  # noqa: BLE001
         logger.warning("builder adapter failed to start (tool-only mode OK): %s", exc)
+        srv, actual = None, None
+    # Surface the adapter as a selectable model provider in the dashboard
+    # Models picker (see https://github.com/iap/builder/issues/20). Best-effort:
+    # if config is unavailable or a user already manages this provider, skip.
+    if actual is not None:
+        try:
+            from . import _provider  # package import
+        except ImportError:  # __main__ / direct
+            import _provider  # type: ignore
+        _provider.register_provider(actual)
 
 
 def unregister(ctx) -> None:
@@ -309,3 +319,12 @@ def unregister(ctx) -> None:
         print("[builder] OpenAI adapter stopped (model-provider mode off)")
     except Exception as exc:  # noqa: BLE001
         logger.warning("builder adapter stop failed (ignore): %s", exc)
+    # Drop the model-provider entry we registered (no-op if user-managed).
+    try:
+        from . import _provider  # package import
+    except ImportError:  # __main__ / direct
+        import _provider  # type: ignore
+    try:
+        _provider.unregister_provider()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("builder provider unregister failed (ignore): %s", exc)
