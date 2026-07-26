@@ -157,10 +157,20 @@ def main() -> int:
             else:
                 cfg3.get("providers", {}).pop(PROVIDER_SLUG, None)
             save_config(cfg3)
-        check(
-            prior is None and PROVIDER_SLUG not in (load_config().get("providers") or {}),
-            "provider unregistration removes the entry when none pre-existed (no leftover)",
-        )
+        # If no entry pre-existed, assert it's gone after cleanup. If a
+        # user-managed entry pre-existed, assert it was preserved (the
+        # correct outcome — not a failure). Greptile P1.
+        final_providers = load_config().get("providers") or {}
+        if prior is None:
+            check(
+                PROVIDER_SLUG not in final_providers,
+                "provider unregistration removes the entry (no leftover)",
+            )
+        else:
+            check(
+                PROVIDER_SLUG in final_providers,
+                "provider unregistration preserves a pre-existing user-managed entry",
+            )
     except Exception as exc:  # noqa: BLE001
         _warn(f"provider registration check skipped (config unavailable): {exc}")
 
