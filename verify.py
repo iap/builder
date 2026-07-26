@@ -158,8 +158,8 @@ def main() -> int:
                 cfg3.get("providers", {}).pop(PROVIDER_SLUG, None)
             save_config(cfg3)
         check(
-            PROVIDER_SLUG not in (load_config().get("providers") or {}),
-            "provider unregistration removes the entry (no leftover)",
+            prior is None and PROVIDER_SLUG not in (load_config().get("providers") or {}),
+            "provider unregistration removes the entry when none pre-existed (no leftover)",
         )
     except Exception as exc:  # noqa: BLE001
         _warn(f"provider registration check skipped (config unavailable): {exc}")

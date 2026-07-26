@@ -68,7 +68,13 @@ def register_provider(port: int) -> bool:
     models = _declared_models() or ["claude-haiku-4.5", "claude-sonnet-4", "claude-sonnet-4.5"]
     default_model = models[0]
 
-    config = load_config()
+    # Best-effort: never let a malformed/unreadable config abort plugin
+    # registration. Return False (skip) instead of raising.
+    try:
+        config = load_config()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("builder: load_config failed, skipping provider registration: %s", exc)
+        return False
     providers = config.get("providers")
     if not isinstance(providers, dict):
         providers = {}
@@ -92,6 +98,9 @@ def register_provider(port: int) -> bool:
         logger.info("builder: providers.%s already present (user-managed); leaving it.", PROVIDER_SLUG)
         return False
 
+    # We own this entry (managed), so rebuild the model list from the
+    # currently-declared models rather than merging — otherwise removed/
+    # renamed models in plugin.yaml would linger as selectable (Greptile P2).
     entry: dict[str, Any] = dict(existing) if isinstance(existing, dict) else {}
     entry.update(
         {
@@ -104,14 +113,14 @@ def register_provider(port: int) -> bool:
             "key_env": "AWS_BUILD_ADAPTER_DUMMY",
         }
     )
-    models_map = {m: {} for m in models}
-    if isinstance(entry.get("models"), dict):
-        entry["models"].update(models_map)
-    else:
-        entry["models"] = models_map
+    entry["models"] = {m: {} for m in models}
     providers[PROVIDER_SLUG] = entry
 
-    save_config(config)
+    try:
+        save_config(config)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("builder: save_config failed, provider not persisted: %s", exc)
+        return False
     logger.info("builder: registered provider '%s' -> %s", PROVIDER_SLUG, entry["base_url"])
     return True
 
@@ -127,7 +136,12 @@ def unregister_provider() -> bool:
         logger.warning("builder: cannot import hermes_cli.config (%s)", exc)
         return False
 
-    config = load_config()
+    # Best-effort: never raise on config trouble.
+    try:
+        config = load_config()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("builder: load_config failed, skipping provider unregistration: %s", exc)
+        return False
     providers = config.get("providers")
     if not isinstance(providers, dict):
         return False
@@ -136,6 +150,10 @@ def unregister_provider() -> bool:
         return False
 
     providers.pop(PROVIDER_SLUG, None)
-    save_config(config)
+    try:
+        save_config(config)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("builder: save_config failed, provider not removed: %s", exc)
+        return False
     logger.info("builder: removed provider '%s'", PROVIDER_SLUG)
     return True
