@@ -20,8 +20,8 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 # Stable provider identity. Keep in sync with the issue / tests.
-PROVIDER_SLUG = "aws-build"
-PROVIDER_NAME = "AWS Build"
+PROVIDER_SLUG = "aws-builder"
+PROVIDER_NAME = "AWS Builder"
 # Marker so unregister() only removes an entry *we* created, never a
 # user-configured one that happens to share the slug.
 _MANAGED_MARKER = "_builder_managed"
@@ -73,6 +73,18 @@ def register_provider(port: int) -> bool:
     if not isinstance(providers, dict):
         providers = {}
         config["providers"] = providers
+
+    # One-time migration: the provider slug was renamed aws-build -> aws-builder
+    # for naming consistency (issue #20 / PR #21). Move any entry we previously
+    # wrote under the old slug so existing config isn't orphaned and
+    # unregister_provider still finds it.
+    _LEGACY_SLUG = "aws-build"
+    legacy = providers.get(_LEGACY_SLUG)
+    if isinstance(legacy, dict) and legacy.get(_MANAGED_MARKER):
+        logger.info("builder: migrating provider '%s' -> '%s'", _LEGACY_SLUG, PROVIDER_SLUG)
+        providers.pop(_LEGACY_SLUG, None)
+        if not isinstance(providers.get(PROVIDER_SLUG), dict):
+            providers[PROVIDER_SLUG] = legacy
 
     existing = providers.get(PROVIDER_SLUG)
     if isinstance(existing, dict) and not existing.get(_MANAGED_MARKER):

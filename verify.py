@@ -146,7 +146,7 @@ def main() -> int:
             entry = (cfg2.get("providers") or {}).get(PROVIDER_SLUG)
             check(
                 wrote and isinstance(entry, dict) and "localhost:8088/v1" in str(entry.get("base_url")),
-                "provider registration writes providers.aws-build -> adapter base_url",
+                "provider registration writes providers.aws-builder -> adapter base_url",
             )
         finally:
             unregister_provider()
