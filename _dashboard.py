@@ -16,7 +16,7 @@ _HTML = """<!doctype html>
   body{font-family:monospace;background:#111;color:#ccc;padding:2rem;}
   h1{color:#fff;margin-bottom:1.5rem;}
   .board{display:flex;gap:1.5rem;flex-wrap:wrap;align-items:flex-start;}
-  .card{border:1px solid #333;border-radius:4px;padding:1rem;min-width:200px;}
+  .card{border:1px solid #333;border-radius:4px;padding:1rem;min-width:180px;}
   .card-title{color:#888;font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;margin-bottom:.75rem;}
   .field{display:flex;flex-direction:column;gap:.15rem;margin-bottom:.6rem;}
   .field:last-child{margin-bottom:0;}
