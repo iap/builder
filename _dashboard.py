@@ -16,7 +16,7 @@ _HTML = """<!doctype html>
   body{font-family:monospace;background:#111;color:#ccc;padding:2rem;}
   h1{color:#fff;margin-bottom:1.5rem;}
   .board{display:flex;gap:1.5rem;flex-wrap:wrap;}
-  .card{border:1px solid #333;border-radius:4px;padding:1rem;min-width:200px;}
+  .card{border:1px solid #333;border-radius:4px;padding:1rem;min-width:180px;}
   .card-title{color:#888;font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;margin-bottom:.75rem;}
   .field{margin-bottom:.6rem;}
   .field-label{color:#888;font-size:.65rem;text-transform:uppercase;letter-spacing:.08em;}
@@ -47,13 +47,14 @@ fetch('/builder').then(r=>r.json()).then(d=>{
   if(r.theme&&r.theme!=='default') document.body.classList.add(r.theme);
   if(r.render_mode&&r.render_mode!=='auto') document.body.classList.add(r.render_mode);
   const info=document.getElementById('info');
+  const skip=new Set(['render']);
   for(const [k,v] of Object.entries(d)){
-    if(k==='render') continue;
+    if(skip.has(k)) continue;
     info.innerHTML+=`<div class="field"><div class="field-label">${k}</div><div class="field-value">${v}</div></div>`;
   }
   const prefs=document.getElementById('prefs');
   for(const [k,v] of Object.entries(r)){
-    prefs.innerHTML+=`<div class="field"><div class="field-label">${k}</div><div class="field-value"><span class="badge">${v}</span></div></div>`;
+    prefs.innerHTML+=`<div class="field"><div class="field-label">${k}</div><span class="badge">${v}</span></div>`;
   }
 });
 </script>
