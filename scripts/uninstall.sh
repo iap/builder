@@ -55,13 +55,16 @@ print("✓ backed up config →", backup)
 
 c = yaml.safe_load(raw) or {}
 
-# 1) providers.builder block
+# 1) providers entry (aws-builder is the current slug written by
+#    _provider.register_provider; builder was the pre-rename fallback).
 providers = c.get("providers")
-if isinstance(providers, dict) and "builder" in providers:
-    del providers["builder"]
-    if not providers:
-        c.pop("providers", None)
-    print("✓ removed providers: builder")
+if isinstance(providers, dict):
+    for slug in ("aws-builder", "builder"):
+        if slug in providers:
+            del providers[slug]
+            if not providers:
+                c.pop("providers", None)
+            print(f"✓ removed providers: {slug}")
 
 # 2) plugins.enabled entry
 plugins = c.setdefault("plugins", {})

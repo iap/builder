@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -27,25 +26,22 @@ PROVIDER_NAME = "AWS Builder"
 _MANAGED_MARKER = "_builder_managed"
 
 
-def _plugin_dir() -> Path:
-    return Path(__file__).resolve().parent
-
-
 def _declared_models() -> list[str]:
-    """Read the ``models:`` list from the plugin's own plugin.yaml."""
-    import yaml  # hermes-agent dependency; safe in the gateway venv
+    """Return the plugin's declared models via the single source of truth.
 
-    manifest = _plugin_dir() / "plugin.yaml"
-    if not manifest.exists():
-        return []
+    Delegates to ``backend.list_models()`` (which reads the ``models:``
+    override from plugin.yaml with a cached fallback to STATIC_MODELS) so the
+    provider registration and the chat backend never disagree on the catalog.
+    """
     try:
-        data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
-        models = data.get("models")
-        if isinstance(models, list):
-            return [str(m).strip() for m in models if str(m).strip()]
+        from . import backend  # package import
+    except ImportError:  # __main__ / direct
+        import backend  # type: ignore
+    try:
+        return list(backend.list_models())
     except Exception as exc:  # noqa: BLE001
-        logger.warning("builder: failed to read plugin.yaml models: %s", exc)
-    return []
+        logger.warning("builder: backend.list_models() failed, using empty catalog: %s", exc)
+        return []
 
 
 def _adapter_base_url(port: int) -> str:
