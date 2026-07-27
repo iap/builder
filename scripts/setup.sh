@@ -105,6 +105,25 @@ rm -f "$BLOCK_FILE"
 
 if grep -qE '^[[:space:]]*aws-builder:' "$CONFIG"; then
   echo "✓ added providers: aws-builder → http://127.0.0.1:${PORT}/v1 (transport: openai_chat, in-process adapter on :8088)"
+  # Ensure builder is in plugins.enabled so the dashboard tab + the plugin
+  # loader actually activate it. The builder plugin is kind: standalone, which
+  # is opt-in via plugins.enabled; without this entry it is silently gated out
+  # of both the dashboard sidebar and the agent plugin loader (see uninstall.sh,
+  # which removes the same key). Idempotent + sibling-safe.
+  python3 - "$CONFIG" <<'PY'
+import sys, yaml
+p = sys.argv[1]
+c = yaml.safe_load(open(p)) or {}
+if not isinstance(c.get("plugins"), dict):
+    c["plugins"] = {}
+c["plugins"].setdefault("enabled", [])
+if "builder" not in c["plugins"]["enabled"]:
+    c["plugins"]["enabled"].append("builder")
+    yaml.safe_dump(c, open(p, "w"), default_flow_style=False, sort_keys=False)
+    print("✓ added builder to plugins.enabled")
+else:
+    print("✓ builder already in plugins.enabled")
+PY
   echo
   echo "NEXT: restart Hermes, then in TUI/CLI use '-m builder' or pick 'AWS Builder'."
   echo "      (login once with: bid_login  — approve in browser)"
