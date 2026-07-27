@@ -50,10 +50,27 @@ def _adapter_base_url(port: int) -> str:
 
 
 def _adapter_base_url_marker() -> str:
-    # Substring that identifies OUR adapter's base_url (loopback on the
-    # default port) so a legacy entry written before the managed marker can
-    # still be recognised as ours. Kept in sync with _adapter_base_url's port.
-    return f"localhost:{int(os.environ.get('AWS_BUILD_ADAPTER_PORT', '8088'))}"
+    """Loopback host forms that identify OUR adapter's base_url.
+
+    Legacy ``setup.sh`` wrote the provider entry with ``127.0.0.1``
+    (e.g. ``http://127.0.0.1:8088/v1``), while current ``register_provider``
+    writes ``localhost`` (``_adapter_base_url``). Both are our loopback
+    adapter, so adoption must recognise either form — otherwise a renamed
+    legacy entry would never be adopted and the stale ``key_env`` (false
+    'No API key' notification) would survive. Returns the port so callers can
+    match on the loopback host + port, host-agnostic.
+    """
+    port = int(os.environ.get("AWS_BUILD_ADAPTER_PORT", "8088"))
+    return f":{port}"
+
+
+def _is_our_base_url(base: str) -> bool:
+    """True if ``base`` points at our loopback adapter (127.0.0.1 or localhost
+    on the adapter port), regardless of which loopback host string was used."""
+    if not isinstance(base, str):
+        return False
+    marker = _adapter_base_url_marker()  # e.g. ":8088"
+    return (f"127.0.0.1{marker}" in base) or (f"localhost{marker}" in base)
 
 
 def register_provider(port: int) -> bool:
@@ -119,7 +136,7 @@ def register_provider(port: int) -> bool:
             return False  # ours; caller rewrites it
         base = entry.get("base_url") or ""
         name = entry.get("name") or ""
-        if _adapter_base_url_marker() in base or name == PROVIDER_NAME:
+        if _is_our_base_url(base) or name == PROVIDER_NAME:
             return False  # legacy plugin-owned entry; adopt it
         return True  # foreign/user-managed; leave it alone
 
