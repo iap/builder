@@ -867,9 +867,15 @@ def test_uninstall_removes_aws_build_block_and_enabled(tmp_path, monkeypatch):
 
 def test_aws_build_resolves_as_cli_tui_model(monkeypatch):
     """Robust check (against the REAL Hermes core resolver) that a
-    providers:builder block (the key setup.sh writes) resolves as a selectable
-    model in CLI/TUI: correct transport, endpoint, key_env, and every
-    declared model surfaced — with no plaintext api_key and using :8088."""
+    providers:aws-builder block (what _provider.register_provider writes)
+    resolves as a selectable model in CLI/TUI: correct transport, endpoint,
+    keyless-by-design signal, and every declared model surfaced — using :8088.
+
+    The provider is keyless (AWS Builder ID OIDC happens inside the adapter),
+    so it MUST advertise ``api_key: "no-key-required"`` rather than a dummy
+    ``key_env``. That honest signal lets the gateway's credential probe skip
+    the false "No API key configured … First message will fail" warning.
+    """
     import sys, yaml
     from conftest import HERMES_AGENT_DIR
     sys.path.insert(0, str(HERMES_AGENT_DIR))
@@ -879,18 +885,18 @@ def test_aws_build_resolves_as_cli_tui_model(monkeypatch):
         "name": "AWS Builder ID",
         "transport": "openai_chat",
         "base_url": "http://127.0.0.1:8088/v1",
-        "key_env": "AWS_BUILD_ADAPTER_DUMMY",
+        "api_key": "no-key-required",
         "models": ["claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5", "auto"],
     }
-    cfg = {"providers": {"builder": provider_block}}
+    cfg = {"providers": {"aws-builder": provider_block}}
     cps = get_compatible_custom_providers(cfg)
-    matches = [c for c in cps if c.get("provider_key") == "builder"]
-    assert matches, "builder must appear in resolved providers"
+    matches = [c for c in cps if c.get("provider_key") == "aws-builder"]
+    assert matches, "aws-builder must appear in resolved providers"
     e = matches[0]
     assert e["api_mode"] == "openai_chat"
     assert e["base_url"].rstrip("/") == "http://127.0.0.1:8088/v1"
-    assert e["key_env"] == "AWS_BUILD_ADAPTER_DUMMY"
-    assert "api_key" not in e, "no plaintext api_key allowed"
+    assert e.get("api_key") == "no-key-required", "keyless-by-design signal required"
+    assert "key_env" not in e, "no dummy key_env; use no-key-required"
     surfaced = set(e.get("models", {}).keys())
     assert surfaced == {"claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5", "auto"}
 
