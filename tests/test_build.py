@@ -901,6 +901,71 @@ def test_aws_build_resolves_as_cli_tui_model(monkeypatch):
     assert surfaced == {"claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5", "auto"}
 
 
+def test_register_provider_adopts_legacy_markerless_entry(monkeypatch, tmp_path):
+    """Regression: a providers.aws-builder entry written by an OLD build
+    (no _builder_managed marker, stale key_env: AWS_BUILD_ADAPTER_DUMMY) must
+    be adopted and rewritten on register_provider — so a dashboard rebuild /
+    plugin reload self-heals the false 'No API key' notification without a
+    manual config edit or restart.
+
+    A genuine foreign/user-managed entry (different base_url, no marker) must
+    be left untouched.
+    """
+    import sys, yaml
+    from conftest import HERMES_AGENT_DIR
+    sys.path.insert(0, str(HERMES_AGENT_DIR))
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    cfg_path = tmp_path / "config.yaml"
+    # Legacy entry: our base_url, no marker, stale dummy key_env.
+    cfg_path.write_text(yaml.safe_dump({
+        "providers": {
+            "aws-builder": {
+                "name": "AWS Builder ID",
+                "base_url": "http://localhost:8088/v1",
+                "key_env": "AWS_BUILD_ADAPTER_DUMMY",
+            }
+        }
+    }))
+
+    import _provider
+    wrote = _provider.register_provider(8088)
+    assert wrote is True, "legacy plugin entry must be adopted (rewritten)"
+
+    updated = yaml.safe_load(cfg_path.read_text())["providers"]["aws-builder"]
+    assert updated.get("api_key") == "no-key-required", "stale key_env replaced"
+    assert "_builder_managed" in updated, "marker must be set on adoption"
+    assert "key_env" not in updated, "dummy key_env removed"
+
+
+def test_register_provider_leaves_foreign_entry_alone(monkeypatch, tmp_path):
+    """A providers.aws-builder entry with a foreign base_url and no marker is
+    treated as user-managed and must NOT be clobbered by register_provider."""
+    import yaml
+    from conftest import HERMES_AGENT_DIR
+    import sys
+    sys.path.insert(0, str(HERMES_AGENT_DIR))
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(yaml.safe_dump({
+        "providers": {
+            "aws-builder": {
+                "name": "My Custom Endpoint",
+                "base_url": "https://example.com/v1",
+                "api_key": "sk-real-user-key",
+            }
+        }
+    }))
+
+    import _provider
+    wrote = _provider.register_provider(8088)
+    assert wrote is False, "foreign entry must be skipped"
+    kept = yaml.safe_load(cfg_path.read_text())["providers"]["aws-builder"]
+    assert kept["api_key"] == "sk-real-user-key", "user key preserved"
+    assert "_builder_managed" not in kept, "must not mark foreign entry"
+
+
 def test_plugin_model_enum_matches_provider_block():
     """The ask_q tool's model enum (built from backend.list_models()) must
     agree with the models declared in the provider block, so the TUI picker

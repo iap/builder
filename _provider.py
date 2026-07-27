@@ -49,6 +49,13 @@ def _adapter_base_url(port: int) -> str:
     return f"http://localhost:{port}/v1"
 
 
+def _adapter_base_url_marker() -> str:
+    # Substring that identifies OUR adapter's base_url (loopback on the
+    # default port) so a legacy entry written before the managed marker can
+    # still be recognised as ours. Kept in sync with _adapter_base_url's port.
+    return f"localhost:{int(os.environ.get('AWS_BUILD_ADAPTER_PORT', '8088'))}"
+
+
 def register_provider(port: int) -> bool:
     """Write a custom provider entry for the builder adapter.
 
@@ -94,15 +101,40 @@ def register_provider(port: int) -> bool:
             providers[PROVIDER_SLUG] = legacy
 
     existing = providers.get(PROVIDER_SLUG)
-    if isinstance(existing, dict) and not existing.get(_MANAGED_MARKER):
-        # A real user-configured entry already exists — don't clobber it.
-        logger.info("builder: providers.%s already present (user-managed); leaving it.", PROVIDER_SLUG)
+
+    def _is_user_managed(entry: Any) -> bool:
+        """True if an existing entry is a genuine user config we must not clobber.
+
+        A managed entry (ours, with the marker) is always rewritten with the
+        current signal. A legacy plugin entry written before the marker existed
+        (old setup.sh / hand-edits) is still ours — adopt it (rebuild + mark) so
+        a dashboard rebuild self-heals stale fields (e.g. the old
+        ``key_env: AWS_BUILD_ADAPTER_DUMMY`` that triggered a false 'No API key'
+        notification). Only a real foreign entry — different base_url/name and no
+        marker — is treated as user-managed.
+        """
+        if not isinstance(entry, dict):
+            return False
+        if entry.get(_MANAGED_MARKER):
+            return False  # ours; caller rewrites it
+        base = entry.get("base_url") or ""
+        name = entry.get("name") or ""
+        if _adapter_base_url_marker() in base or name == PROVIDER_NAME:
+            return False  # legacy plugin-owned entry; adopt it
+        return True  # foreign/user-managed; leave it alone
+
+    if isinstance(existing, dict) and _is_user_managed(existing):
+        logger.info("builder: providers.%s present and user-managed; leaving it.", PROVIDER_SLUG)
         return False
 
-    # We own this entry (managed), so rebuild the model list from the
-    # currently-declared models rather than merging — otherwise removed/
-    # renamed models in plugin.yaml would linger as selectable (Greptile P2).
+    # We own this entry (managed, or a legacy plugin entry we adopt), so
+    # rebuild the model list from the currently-declared models rather than
+    # merging — otherwise removed/renamed models in plugin.yaml would linger
+    # as selectable (Greptile P2). Drop the legacy dummy key_env so a stale
+    # AWS_BUILD_ADAPTER_DUMMY can't survive an adoption (it would re-trigger
+    # the false 'No API key' notification).
     entry: dict[str, Any] = dict(existing) if isinstance(existing, dict) else {}
+    entry.pop("key_env", None)
     entry.update(
         {
             "name": PROVIDER_NAME,
