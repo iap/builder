@@ -46,9 +46,10 @@ fetch('/builder').then(r=>r.json()).then(d=>{
   const r=d.render||{};
   if(r.theme&&r.theme!=='default') document.body.classList.add(r.theme);
   if(r.render_mode&&r.render_mode!=='auto') document.body.classList.add(r.render_mode);
+  const skip=new Set(['render']);
   const info=document.getElementById('info');
   for(const [k,v] of Object.entries(d)){
-    if(k==='render') continue;
+    if(skip.has(k)) continue;
     info.innerHTML+=`<div class="field"><div class="field-label">${k}</div><div class="field-value">${v}</div></div>`;
   }
   const prefs=document.getElementById('prefs');
