@@ -525,14 +525,24 @@ def stop() -> None:
     _server, _thread = None, None
 
 
-def is_running() -> bool:
-    """True if the in-process adapter is currently bound and serving.
+def is_running(host: str = HOST, port: int = DEFAULT_PORT) -> bool:
+    """True if ANY process is serving on the adapter port (healthy state).
 
-    Used by ``register()`` to distinguish a healthy "already running" state
-    (another Hermes session owns the port) from a real startup failure, so
-    the spurious "failed to start" warning is suppressed in the former case.
+    Used by ``register()`` to suppress the spurious "adapter failed to start"
+    warning when another Hermes session already owns the port. A process-local
+    ``_server is not None`` check is insufficient: the warning fires in the
+    *second* session (whose ``_server`` is None) exactly when the port is
+    healthily held by the first session. So we probe the port directly.
     """
-    return _server is not None
+    import socket
+
+    _family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    _probe = socket.socket(_family, socket.SOCK_STREAM)
+    try:
+        _probe.settimeout(0.2)
+        return _probe.connect_ex((host, port)) == 0
+    finally:
+        _probe.close()
 
 
 if __name__ == "__main__":

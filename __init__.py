@@ -338,8 +338,9 @@ def register(ctx) -> None:
     except OSError as exc:
         # If the adapter is already running (another active Hermes session
         # bound the port), that is healthy — skip the warning. Surface
-        # everything else.
-        if not (hasattr(adapter, "is_running") and adapter.is_running()):
+        # everything else. Probe the port (not just this process's _server)
+        # so the warning is suppressed when another session owns it.
+        if not adapter.is_running(host=adapter.HOST, port=port):
             logger.warning("builder adapter failed to start (tool-only mode OK): %s", exc)
         srv, actual = None, None
     except Exception as exc:  # noqa: BLE001

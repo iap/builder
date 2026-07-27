@@ -633,3 +633,17 @@ def test_parse_tool_calls_non_dict_arguments_coerced():
         '```json\n{"name": "t", "arguments": null}\n```'
     ) == [{"name": "t", "arguments": json.dumps({}, ensure_ascii=False)}]
 
+
+def test_parse_tool_calls_xml_takes_precedence_over_json():
+    """When both <tool_call> XML and a bare JSON object are present, XML wins
+    (the JSON path is guarded by `if not calls`)."""
+    from adapter import _parse_tool_calls
+
+    answer = (
+        '<tool_call>{"name": "tool_xml", "arguments": {}}</tool_call>\n'
+        'and also {"name": "tool_json", "arguments": {}}'
+    )
+    calls = _parse_tool_calls(answer)
+    assert len(calls) == 1
+    assert calls[0]["name"] == "tool_xml"
+
