@@ -155,6 +155,40 @@ def _handle_tags(args: dict[str, Any], **kwargs: Any) -> str:
     return _success({"tags": load_tags()})
 
 
+def _handle_q_debug(args: dict[str, Any], **kwargs: Any) -> str:
+    """Lightweight calibration/debug snapshot for Hermes TUI/CLI tuning.
+
+    Returns auth/model metadata only. No raw token, no client secret.
+    """
+    try:
+        status = get_status()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("q_debug status failed")
+        return _error(str(exc), code="status_failed")
+    try:
+        identity = show_identity()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("q_debug identity failed")
+        return _error(str(exc), code="identity_failed")
+    payload = {
+        "auth": {
+            "authenticated": bool(status.get("authenticated")),
+            "phase": status.get("phase"),
+            "token_expires_at": status.get("token_expires_at"),
+            "refreshed": status.get("refreshed"),
+        },
+        "identity": {
+            "token_type": identity.get("token_type"),
+            "has_refresh_token": identity.get("has_refresh_token"),
+            "scopes": identity.get("scopes"),
+            "expires_at": identity.get("expires_at"),
+        },
+        "models": list_models(),
+        "tags": load_tags(),
+    }
+    return _success(payload)
+
+
 # --- tool registry ---
 
 _TOOLS = (
@@ -257,6 +291,17 @@ _TOOLS = (
         lambda: True,
         "🏷️",
     ),
+    (
+        "q_debug",
+        {
+            "name": "q_debug",
+            "description": "Lightweight calibration snapshot: auth state, identity metadata, models, and tags. No raw secrets.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        _handle_q_debug,
+        _check_available,
+        "🔬",
+    ),
 )
 
 
@@ -290,6 +335,14 @@ def register(ctx) -> None:
     try:
         srv, actual = adapter.start(port=port)
         print(f"[builder] OpenAI adapter listening on :{actual} (model-provider mode)")
+    except OSError as exc:
+        # If the adapter is already running (another active Hermes session
+        # bound the port), that is healthy — skip the warning. Surface
+        # everything else. Probe the port (not just this process's _server)
+        # so the warning is suppressed when another session owns it.
+        if not adapter.is_running(host=adapter.HOST, port=port):
+            logger.warning("builder adapter failed to start (tool-only mode OK): %s", exc)
+        srv, actual = None, None
     except Exception as exc:  # noqa: BLE001
         logger.warning("builder adapter failed to start (tool-only mode OK): %s", exc)
         srv, actual = None, None

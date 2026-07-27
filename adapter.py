@@ -206,21 +206,29 @@ def _parse_tool_calls(answer: str) -> list[dict[str, Any]]:
             args = {}
         calls.append({"name": name, "arguments": json.dumps(args, ensure_ascii=False)})
 
-    # 2) fenced ```json blocks shaped like {"name":..,"arguments":..}
+    # 2) Any JSON object shaped like {"name": ..., "arguments": ...}
+    #    This covers ```json fences, inline backticks, or bare JSON in Q's
+    #    answer. Brace-aware scanning avoids the nested-brace bug in the
+    #    previous non-greedy regex fallback.
     if not calls:
-        for m in re.finditer(r"```(?:json)?\s*(\{.*?\})\s*```", answer, re.DOTALL):
+        for m in re.finditer(r"\{", answer):
+            obj, end = _extract_balanced_brace(answer, m.start())
+            if obj is None or end <= m.start():
+                continue
             try:
-                obj = json.loads(m.group(1))
+                parsed = json.loads(obj)
             except Exception:
                 continue
-            name = obj.get("name")
-            if isinstance(name, str) and name:
-                args = obj.get("arguments", {})
-                if not isinstance(args, dict):
-                    args = {}
-                calls.append(
-                    {"name": name, "arguments": json.dumps(args, ensure_ascii=False)}
-                )
+            name = parsed.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            args = parsed.get("arguments")
+            if not isinstance(args, dict):
+                args = {}
+            calls.append({"name": name, "arguments": json.dumps(args, ensure_ascii=False)})
+            if len(calls) >= 20:
+                # Hard cap to avoid pathological answers with many JSON objects.
+                break
     return calls
 
 
@@ -515,6 +523,26 @@ def stop() -> None:
         _server.shutdown()
         _server.server_close()
     _server, _thread = None, None
+
+
+def is_running(host: str = HOST, port: int = DEFAULT_PORT) -> bool:
+    """True if ANY process is serving on the adapter port (healthy state).
+
+    Used by ``register()`` to suppress the spurious "adapter failed to start"
+    warning when another Hermes session already owns the port. A process-local
+    ``_server is not None`` check is insufficient: the warning fires in the
+    *second* session (whose ``_server`` is None) exactly when the port is
+    healthily held by the first session. So we probe the port directly.
+    """
+    import socket
+
+    _family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    _probe = socket.socket(_family, socket.SOCK_STREAM)
+    try:
+        _probe.settimeout(0.2)
+        return _probe.connect_ex((host, port)) == 0
+    finally:
+        _probe.close()
 
 
 if __name__ == "__main__":
