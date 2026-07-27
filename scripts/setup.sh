@@ -43,9 +43,12 @@ else
     || echo "  (skipped REVISION stamp)" >&2
 fi
 
-# Idempotency: already present? Matches either slug the plugin may have used
-# (aws-builder is the current slug; builder was the pre-rename fallback).
-if grep -qE '^[[:space:]]*(aws-)?builder:' "$CONFIG"; then
+# Idempotency: already present? Match the provider key specifically
+# (^aws-builder:), NOT a bare `builder:` which also appears under unrelated
+# keys like `plugins.entries.builder:` — a loose match there caused setup.sh
+# to falsely report "already present" and skip (re)writing the provider entry
+# even when providers.aws-builder was actually absent (see issue from #26).
+if grep -qE '^[[:space:]]*aws-builder:' "$CONFIG"; then
   echo "✓ providers: aws-builder already present in $CONFIG — nothing to do."
   echo "  Restart Hermes if you haven't since installing the plugin."
   exit 0
