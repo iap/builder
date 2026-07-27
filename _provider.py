@@ -111,7 +111,13 @@ def register_provider(port: int) -> bool:
             "discover_models": False,
             _MANAGED_MARKER: True,
             # Adapter authenticates via AWS Builder ID OIDC internally; no key.
-            "key_env": "AWS_BUILD_ADAPTER_DUMMY",
+            # Signal keyless-by-design honestly so the gateway's credential
+            # probe (tui_gateway _probe_credentials) does not emit a false
+            # "No API key configured … First message will fail" warning when
+            # this model is selected. "no-key-required" is core's canonical
+            # placeholder for keyless providers (local servers, Nous free
+            # tier, Ollama, …) and must be honored by the probe.
+            "api_key": "no-key-required",
         }
     )
     entry["models"] = {m: {} for m in models}
