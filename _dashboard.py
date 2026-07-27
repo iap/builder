@@ -18,8 +18,8 @@ _HTML = """<!doctype html>
   .board{display:flex;gap:1.5rem;flex-wrap:wrap;}
   .card{border:1px solid #333;border-radius:4px;padding:1rem;min-width:180px;}
   .card-title{color:#888;font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;margin-bottom:.75rem;}
-  .field{margin-bottom:.6rem;}
-  .field-label{color:#888;font-size:.65rem;text-transform:uppercase;letter-spacing:.08em;}
+  .field{display:flex;flex-direction:column;gap:.15rem;margin-bottom:.6rem;}
+  .field-label{color:#666;font-size:.65rem;text-transform:uppercase;letter-spacing:.08em;}
   .field-value{color:#eee;font-size:.85rem;word-break:break-all;}
   .badge{background:#1e3a5f;color:#7eb8f7;padding:.15rem .5rem;border-radius:3px;font-size:.8rem;display:inline-block;}
   body.midnight{background:#080c14;color:#a8b8d0;}
@@ -46,14 +46,15 @@ fetch('/builder').then(r=>r.json()).then(d=>{
   const r=d.render||{};
   if(r.theme&&r.theme!=='default') document.body.classList.add(r.theme);
   if(r.render_mode&&r.render_mode!=='auto') document.body.classList.add(r.render_mode);
+  const skip=new Set(['render']);
   const info=document.getElementById('info');
   for(const [k,v] of Object.entries(d)){
-    if(k==='render') continue;
-    info.innerHTML+=`<div class="field"><div class="field-label">${k}</div><div class="field-value">${v}</div></div>`;
+    if(skip.has(k)) continue;
+    info.innerHTML+=`<div class="field"><span class="field-label">${k}</span><span class="field-value">${v}</span></div>`;
   }
   const prefs=document.getElementById('prefs');
   for(const [k,v] of Object.entries(r)){
-    prefs.innerHTML+=`<div class="field"><div class="field-label">${k}</div><div class="field-value"><span class="badge">${v}</span></div></div>`;
+    prefs.innerHTML+=`<div class="field"><span class="field-label">${k}</span><span class="badge">${v}</span></div>`;
   }
 });
 </script>
