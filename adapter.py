@@ -206,21 +206,29 @@ def _parse_tool_calls(answer: str) -> list[dict[str, Any]]:
             args = {}
         calls.append({"name": name, "arguments": json.dumps(args, ensure_ascii=False)})
 
-    # 2) fenced ```json blocks shaped like {"name":..,"arguments":..}
+    # 2) Any JSON object shaped like {"name": ..., "arguments": ...}
+    #    This covers ```json fences, inline backticks, or bare JSON in Q's
+    #    answer. Brace-aware scanning avoids the nested-brace bug in the
+    #    previous non-greedy regex fallback.
     if not calls:
-        for m in re.finditer(r"```(?:json)?\s*(\{.*?\})\s*```", answer, re.DOTALL):
+        for m in re.finditer(r"\{", answer):
+            obj, end = _extract_balanced_brace(answer, m.start())
+            if obj is None or end <= m.start():
+                continue
             try:
-                obj = json.loads(m.group(1))
+                parsed = json.loads(obj)
             except Exception:
                 continue
-            name = obj.get("name")
-            if isinstance(name, str) and name:
-                args = obj.get("arguments", {})
-                if not isinstance(args, dict):
-                    args = {}
-                calls.append(
-                    {"name": name, "arguments": json.dumps(args, ensure_ascii=False)}
-                )
+            name = parsed.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            args = parsed.get("arguments")
+            if not isinstance(args, dict):
+                args = {}
+            calls.append({"name": name, "arguments": json.dumps(args, ensure_ascii=False)})
+            if len(calls) >= 20:
+                # Hard cap to avoid pathological answers with many JSON objects.
+                break
     return calls
 
 
@@ -515,6 +523,16 @@ def stop() -> None:
         _server.shutdown()
         _server.server_close()
     _server, _thread = None, None
+
+
+def is_running() -> bool:
+    """True if the in-process adapter is currently bound and serving.
+
+    Used by ``register()`` to distinguish a healthy "already running" state
+    (another Hermes session owns the port) from a real startup failure, so
+    the spurious "failed to start" warning is suppressed in the former case.
+    """
+    return _server is not None
 
 
 if __name__ == "__main__":

@@ -72,12 +72,29 @@ def check_drift() -> None:
             f"({head[:10]}). Reinstall to pick up merged fixes: "
             "`hermes plugins uninstall builder && hermes plugins install <repo>`"
         )
-    else:
-        _warn(
-            f"installed plugin REVISION ({installed[:10]}) differs from repo HEAD "
-            f"({head[:10]}) — install predates or diverged from current source. "
-            "Reinstall if you want the current build."
-        )
+        return
+    # Squash-merge breaks the ancestor check: the install commit is no longer
+    # an ancestor of the post-squash HEAD even though its content is merged.
+    # Compare trees — if identical, the install is current despite the SHA
+    # mismatch (this is the common "REVISION differs from HEAD" false alarm).
+    try:
+        installed_tree = subprocess.run(
+            ["git", "rev-parse", f"{installed}^{{tree}}"],
+            cwd=repo_root, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        head_tree = subprocess.run(
+            ["git", "rev-parse", "HEAD^{tree}"],
+            cwd=repo_root, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        if installed_tree and installed_tree == head_tree:
+            return  # trees identical → install is current
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+    _warn(
+        f"installed plugin REVISION ({installed[:10]}) differs from repo HEAD "
+        f"({head[:10]}) — install predates or diverged from current source. "
+        "Reinstall if you want the current build."
+    )
 
 
 def main() -> int:
