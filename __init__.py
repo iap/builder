@@ -158,7 +158,9 @@ def _handle_tags(args: dict[str, Any], **kwargs: Any) -> str:
 def _handle_q_debug(args: dict[str, Any], **kwargs: Any) -> str:
     """Lightweight calibration/debug snapshot for Hermes TUI/CLI tuning.
 
-    Returns auth/model metadata only. No raw token, no client secret.
+    Returns auth/model metadata plus the active host render prefs (mode/theme)
+    so a Q-backed agent can self-adapt its output to the running Hermes CLI/TUI
+    without manual calibration. No raw token, no client secret.
     """
     try:
         status = get_status()
@@ -170,6 +172,11 @@ def _handle_q_debug(args: dict[str, Any], **kwargs: Any) -> str:
     except Exception as exc:  # noqa: BLE001
         logger.exception("q_debug identity failed")
         return _error(str(exc), code="identity_failed")
+    try:
+        from . import _format  # package import
+    except ImportError:  # __main__ / direct
+        import _format  # type: ignore
+    prefs = _format.load_render_prefs()
     payload = {
         "auth": {
             "authenticated": bool(status.get("authenticated")),
@@ -185,6 +192,7 @@ def _handle_q_debug(args: dict[str, Any], **kwargs: Any) -> str:
         },
         "models": list_models(),
         "tags": load_tags(),
+        "render": prefs,
     }
     return _success(payload)
 
