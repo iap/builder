@@ -66,8 +66,8 @@ cat > "$BLOCK_FILE" <<EOF
   aws-builder:
     name: AWS Builder
     transport: openai_chat
-    base_url: http://127.0.0.1:${PORT}/v1
-    key_env: AWS_BUILD_ADAPTER_DUMMY
+    base_url: http://localhost:${PORT}/v1
+    api_key: no-key-required
     models:
       - auto
       - claude-sonnet-4.5
@@ -107,7 +107,7 @@ PY
 rm -f "$BLOCK_FILE"
 
 if grep -qE '^[[:space:]]*aws-builder:' "$CONFIG"; then
-  echo "✓ added providers: aws-builder → http://127.0.0.1:${PORT}/v1 (transport: openai_chat, in-process adapter on :8088)"
+  echo "✓ added providers: aws-builder → http://localhost:${PORT}/v1 (transport: openai_chat, in-process adapter on :${PORT}, api_key: no-key-required)"
   # Ensure builder is in plugins.enabled so the dashboard tab + the plugin
   # loader actually activate it. The builder plugin is kind: standalone, which
   # is opt-in via plugins.enabled; without this entry it is silently gated out

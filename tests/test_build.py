@@ -1352,3 +1352,39 @@ def test_adapter_default_port_avoids_gateway_8077():
     os.environ.pop("AWS_BUILD_ADAPTER_PORT", None)
     assert int(os.environ.get("AWS_BUILD_ADAPTER_PORT", "8088")) == 8088
 
+
+def test_format_render_prefs_fallback_when_config_unavailable():
+    """_format.load_render_prefs() never raises; falls back to auto/default."""
+    import _format
+
+    _format.set_load_config_fn(None)
+    prefs = _format.load_render_prefs()
+    assert prefs["render_mode"] in ("auto", "cli", "tui")
+    assert isinstance(prefs["theme"], str) and prefs["theme"]
+    # caching: second call returns same object
+    assert _format.load_render_prefs() is prefs
+    _format.set_load_config_fn(None)
+
+
+def test_format_render_prefs_reads_config():
+    """render_mode/theme are read from Hermes config when available."""
+    import _format
+
+    _format.set_load_config_fn(lambda: {"render_mode": "tui", "theme": "midnight"})
+    prefs = _format.load_render_prefs()
+    assert prefs == {"render_mode": "tui", "theme": "midnight"}
+    _format.set_load_config_fn(None)
+
+
+def test_q_debug_includes_render_prefs(mod, monkeypatch):
+    """q_debug surfaces the active host render prefs so a Q agent can adapt."""
+    # _handle_q_debug does `from . import _format` -> resolves under mod's package.
+    fmt_mod = __import__(f"{mod.__package__}._format", fromlist=["_format"])
+    monkeypatch.setattr(fmt_mod, "load_render_prefs",
+                        lambda: {"render_mode": "cli", "theme": "ember"})
+    out = mod._handle_q_debug({})
+    import json as _json
+    data = _json.loads(out)
+    assert data["success"] is True
+    assert data["render"] == {"render_mode": "cli", "theme": "ember"}
+

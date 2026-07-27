@@ -84,7 +84,7 @@ except ImportError:  # __main__ / direct execution
 # special meaning in this repo (the old standalone :8088 daemon is
 # gone), so it's a clean choice. Overridable via AWS_BUILD_ADAPTER_PORT.
 DEFAULT_PORT = int(os.environ.get("AWS_BUILD_ADAPTER_PORT", "8088"))
-HOST = os.environ.get("AWS_BUILD_ADAPTER_HOST", "127.0.0.1")
+HOST = os.environ.get("AWS_BUILD_ADAPTER_HOST", "localhost")
 
 # The adapter is a LOCAL-ONLY server: it forwards requests to Amazon Q using the
 # plugin's stored Builder ID token. It must never be reachable from the network.
