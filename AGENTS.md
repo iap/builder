@@ -61,8 +61,8 @@ These invariants must never be broken:
 
 1. Add a `_handle_<name>` function in `__init__.py`.
 2. Add a `(name, schema, handler, check_fn, emoji)` tuple to `_TOOLS`.
-3. Add the tool name to `plugin.yaml` `provides_tools:`.
-4. Add the symbol to `PUBLIC_SYMBOLS` in `tests/test_import_contract.py`.
+3. Add the tool name to `plugin.yaml` `provides_tools:` (so the manifest stays in sync).
+4. Add the handler symbol to `PUBLIC_SYMBOLS` in `tests/test_import_contract.py` (the import-contract guard).
 5. Run `verify.py` — it checks all registered tools for secret leaks.
 
 ### Changing the model catalog
