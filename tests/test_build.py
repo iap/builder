@@ -934,7 +934,11 @@ def test_register_provider_adopts_legacy_markerless_entry(monkeypatch, tmp_path)
 
     updated = yaml.safe_load(cfg_path.read_text())["providers"]["aws-builder"]
     assert updated.get("api_key") == "no-key-required", "stale key_env replaced"
-    assert "_builder_managed" in updated, "marker must be set on adoption"
+    # Regression guard: the plugin must NOT write a private/undocumented key
+    # into config.yaml (Hermes core warns "unknown config keys ignored" for
+    # any key it doesn't know — that was the 2026-07-28 `_builder_managed`
+    # log spam). Ownership is detected from base_url/name instead.
+    assert all(not k.startswith("_") for k in updated), "no private marker key written"
     assert "key_env" not in updated, "dummy key_env removed"
 
 
@@ -985,17 +989,16 @@ def test_register_provider_leaves_foreign_entry_alone(monkeypatch, tmp_path):
             "aws-builder": {
                 "name": "My Custom Endpoint",
                 "base_url": "https://example.com/v1",
-                "api_key": "sk-real-user-key",
+                "api_key": "«redacted:sk-…»",
             }
         }
     }))
-
     import _provider
     wrote = _provider.register_provider(8088)
     assert wrote is False, "foreign entry must be skipped"
     kept = yaml.safe_load(cfg_path.read_text())["providers"]["aws-builder"]
-    assert kept["api_key"] == "sk-real-user-key", "user key preserved"
-    assert "_builder_managed" not in kept, "must not mark foreign entry"
+    assert kept["api_key"] == "«redacted:sk-…»", "user key preserved"
+    assert all(not k.startswith("_") for k in kept), "foreign entry not stamped with private key"
 
 
 def test_plugin_model_enum_matches_provider_block():

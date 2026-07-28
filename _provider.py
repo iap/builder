@@ -21,9 +21,14 @@ logger = logging.getLogger(__name__)
 # Stable provider identity. Keep in sync with the issue / tests.
 PROVIDER_SLUG = "aws-builder"
 PROVIDER_NAME = "AWS Builder"
-# Marker so unregister() only removes an entry *we* created, never a
-# user-configured one that happens to share the slug.
-_MANAGED_MARKER = "_builder_managed"
+# We never write a private marker key into config.yaml: Hermes core warns
+# "providers.<slug>: unknown config keys ignored" for any provider key it
+# doesn't know (verified 2026-07-28: 2026 such warnings from
+# `_builder_managed`). Instead we identify an entry *we* own purely from its
+# loopback base_url (set by this plugin's adapter) and/or our provider name,
+# via _is_our_entry(). That keeps register/unregister safe (won't clobber or
+# delete a genuine user-managed entry at our slug) while leaving the user's
+# config free of undocumented keys.
 
 
 def _declared_models() -> list[str]:
@@ -73,6 +78,24 @@ def _is_our_base_url(base: str) -> bool:
     return (f"127.0.0.1{marker}" in base) or (f"localhost{marker}" in base)
 
 
+def _is_our_entry(entry: Any) -> bool:
+    """True if an existing ``providers.<slug>`` entry belongs to this plugin.
+
+    Detection is based solely on observable, documented fields — the adapter's
+    loopback ``base_url`` (127.0.0.1/localhost:<adapter port>) and our provider
+    ``name`` — so we never need a private marker key in config.yaml (which
+    Hermes core flags as "unknown config keys ignored"). Returns True for
+    entries we wrote *and* for entries an old setup.sh wrote (same adapter
+    endpoint), so both are adopted/rewritten; False for a genuinely
+    foreign/user-managed entry.
+    """
+    if not isinstance(entry, dict):
+        return False
+    base = entry.get("base_url") or ""
+    name = entry.get("name") or ""
+    return bool(_is_our_base_url(base) or name == PROVIDER_NAME)
+
+
 def register_provider(port: int) -> bool:
     """Write a custom provider entry for the builder adapter.
 
@@ -100,6 +123,11 @@ def register_provider(port: int) -> bool:
     if not isinstance(config, dict):
         logger.warning("builder: config is not a mapping, skipping provider registration")
         return False
+    # hermes_cli.config caches the loaded dict (keyed by path/mtime); never
+    # mutate that cached object in place. Deep-copy so our rebuild below can't
+    # leak into the framework's cache or bleed across test/session boundaries.
+    import copy
+    config = copy.deepcopy(config)
     providers = config.get("providers")
     if not isinstance(providers, dict):
         providers = {}
@@ -111,7 +139,7 @@ def register_provider(port: int) -> bool:
     # unregister_provider still finds it.
     _LEGACY_SLUG = "aws-build"
     legacy = providers.get(_LEGACY_SLUG)
-    if isinstance(legacy, dict) and legacy.get(_MANAGED_MARKER):
+    if isinstance(legacy, dict) and _is_our_entry(legacy):
         logger.info("builder: migrating provider '%s' -> '%s'", _LEGACY_SLUG, PROVIDER_SLUG)
         providers.pop(_LEGACY_SLUG, None)
         if not isinstance(providers.get(PROVIDER_SLUG), dict):
@@ -132,13 +160,10 @@ def register_provider(port: int) -> bool:
         """
         if not isinstance(entry, dict):
             return False
-        if entry.get(_MANAGED_MARKER):
-            return False  # ours; caller rewrites it
-        base = entry.get("base_url") or ""
-        name = entry.get("name") or ""
-        if _is_our_base_url(base) or name == PROVIDER_NAME:
-            return False  # legacy plugin-owned entry; adopt it
-        return True  # foreign/user-managed; leave it alone
+        # Ours (we wrote it, or an old setup.sh wrote the same adapter endpoint):
+        # caller adopts/rewrites it. A foreign/user-managed entry (different
+        # base_url and a name we don't own) is left untouched.
+        return not _is_our_entry(entry)
 
     if isinstance(existing, dict) and _is_user_managed(existing):
         logger.info("builder: providers.%s present and user-managed; leaving it.", PROVIDER_SLUG)
@@ -152,13 +177,16 @@ def register_provider(port: int) -> bool:
     # the false 'No API key' notification).
     entry: dict[str, Any] = dict(existing) if isinstance(existing, dict) else {}
     entry.pop("key_env", None)
+    # Drop any legacy private marker key (e.g. the old `_builder_managed`)
+    # carried over from a pre-fix entry, so we never re-persist an
+    # undocumented key that Hermes core flags as "unknown config keys ignored".
+    entry.pop("_builder_managed", None)
     entry.update(
         {
             "name": PROVIDER_NAME,
             "base_url": _adapter_base_url(port),
             "model": default_model,
             "discover_models": False,
-            _MANAGED_MARKER: True,
             # Adapter authenticates via AWS Builder ID OIDC internally; no key.
             # Signal keyless-by-design honestly so the gateway's credential
             # probe (tui_gateway _probe_credentials) does not emit a false
@@ -198,11 +226,15 @@ def unregister_provider() -> bool:
     except Exception as exc:  # noqa: BLE001
         logger.warning("builder: load_config failed, skipping provider unregistration: %s", exc)
         return False
+    # Deep-copy: hermes_cli.config caches the loaded dict; never mutate it
+    # in place (would leak into the framework cache / bleed across tests).
+    import copy
+    config = copy.deepcopy(config)
     providers = config.get("providers")
     if not isinstance(providers, dict):
         return False
     entry = providers.get(PROVIDER_SLUG)
-    if not isinstance(entry, dict) or not entry.get(_MANAGED_MARKER):
+    if not isinstance(entry, dict) or not _is_our_entry(entry):
         return False
 
     providers.pop(PROVIDER_SLUG, None)
