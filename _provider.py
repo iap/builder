@@ -184,6 +184,7 @@ def register_provider(port: int) -> bool:
     entry.update(
         {
             "name": PROVIDER_NAME,
+            "transport": "openai_chat",  # matches setup.sh; core defaults to this, set explicitly
             "base_url": _adapter_base_url(port),
             "model": default_model,
             "discover_models": False,

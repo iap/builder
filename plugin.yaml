@@ -34,3 +34,4 @@ provides_tools:
   - bid_logout
   - models
   - tags
+  - q_debug

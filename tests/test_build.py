@@ -825,7 +825,7 @@ def test_unregister_stops_adapter(monkeypatch):
     assert called["stop"] is True
 
 
-def test_uninstall_removes_aws_build_block_and_enabled(tmp_path, monkeypatch):
+def test_uninstall_removes_builder_block_and_enabled(tmp_path, monkeypatch):
     """Mirror of scripts/uninstall.sh logic: drop the providers:builder
     block (any indentation) and the enabled entry; leave siblings intact.
     Uses the same provider key (builder) that setup.sh/uninstall.sh write."""
@@ -865,7 +865,7 @@ def test_uninstall_removes_aws_build_block_and_enabled(tmp_path, monkeypatch):
     assert c["plugins"]["enabled"] == ["continual-learning"]
 
 
-def test_aws_build_resolves_as_cli_tui_model(monkeypatch):
+def test_aws_builder_resolves_as_cli_tui_model(monkeypatch):
     """Robust check (against the REAL Hermes core resolver) that a
     providers:aws-builder block (what _provider.register_provider writes)
     resolves as a selectable model in CLI/TUI: correct transport, endpoint,
@@ -1030,11 +1030,11 @@ def test_plugin_model_enum_matches_provider_block():
 
 
 def test_adapter_end_to_end_openai_wire(monkeypatch):
-    """Robust usability test: prove aws-build actually ANSWERS through the
+    """Robust usability test: prove aws-builder actually ANSWERS through the
     OpenAI /v1/chat/completions wire path core uses — not just that it's
     listed. Monkeypatches backend.chat (no real Q token needed) so this is
     deterministic and offline, but exercises the real adapter HTTP+SSE
-    translation that a '-m aws-build' chat turn hits."""
+    translation that a '-m aws-builder' chat turn hits."""
     import json, urllib.request
     import adapter as real_adapter
 

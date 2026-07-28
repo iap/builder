@@ -10,6 +10,9 @@ This test pins the public contract so the same class of break fails loudly at
 collection time (and therefore in CI, which runs ``pytest``). It is additive
 and intentionally cheap: it asserts the package imports and exposes the
 symbols the rest of the suite + ``verify.py`` depend on.
+
+When adding a tool: register it in ``__init__.py`` ``_TOOLS`` AND add its
+handler to ``PUBLIC_SYMBOLS`` below so the guard stays meaningful.
 """
 
 from conftest import load_plugin
@@ -25,9 +28,9 @@ PUBLIC_SYMBOLS = (
     "_handle_bid_status",
     "_handle_bid_show_identity",
     "_handle_bid_logout",
-    "_handle_q_debug",
     "_handle_bid_models",
     "_handle_tags",
+    "_handle_q_debug",
 )
 
 # The token-store authority (auth/sso_oidc) is the single source of truth for

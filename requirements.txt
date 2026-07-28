@@ -6,8 +6,14 @@
 # the suite from that layout (see .github/workflows/ci.yml). Removed the
 # `hermes-agent` VCS install line because Hermes core is distributed via the
 # installer/Docker/Nix and does not build into a wheel from git.
+#
+# `openai` is required so test_adapter_sse_parses_via_openai_sdk (the
+# SSE-wire-contract test) actually executes in CI instead of skipping.
+# `fastapi` is NOT pinned here: the dashboard card (dashboard/plugin_api.py)
+# runs inside the Hermes process, which already provides FastAPI.
 pytest==9.0.3
 requests==2.33.0
 PyYAML==6.0.3
 botocore==1.42.97
 cryptography==48.0.1
+openai>=1.0.0

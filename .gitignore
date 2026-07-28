@@ -8,6 +8,8 @@ auth/bid_flow.json
 .q_token.json
 # OIDC public client secret (AWS published, not private)
 auth/oidc_client_secret.json
+# Stamped by scripts/setup.sh (install-dir REVISION marker)
+REVISION
 __pycache__/
 *.pyc
 .pytest_cache/

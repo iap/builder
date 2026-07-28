@@ -16,7 +16,7 @@ Send a prompt to Amazon Q (Claude) and return the answer.
 
 **Returns:** `{"success": true, "answer": "...", "conversation_id": "..."}` (conversation_id omitted when absent).
 
-**Note:** This path is chat/reasoning only. Q cannot execute Hermes tools from `ask_q`. Use the `-m builder` model path for tool calls.
+**Note:** This path is chat/reasoning only. Q cannot execute Hermes tools from `ask_q`. Use the `-m aws-builder` model path for tool calls.
 
 ---
 
