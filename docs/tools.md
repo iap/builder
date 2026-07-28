@@ -120,7 +120,7 @@ List available models and plugin tags.
 ```json
 {
   "success": true,
-  "models": ["claude-haiku-4.5", "claude-sonnet-4", "claude-sonnet-4.5"],
+  "models": ["auto", "claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5"],
   "tags": ["aws", "amazon-q", "claude", "chat", "builder-id", "auth"]
 }
 ```
@@ -149,7 +149,7 @@ Lightweight calibration snapshot: auth state, identity metadata, models, tags, a
   "success": true,
   "auth": {"authenticated": true, "phase": "authenticated", "token_expires_at": ..., "refreshed": false},
   "identity": {"token_type": "Bearer", "has_refresh_token": true, "scopes": [...], "expires_at": ...},
-  "models": ["claude-haiku-4.5", "..."],
+  "models": ["auto", "claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5"],
   "tags": ["aws", "..."],
   "render": {"render_mode": "cli", "theme": "default"}
 }

@@ -216,7 +216,7 @@ _TOOLS = (
                     "model": {
                         "type": "string",
                         "description": "Model to use; sent to Q as modelId. Defaults to 'auto' (Q picks). Named Claude variants are advertised but the account's entitlement decides which are usable.",
-                        "enum": ["auto", *list_models()],
+                        "enum": [*list_models()],
                     },
                     "conversation_id": {
                         "type": "string",

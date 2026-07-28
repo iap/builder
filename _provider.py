@@ -108,7 +108,7 @@ def register_provider(port: int) -> bool:
         logger.warning("builder: cannot import hermes_cli.config (%s)", exc)
         return False
 
-    models = _declared_models() or ["claude-haiku-4.5", "claude-sonnet-4", "claude-sonnet-4.5"]
+    models = _declared_models() or ["auto", "claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5"]
     default_model = models[0]
 
     # Best-effort: never let a malformed/unreadable config abort plugin

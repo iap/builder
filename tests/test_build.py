@@ -1081,22 +1081,24 @@ def test_plugin_model_enum_matches_provider_block():
     agree with the models declared in the provider block, so the TUI picker
     and the tool schema never drift apart.
 
-    Design: list_models() advertises the concrete Claude variants; 'auto' is
-    a valid Q modelId the adapter passes through, so it is added to the
-    ask_q schema enum (and the provider block) but intentionally excluded
-    from list_models() (it is not a concrete model)."""
+    Design: list_models() advertises all selectable models including
+    'auto' as a passthrough. Both list_models() and the provider block
+    include 'auto' plus the concrete Claude variants. The ask_q schema
+    enum also includes 'auto' so the TUI picker can surface it."""
     import sys
     sys.path.insert(0, ".")
     import backend, yaml
 
     catalog = set(backend.list_models())
+    # list_models() now includes "auto" as the first element (passthrough)
+    # plus all concrete Claude variants.
+    assert "auto" in catalog, "auto must be in list_models()"
     concrete = {"claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5"}
-    assert catalog == concrete, f"list_models concrete drift: {catalog ^ concrete}"
-    # provider block = concrete variants + 'auto' (passthrough)
-    expected_provider = concrete | {"auto"}
-    assert expected_provider == {"claude-sonnet-4.5", "claude-sonnet-4",
-                                 "claude-haiku-4.5", "auto"}
-    # ask_q schema enum includes auto
+    assert concrete <= catalog, f"missing concrete models in catalog: {concrete - catalog}"
+    # provider block = auto + concrete variants
+    expected_provider = {"auto", "claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5"}
+    assert catalog == expected_provider, f"provider block drift: {catalog ^ expected_provider}"
+    # ask_q schema enum includes auto and all concrete variants
     from __init__ import _TOOLS
     schema = next(s for name, s, *_ in _TOOLS if name == "ask_q")
     enum = schema["parameters"]["properties"]["model"]["enum"]

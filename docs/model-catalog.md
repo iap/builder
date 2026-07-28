@@ -6,10 +6,10 @@ Available models and how the catalog is resolved.
 
 | Model | Notes |
 |-------|-------|
-| `claude-haiku-4.5` | Fast, lightweight |
-| `claude-sonnet-4` | Balanced |
-| `claude-sonnet-4.5` | Latest Sonnet |
-| `auto` | Q picks the model server-side (default) |
+| `auto` | Q picks the model server-side (default, free tier) |
+| `claude-sonnet-4.5` | Latest Sonnet, highest capability |
+| `claude-sonnet-4` | Previous Sonnet, still capable |
+| `claude-haiku-4.5` | Fast, lightweight, most efficient |
 
 `claude-opus-*` is not offered — Amazon Q rejects it ("Model does not exist").
 
@@ -18,7 +18,14 @@ Available models and how the catalog is resolved.
 `backend.list_models()` resolves the catalog in this order:
 
 1. `models:` list in `plugin.yaml` (operator-editable, no code change needed).
-2. Built-in `STATIC_MODELS` fallback: `claude-haiku-4.5`, `claude-sonnet-4`, `claude-sonnet-4.5`.
+2\. Built-in `STATIC_MODELS` fallback (auto first, newest to oldest):
+
+```
+ auto
+ claude-sonnet-4.5
+ claude-sonnet-4
+ claude-haiku-4.5
+```
 
 The override is loaded lazily and cached on first call. Editing `plugin.yaml` takes effect on the next call without restarting Hermes.
 
@@ -32,9 +39,10 @@ Edit `plugin.yaml`:
 
 ```yaml
 models:
-  - claude-haiku-4.5
-  - claude-sonnet-4
+  - auto
   - claude-sonnet-4.5
+  - claude-sonnet-4
+  - claude-haiku-4.5
 ```
 
 The `ask_q` tool's `model` parameter enum and the `providers.aws-builder` model list in `config.yaml` are both derived from `list_models()`, so they stay in sync automatically.
