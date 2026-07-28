@@ -12,7 +12,7 @@ Hermes Agent
   │                                              auth/sso_oidc.py
   │                                              (token store)
   │
-  └── -m builder (model path)
+  └── -m aws-builder (model path)
         │
         └── adapter.py (:8088, loopback only)
               │  OpenAI /v1/chat/completions
@@ -98,7 +98,7 @@ Hermes agent
 
 Q cannot execute Hermes tools from this path — it is chat/reasoning only.
 
-## Data flow: `-m builder` model path
+## Data flow: `-m aws-builder` model path
 
 ```
 Hermes openai_chat transport

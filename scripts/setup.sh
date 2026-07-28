@@ -128,7 +128,7 @@ else:
     print("✓ builder already in plugins.enabled")
 PY
   echo
-  echo "NEXT: restart Hermes, then in TUI/CLI use '-m builder' or pick 'AWS Builder'."
+  echo "NEXT: restart Hermes, then in TUI/CLI use '-m aws-builder' or pick 'AWS Builder'."
   echo "      (login once with: bid_login  — approve in browser)"
 else
   echo "✗ insert failed; restored from backup." >&2

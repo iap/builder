@@ -506,7 +506,7 @@ def start(host: str = HOST, port: int = DEFAULT_PORT) -> tuple[ThreadingHTTPServ
         raise OSError(
             f"builder adapter cannot bind {bind_host}:{port}{owner} — port already "
             f"in use by another process. Builder stays in tool-only mode; the "
-            f"'-m builder' chat path is unavailable until that port is free."
+            f"'-m aws-builder' chat path is unavailable until that port is free."
         )
 
     srv = _FamilyAwareHTTPServer((bind_host, port), _Handler)

@@ -47,7 +47,7 @@ python3 ${HERMES_HOME:-$HOME/.hermes}/plugins/builder/build_cli.py login
 ask_q prompt="explain recursion"
 
 # as a selectable model
-hermes chat -m builder
+hermes chat -m aws-builder
 # or pick "AWS Builder" in the TUI
 ```
 
