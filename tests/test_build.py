@@ -534,7 +534,7 @@ def test_mirror_path_prefers_canonical_build(monkeypatch, tmp_path):
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     # Canonical (builder/auth) file present -> read resolves to it.
-    canonical = tmp_path / "plugins" / "builder" / "auth" / "bid_token.json"
+    canonical = tmp_path / "builder" / "auth" / "bid_token.json"
     canonical.parent.mkdir(parents=True)
     canonical.write_text("{}")
     assert sso_oidc._token_path() == canonical
@@ -552,7 +552,7 @@ def test_mirror_path_ignores_legacy_aws_build_dir(monkeypatch, tmp_path):
     legacy.parent.mkdir(parents=True)
     legacy.write_text("{}")
     assert sso_oidc._token_path() == (
-        tmp_path / "plugins" / "builder" / "auth" / "bid_token.json"
+        tmp_path / "builder" / "auth" / "bid_token.json"
     )
 
 
@@ -577,18 +577,48 @@ def test_legacy_dotfile_token_migrates_to_auth_dir(monkeypatch, tmp_path):
     tok = sso_oidc._load_token()
     assert tok is not None
     assert tok["access_token"] == "LEGACY"
-    # migrated into the new canonical location (plugins/builder/auth/).
-    new_path = tmp_path / "plugins" / "builder" / "auth" / "bid_token.json"
+    # migrated into the new canonical location (<HERMES_HOME>/builder/auth/).
+    new_path = tmp_path / "builder" / "auth" / "bid_token.json"
     assert new_path.exists(), "legacy token must be migrated to auth/"
     assert not legacy.exists(), "legacy dotted file should be removed after migrate"
     assert json.loads(new_path.read_text())["access_token"] == "LEGACY"
+
+
+def test_plugin_install_dir_token_migrates_to_hermes_root(monkeypatch, tmp_path):
+    """Backward-compat: a token left in the OLD install-dir location
+    (plugins/builder/auth/bid_token.json) must be read AND migrated into the
+    new location (<HERMES_HOME>/builder/auth/). This is the relocation that
+    makes a dashboard force-reinstall safe (the old spot gets rmtree'd on
+    reinstall)."""
+    from auth import sso_oidc
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    old_base = tmp_path / "plugins" / "builder" / "auth"
+    old_base.mkdir(parents=True)
+    old_base.joinpath("bid_token.json").write_text(
+        json.dumps({"access_token": "FROM_INSTALL_DIR", "expires_at": time.time() + 3600})
+    )
+    old_base.joinpath("bid_registration.json").write_text(
+        json.dumps({"device_code": "x"})
+    )
+
+    tok = sso_oidc._load_token()
+    assert tok is not None
+    assert tok["access_token"] == "FROM_INSTALL_DIR"
+    # migrated into the new safe location under HERMES_HOME root (not plugins/).
+    new_token = tmp_path / "builder" / "auth" / "bid_token.json"
+    new_reg = tmp_path / "builder" / "auth" / "bid_registration.json"
+    assert new_token.exists(), "token must migrate out of the install dir"
+    assert new_reg.exists(), "registration must migrate out of the install dir"
+    assert not old_base.joinpath("bid_token.json").exists(), "old file removed after migrate"
+    assert json.loads(new_token.read_text())["access_token"] == "FROM_INSTALL_DIR"
 
 
 def test_get_status_prefers_newest_valid_token(monkeypatch, tmp_path):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "builder"
+    base = tmp_path / "builder"
     base.mkdir(parents=True)
     (base / "auth").mkdir(parents=True, exist_ok=True)
     old = {"access_token": "OLD", "expires_at": time.time() + 3600}
@@ -619,7 +649,7 @@ def test_get_status_refreshes_expired_token(monkeypatch, tmp_path):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "builder"
+    base = tmp_path / "builder"
     base.mkdir(parents=True)
     (base / "auth").mkdir(parents=True, exist_ok=True)
     # Expired access token but with a usable refresh token on disk.
@@ -656,7 +686,7 @@ def test_get_status_reports_expired_when_refresh_dead(monkeypatch, tmp_path):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "builder"
+    base = tmp_path / "builder"
     base.mkdir(parents=True)
     (base / "auth").mkdir(parents=True, exist_ok=True)
     (base / "auth" / "bid_token.json").write_text(
@@ -682,7 +712,7 @@ def test_get_status_no_refresh_when_valid(monkeypatch, tmp_path):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "builder"
+    base = tmp_path / "builder"
     base.mkdir(parents=True)
     (base / "auth").mkdir(parents=True, exist_ok=True)
     (base / "auth" / "bid_token.json").write_text(
@@ -706,7 +736,7 @@ def test_get_status_expired_no_refresh_token(monkeypatch, tmp_path):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "builder"
+    base = tmp_path / "builder"
     base.mkdir(parents=True)
     (base / "auth").mkdir(parents=True, exist_ok=True)
     (base / "auth" / "bid_token.json").write_text(
@@ -732,7 +762,7 @@ def test_get_token_refresh_persists_to_origin_store(monkeypatch, tmp_path):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "builder"
+    base = tmp_path / "builder"
     base.mkdir(parents=True)
     (base / "auth").mkdir(parents=True, exist_ok=True)
     sso_file = base / "auth" / "bid_token.json"
@@ -1129,7 +1159,7 @@ def test_cli_login_prints_copyable_link_and_polls_to_success(monkeypatch, tmp_pa
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "builder"
+    base = tmp_path / "builder"
     (base / "auth").mkdir(parents=True, exist_ok=True)
 
     # start_login returns a pending flow (no token yet).
@@ -1182,7 +1212,7 @@ def test_cli_login_already_authenticated(monkeypatch, tmp_path, capsys):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "builder"
+    base = tmp_path / "builder"
     (base / "auth").mkdir(parents=True, exist_ok=True)
     (base / "auth" / "bid_token.json").write_text(
         json.dumps({"access_token": "T", "refresh_token": "R", "expires_at": time.time() + 3600})
@@ -1212,7 +1242,7 @@ def test_cli_status_and_whoami_report_store_state(monkeypatch, tmp_path, capsys)
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "builder"
+    base = tmp_path / "builder"
     (base / "auth").mkdir(parents=True, exist_ok=True)
     (base / "auth" / "bid_token.json").write_text(
         json.dumps({"access_token": "T", "refresh_token": "R", "expires_at": time.time() + 3600,
@@ -1234,7 +1264,7 @@ def test_cli_logout_clears_store(monkeypatch, tmp_path, capsys):
     from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    base = tmp_path / "plugins" / "builder"
+    base = tmp_path / "builder"
     (base / "auth").mkdir(parents=True, exist_ok=True)
     (base / "auth" / "bid_token.json").write_text(
         json.dumps({"access_token": "T", "refresh_token": "R", "expires_at": time.time() + 3600})

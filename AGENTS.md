@@ -43,6 +43,7 @@ tests/
 These invariants must never be broken:
 
 - **One token store.** `auth/sso_oidc.py` owns `auth/bid_token.json` exclusively. `backend.py` calls `sso_oidc.get_status()` / `sso_oidc._load_token()` — it never writes a token file itself. No second store, no "newest wins" resolver.
+  - Token files live under `<HERMES_HOME>/builder/auth/` (NOT `<HERMES_HOME>/plugins/builder/auth/`). This is deliberate: a dashboard "force reinstall" does `shutil.rmtree` on the plugin dir and would otherwise wipe the live Builder ID login. `sso_oidc` migrates any token found in the old install-dir location to the new safe path on first read.
 - **One model catalog.** `backend.list_models()` is the single source. `_provider.py`, `__init__.py` (ask_q schema enum), and `plugin.yaml` all delegate to it. Never hardcode a model list in a second place.
 - **One provider slug.** `_provider.PROVIDER_SLUG = "aws-builder"`. `setup.sh`, `uninstall.sh`, and `_provider.py` all use this slug. Do not introduce a second slug.
 - **No raw token in tool output.** Tool handlers must never return `access_token`, `client_secret`, or `refresh_token`. `verify.py` enforces this — keep it green.

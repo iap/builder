@@ -94,7 +94,7 @@ def cmd_login(args: argparse.Namespace) -> int:
         print("error: login was not approved in time. Re-run `login` to try again.", file=sys.stderr)
         return 1
 
-    print("Authenticated. Token stored at the plugin's auth/bid_token.json.")
+    print("Authenticated. Token stored at $HERMES_HOME/builder/auth/bid_token.json.")
     print(f"  expires_at: {_fmt_iso(status.get('token_expires_at'))}")
     return 0
 

@@ -37,7 +37,7 @@ A 400/401 from Q with "invalid" in the body triggers one silent refresh-then-ret
 
 ## Token store
 
-Single file: `$HERMES_HOME/plugins/builder/auth/bid_token.json`
+Single file: `$HERMES_HOME/builder/auth/bid_token.json`
 
 ```json
 {
@@ -90,8 +90,9 @@ The CLI shares the exact same `auth/bid_token.json` store as the in-agent tools.
 ## Legacy migration
 
 On first read, `_read_secret()` checks for legacy files:
+- `plugins/builder/auth/bid_token.json` (previous install-dir location — the store was relocated out of the plugin dir so a dashboard force-reinstall can't wipe it)
 - `plugins/builder/.bid_token.json` (old dotted name in plugin root)
 - `plugins/aws-build/auth/bid_token.json` (old plugin directory name)
 - `plugins/aws-build/.bid_token.json`
 
-If found, the file is copied to the canonical location and the legacy file is deleted. No re-login required.
+If found, the file is copied to the canonical location (`$HERMES_HOME/builder/auth/`) and the legacy file is deleted. No re-login required.

@@ -117,7 +117,7 @@ Tool calls actually fire in this path.
 
 ## Secret file layout
 
-All under `$HERMES_HOME/plugins/builder/auth/`, chmod 600:
+All under `$HERMES_HOME/builder/auth/`, chmod 600:
 
 | File | Contents |
 |------|----------|

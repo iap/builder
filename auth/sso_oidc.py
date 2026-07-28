@@ -69,14 +69,12 @@ def _home() -> Path:
     return Path(__file__).resolve().parent.parent.parent.parent
 
 
-# Canonical directory for this plugin. Matches the plugin's actual
-# directory name (`builder`). Secrets live in an `auth/` subdir (scoped to
-# this plugin, NOT Hermes core's `auth/` namespace) as plain, non-hidden
-# JSON files written chmod 600.
+# Canonical directory name for this plugin (matches the install dir under
+# ~/.hermes/plugins/builder). Used only for the legacy migration fallback.
 _PLUGIN_DIR_NAME = "builder"
 _AUTH_DIR_NAME = "auth"
 
-# De-dotted, non-hidden secret filenames under <plugin>/auth/.
+# De-dotted, non-hidden secret filenames under <HERMES_HOME>/builder/auth/.
 _REG_FILENAME = "bid_registration.json"
 _TOKEN_FILENAME = "bid_token.json"
 _FLOW_FILENAME = "bid_flow.json"
@@ -87,14 +85,51 @@ _LEGACY_REG_FILENAME = ".bid_registration.json"
 _LEGACY_TOKEN_FILENAME = ".bid_token.json"
 _LEGACY_FLOW_FILENAME = ".bid_flow.json"
 
-
+# The token store lives OUTSIDE the plugin install dir (under
+# ~/.hermes/builder/auth/, not ~/.hermes/plugins/builder/auth/). This is
+# deliberate: a dashboard "force reinstall" does `shutil.rmtree` on the
+# plugin directory (hermes_cli/plugins_cmd.py:_install_plugin_core), which
+# would otherwise wipe the user's live Builder ID login. Keeping secrets in
+# HERMES_HOME root (not under plugins/) makes reinstalls safe by default.
 def _auth_dir() -> Path:
-    return _home() / "plugins" / _PLUGIN_DIR_NAME / _AUTH_DIR_NAME
+    return _home() / _PLUGIN_DIR_NAME / _AUTH_DIR_NAME
 
 
 def _canonical_path(filename: str) -> Path:
-    """Return the canonical secret path under `plugins/builder/auth/`."""
+    """Return the canonical secret path under `<HERMES_HOME>/builder/auth/`."""
     return _auth_dir() / filename
+
+
+# One-time migration: move ALL secret files out of the old install-dir location
+# (plugins/builder/auth/) into the new safe location (<HERMES_HOME>/builder/auth/).
+# The old spot is inside the plugin directory, which a dashboard "force reinstall"
+# deletes wholesale (shutil.rmtree in hermes_cli/plugins_cmd.py:_install_plugin_core),
+# so leaving secrets there risks wiping the live Builder ID login. The scan runs
+# lazily (from _read_secret) and is naturally idempotent: once migrated the old dir
+# is gone, so a repeat scan is a no-op. The source path is resolved fresh from
+# _home() each call so it honours a changed HERMES_HOME (e.g. under tests).
+def _migrate_install_dir_secrets() -> None:
+    src = _home() / "plugins" / _PLUGIN_DIR_NAME / _AUTH_DIR_NAME
+    if not src.is_dir():
+        return
+    for fname in (_TOKEN_FILENAME, _REG_FILENAME, _FLOW_FILENAME):
+        old = src / fname
+        if old.exists() and not _canonical_path(fname).exists():
+            try:
+                data = json.loads(old.read_text())
+            except Exception:  # noqa: BLE001 - unreadable => leave for next call
+                continue
+            _write_secret(_canonical_path(fname), data)
+            try:
+                old.unlink()
+            except OSError:  # noqa: BLE001
+                pass
+    # Remove the now-empty old auth dir if nothing else remains.
+    try:
+        if src.is_dir() and not any(src.iterdir()):
+            src.rmdir()
+    except OSError:  # noqa: BLE001
+        pass
 
 
 def _reg_path() -> Path:
@@ -121,13 +156,15 @@ def _write_secret(path: Path, data: dict) -> None:
 
 
 def _read_secret(path: Path) -> Optional[dict]:
-    """Read a secret, with a one-time legacy (dotted) path fallback + migrate.
+    """Read a secret, migrating it out of the old install-dir location first.
 
-    If the canonical (de-dotted) file under `auth/` is absent but a legacy
-    `.bid_*.json` exists in the plugin root, read it and copy it into the new
-    location so an existing session survives the layout change without
-    re-login.
+    On first read, any secret still living under the old
+    ``plugins/builder/auth/`` spot is moved into the new safe
+    ``<HERMES_HOME>/builder/auth/`` location (so a dashboard force-reinstall
+    can no longer wipe the live login). Legacy dotted-name and old
+    ``aws-build`` dir fallbacks are also honoured.
     """
+    _migrate_install_dir_secrets()
     if path.exists():
         try:
             return json.loads(path.read_text())
@@ -137,7 +174,12 @@ def _read_secret(path: Path) -> Optional[dict]:
     # (plugins/builder/.bid_token.json), not inside auth/. Also support the older
     # plugin directory name `aws-build` so a directory rename (aws-build -> builder)
     # migrates an existing session's secrets without forcing a re-login.
+    # Finally, support the previous canonical location under the plugin install
+    # dir (plugins/builder/auth/) -- this plugin moved its token store OUT of the
+    # install dir (to <HERMES_HOME>/builder/auth/) so a dashboard force-reinstall
+    # can no longer wipe the live login. Migrate existing tokens on first read.
     legacy_candidates = [
+        _home() / "plugins" / _PLUGIN_DIR_NAME / _AUTH_DIR_NAME / path.name,
         _home() / "plugins" / _PLUGIN_DIR_NAME / ("." + path.name),
         _home() / "plugins" / "aws-build" / "auth" / path.name,
         _home() / "plugins" / "aws-build" / ("." + path.name),
