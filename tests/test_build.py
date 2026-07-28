@@ -614,6 +614,51 @@ def test_plugin_install_dir_token_migrates_to_hermes_root(monkeypatch, tmp_path)
     assert json.loads(new_token.read_text())["access_token"] == "FROM_INSTALL_DIR"
 
 
+def test_migrate_install_dir_partial_migration(monkeypatch, tmp_path):
+    """Backward-compat partial migration: old install-dir has a subset
+    of secret files, new canonical dir already has another. Only the
+    missing ones should be migrated; existing canonical files must NOT
+    be overwritten even if the old dir contains a conflicting value.
+
+    Regression guard: after PR #66 migration, a reinstall that leaves
+    a stale auth/ dir with bid_token.json + an old-format
+    bid_registration.json must pick up the missing token into the new
+    location without clobbering the canonical registration.
+    """
+    from auth import sso_oidc
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    old_base = tmp_path / "plugins" / "builder" / "auth"
+    old_base.mkdir(parents=True)
+    # Old dir has the token AND a conflicting old-format registration.
+    old_base.joinpath("bid_token.json").write_text(
+        json.dumps({"access_token": "FROM_OLD_DIR", "expires_at": time.time() + 3600})
+    )
+    old_base.joinpath("bid_registration.json").write_text(
+        json.dumps({"device_code": "OLD_CONFLICTING_REG"})
+    )
+    # New canonical dir already has a fresh registration (from a prior
+    # migration or a separate auth event). The conflicting old file
+    # in the old dir must NOT overwrite it.
+    new_base = tmp_path / "builder" / "auth"
+    new_base.mkdir(parents=True)
+    new_base.joinpath("bid_registration.json").write_text(
+        json.dumps({"device_code": "EXISTING_REG"})
+    )
+
+    tok = sso_oidc._load_token()
+    assert tok is not None
+    assert tok["access_token"] == "FROM_OLD_DIR"
+    # Canonical registration was NOT overwritten by the old conflicting
+    # value; the guard `if old.exists() and not _canonical_path(fname).exists()`
+    # skips files already present in the new location.
+    new_reg = new_base / "bid_registration.json"
+    assert new_reg.exists()
+    assert json.loads(new_reg.read_text())["device_code"] == "EXISTING_REG"
+    # Token file was migrated (missing from canonical dir) and old removed.
+    assert not old_base.joinpath("bid_token.json").exists()
+
+
 def test_get_status_prefers_newest_valid_token(monkeypatch, tmp_path):
     from auth import sso_oidc
 
