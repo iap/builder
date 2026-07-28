@@ -4,7 +4,7 @@
 > Unofficial, experimental community plugin for the Hermes Agent. Authenticates
 > via Amazon Builder ID (AWS BID). Not affiliated with or endorsed by Amazon.
 
-Lets the Hermes Agent talk to **Amazon Q Developer (Claude models)** through a direct HTTPS backend — no HTTP server, no subprocess. Hermes drives the agentic loop; this plugin exposes Q as a chat tool and a selectable model.
+Lets the Hermes Agent talk to **Amazon Q Developer (Claude models)** through a direct HTTPS backend — no external daemon, no subprocess. Hermes drives the agentic loop; this plugin exposes Q as a chat tool and a selectable model. When selected as a model, a lightweight **in-process** OpenAI-compatible adapter (loopback `:8088`) translates between Hermes and Q; it is a thread inside the Hermes session, not a standalone server.
 
 **Repository:** https://github.com/iap/builder.git
 
@@ -26,7 +26,7 @@ bid_login   # approve the user_code in your browser
 
 # 5. use
 ask_q prompt="explain recursion"
-hermes chat -m builder
+hermes chat -m aws-builder
 ```
 
 ## Tools
@@ -45,7 +45,7 @@ hermes chat -m builder
 ## Two usage paths
 
 - **`ask_q` tool** — chat/reasoning only. Q cannot execute Hermes tools from this path.
-- **`-m builder` model** — tool calls fire. The adapter translates `<tool_call>` blocks to OpenAI `tool_calls` frames so Hermes's agentic loop (MCP / skills / native tools) runs.
+- **`-m aws-builder` model** — tool calls fire. The adapter translates `<tool_call>` blocks to OpenAI `tool_calls` frames so Hermes's agentic loop (MCP / skills / native tools) runs.
 
 ## Uninstall
 

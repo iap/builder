@@ -77,6 +77,12 @@ Registers all tools via `ctx.register_tool()` and starts the adapter on `registe
 
 FastAPI router mounted at `/api/plugins/builder/`. Reuses `auth/sso_oidc` directly so the dashboard and in-conversation `bid_*` tools share one auth state.
 
+> **Build-artifact note:** `dashboard/dist/index.js` and `dashboard/dist/style.css` are
+> prebuilt, committed artifacts. Their frontend source is not yet in this repo, so
+> they cannot be rebuilt from source here — edit them directly for now, or add a
+> `dashboard/` build step (and `package.json` + `src/`) before relying on CI to
+> regenerate them. Treat them as opaque until that exists.
+
 ## Data flow: `ask_q` tool path
 
 ```
