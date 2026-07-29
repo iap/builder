@@ -82,7 +82,20 @@ All auth logic lives in `auth/sso_oidc.py`. The public API (`start_login`, `get_
 
 ### Changing provider registration
 
-`_provider.py` detects ownership via `_is_our_entry()` (loopback base_url + provider name). Do not add private marker keys (e.g. `_builder_managed`) — Hermes core logs "unknown config keys ignored" for any key it doesn't recognise.
+`_provider.py` detects ownership via `_is_our_entry()` (loopback base_url only).
+Do not add private marker keys (e.g. `_builder_managed`) — Hermes core logs
+"unknown config keys ignored" for any key it doesn't recognise.
+
+### Safe YAML surgery in setup.sh / uninstall.sh
+
+These scripts rewrite `~/.hermes/config.yaml` using `yaml.safe_load`/`yaml.safe_dump`.
+They must only touch keys they own (`providers.aws-builder`, `plugins.enabled`,
+toolset lists under `platform_toolsets`/`known_plugin_toolsets`). ALL other top-level
+keys (`mcp_servers`, `mcp`, `memory`, `auxiliary`, `moa`, etc.) must be left
+completely untouched. Never write the entire config back from scratch — always
+modify the parsed dict and dump it, which preserves unknown keys through the
+round-trip. When adding new config sections the plugin owns, add them explicitly
+to the YAML-aware logic, not by rewriting the whole file.
 
 ## Running tests
 
