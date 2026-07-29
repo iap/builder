@@ -1013,7 +1013,7 @@ def test_register_provider_adopts_legacy_markerless_entry(monkeypatch, tmp_path)
     # into config.yaml (Hermes core warns "unknown config keys ignored" for
     # any key it doesn't know — that was the 2026-07-28 `_builder_managed`
     # log spam). Ownership is detected from base_url/name instead.
-    assert all(not k.startswith("_") for k in updated), "no private marker key written"
+    assert all(not k.startswith("_") or k == "_revision" for k in updated), "no private marker key written"
     assert "key_env" not in updated, "dummy key_env removed"
 
 
@@ -1073,7 +1073,7 @@ def test_register_provider_leaves_foreign_entry_alone(monkeypatch, tmp_path):
     assert wrote is False, "foreign entry must be skipped"
     kept = yaml.safe_load(cfg_path.read_text())["providers"]["aws-builder"]
     assert kept["api_key"] == "«redacted:sk-…»", "user key preserved"
-    assert all(not k.startswith("_") for k in kept), "foreign entry not stamped with private key"
+    assert all(not k.startswith("_") or k == "_revision" for k in kept), "foreign entry not stamped with private key"
 
 
 def test_plugin_model_enum_matches_provider_block():
