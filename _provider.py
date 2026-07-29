@@ -81,19 +81,18 @@ def _is_our_base_url(base: str) -> bool:
 def _is_our_entry(entry: Any) -> bool:
     """True if an existing ``providers.<slug>`` entry belongs to this plugin.
 
-    Detection is based solely on observable, documented fields — the adapter's
-    loopback ``base_url`` (127.0.0.1/localhost:<adapter port>) and our provider
-    ``name`` — so we never need a private marker key in config.yaml (which
-    Hermes core flags as "unknown config keys ignored"). Returns True for
-    entries we wrote *and* for entries an old setup.sh wrote (same adapter
-    endpoint), so both are adopted/rewritten; False for a genuinely
-    foreign/user-managed entry.
+    Detection is based solely on observable, documented fields —
+    the adapter's loopback ``base_url`` (127.0.0.1/localhost:<adapter port>).
+    No private marker key is needed in config.yaml (which Hermes core flags as
+    "unknown config keys ignored"). Returns True for entries we wrote
+    *and* for entries an old setup.sh wrote (same adapter endpoint),
+    so both are adopted/rewritten; False for a genuinely foreign/user-managed
+    entry (different base_url, even if by coincidence named "AWS Builder").
     """
     if not isinstance(entry, dict):
         return False
     base = entry.get("base_url") or ""
-    name = entry.get("name") or ""
-    return bool(_is_our_base_url(base) or name == PROVIDER_NAME)
+    return _is_our_base_url(base)
 
 
 def register_provider(port: int) -> bool:
