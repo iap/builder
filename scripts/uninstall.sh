@@ -82,6 +82,19 @@ for key in ("platform_toolsets", "known_plugin_toolsets"):
             if isinstance(val, list) and "builder" in val:
                 block[sub] = [x for x in val if x != "builder"]
                 removed_lists.append(f"{key}.{sub}")
+
+# 4) providers entry — remove ONLY the aws-builder provider block.
+#    User-managed custom providers (different base_url/name) are
+#    left untouched; this only removes the provider we created.
+providers = c.get("providers")
+if isinstance(providers, dict):
+    for slug in ("aws-builder", "builder"):
+        if slug in providers:
+            del providers[slug]
+            if not providers:
+                c.pop("providers", None)
+            print(f"✓ removed providers: {slug}")
+
 if removed_lists:
     print("✓ removed builder from toolset lists:", ", ".join(removed_lists))
 
