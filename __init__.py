@@ -67,15 +67,16 @@ def _error(message: str, code: str = "error") -> str:
 
 
 def _check_available() -> bool:
-    try:
-        from .auth import get_status  # noqa: F401
-        return True
-    except ImportError:
-        try:
-            from auth import get_status  # noqa: F401
-            return True
-        except ImportError:
-            return False
+    """Placeholder check_fn — always True.
+
+    The real auth/import guard is per-tool: each handler wraps its own
+    calls in try/except and surfaces errors cleanly (see
+    _handle_ask_q, _handle_bid_status, etc.). Maintaining a separate
+    pre-flight check that only tests whether get_status can be imported
+    (not whether the user is authenticated) was a false positive gate
+    that unnecessarily blocked read-only tools like q_debug and models
+    even when the plugin was fully functional."""
+    return True
 
 
 # --- tool handlers ---
