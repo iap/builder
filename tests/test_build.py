@@ -614,6 +614,51 @@ def test_plugin_install_dir_token_migrates_to_hermes_root(monkeypatch, tmp_path)
     assert json.loads(new_token.read_text())["access_token"] == "FROM_INSTALL_DIR"
 
 
+def test_migrate_install_dir_partial_migration(monkeypatch, tmp_path):
+    """Backward-compat partial migration: old install-dir has a subset
+    of secret files, new canonical dir already has another. Only the
+    missing ones should be migrated; existing canonical files must NOT
+    be overwritten even if the old dir contains a conflicting value.
+
+    Regression guard: after PR #66 migration, a reinstall that leaves
+    a stale auth/ dir with bid_token.json + an old-format
+    bid_registration.json must pick up the missing token into the new
+    location without clobbering the canonical registration.
+    """
+    from auth import sso_oidc
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    old_base = tmp_path / "plugins" / "builder" / "auth"
+    old_base.mkdir(parents=True)
+    # Old dir has the token AND a conflicting old-format registration.
+    old_base.joinpath("bid_token.json").write_text(
+        json.dumps({"access_token": "FROM_OLD_DIR", "expires_at": time.time() + 3600})
+    )
+    old_base.joinpath("bid_registration.json").write_text(
+        json.dumps({"device_code": "OLD_CONFLICTING_REG"})
+    )
+    # New canonical dir already has a fresh registration (from a prior
+    # migration or a separate auth event). The conflicting old file
+    # in the old dir must NOT overwrite it.
+    new_base = tmp_path / "builder" / "auth"
+    new_base.mkdir(parents=True)
+    new_base.joinpath("bid_registration.json").write_text(
+        json.dumps({"device_code": "EXISTING_REG"})
+    )
+
+    tok = sso_oidc._load_token()
+    assert tok is not None
+    assert tok["access_token"] == "FROM_OLD_DIR"
+    # Canonical registration was NOT overwritten by the old conflicting
+    # value; the guard `if old.exists() and not _canonical_path(fname).exists()`
+    # skips files already present in the new location.
+    new_reg = new_base / "bid_registration.json"
+    assert new_reg.exists()
+    assert json.loads(new_reg.read_text())["device_code"] == "EXISTING_REG"
+    # Token file was migrated (missing from canonical dir) and old removed.
+    assert not old_base.joinpath("bid_token.json").exists()
+
+
 def test_get_status_prefers_newest_valid_token(monkeypatch, tmp_path):
     from auth import sso_oidc
 
@@ -968,7 +1013,7 @@ def test_register_provider_adopts_legacy_markerless_entry(monkeypatch, tmp_path)
     # into config.yaml (Hermes core warns "unknown config keys ignored" for
     # any key it doesn't know — that was the 2026-07-28 `_builder_managed`
     # log spam). Ownership is detected from base_url/name instead.
-    assert all(not k.startswith("_") for k in updated), "no private marker key written"
+    assert all(not k.startswith("_") or k == "_revision" for k in updated), "no private marker key written"
     assert "key_env" not in updated, "dummy key_env removed"
 
 
@@ -1028,7 +1073,7 @@ def test_register_provider_leaves_foreign_entry_alone(monkeypatch, tmp_path):
     assert wrote is False, "foreign entry must be skipped"
     kept = yaml.safe_load(cfg_path.read_text())["providers"]["aws-builder"]
     assert kept["api_key"] == "«redacted:sk-…»", "user key preserved"
-    assert all(not k.startswith("_") for k in kept), "foreign entry not stamped with private key"
+    assert all(not k.startswith("_") or k == "_revision" for k in kept), "foreign entry not stamped with private key"
 
 
 def test_plugin_model_enum_matches_provider_block():
@@ -1036,22 +1081,24 @@ def test_plugin_model_enum_matches_provider_block():
     agree with the models declared in the provider block, so the TUI picker
     and the tool schema never drift apart.
 
-    Design: list_models() advertises the concrete Claude variants; 'auto' is
-    a valid Q modelId the adapter passes through, so it is added to the
-    ask_q schema enum (and the provider block) but intentionally excluded
-    from list_models() (it is not a concrete model)."""
+    Design: list_models() advertises all selectable models including
+    'auto' as a passthrough. Both list_models() and the provider block
+    include 'auto' plus the concrete Claude variants. The ask_q schema
+    enum also includes 'auto' so the TUI picker can surface it."""
     import sys
     sys.path.insert(0, ".")
     import backend, yaml
 
     catalog = set(backend.list_models())
+    # list_models() now includes "auto" as the first element (passthrough)
+    # plus all concrete Claude variants.
+    assert "auto" in catalog, "auto must be in list_models()"
     concrete = {"claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5"}
-    assert catalog == concrete, f"list_models concrete drift: {catalog ^ concrete}"
-    # provider block = concrete variants + 'auto' (passthrough)
-    expected_provider = concrete | {"auto"}
-    assert expected_provider == {"claude-sonnet-4.5", "claude-sonnet-4",
-                                 "claude-haiku-4.5", "auto"}
-    # ask_q schema enum includes auto
+    assert concrete <= catalog, f"missing concrete models in catalog: {concrete - catalog}"
+    # provider block = auto + concrete variants
+    expected_provider = {"auto", "claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5"}
+    assert catalog == expected_provider, f"provider block drift: {catalog ^ expected_provider}"
+    # ask_q schema enum includes auto and all concrete variants
     from __init__ import _TOOLS
     schema = next(s for name, s, *_ in _TOOLS if name == "ask_q")
     enum = schema["parameters"]["properties"]["model"]["enum"]

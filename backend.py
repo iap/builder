@@ -417,9 +417,10 @@ def _extract_answer_with_conversation_id(response: requests.Response) -> tuple[s
 # service model (live probes return 404). So we keep this static list and treat
 # any future live fetch as a best-effort override.
 STATIC_MODELS = [
-    "claude-haiku-4.5",
-    "claude-sonnet-4",
+    "auto",
     "claude-sonnet-4.5",
+    "claude-sonnet-4",
+    "claude-haiku-4.5",
 ]
 
 _PLUGIN_YAML = Path(__file__).resolve().parent / "plugin.yaml"

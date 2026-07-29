@@ -48,11 +48,19 @@ fi
 # keys like `plugins.entries.builder:` — a loose match there caused setup.sh
 # to falsely report "already present" and skip (re)writing the provider entry
 # even when providers.aws-builder was actually absent (see issue from #26).
-if grep -qE '^[[:space:]]*aws-builder:' "$CONFIG"; then
-  echo "✓ providers: aws-builder already present in $CONFIG — nothing to do."
-  echo "  Restart Hermes if you haven't since installing the plugin."
-  exit 0
-fi
+#
+# IMPORTANT: even when the provider block exists, we still run the Python
+# updater below. This ensures that if the model catalog changes (new models
+# added, models removed, default model changed), config.yaml is always
+# brought up to date. The updater merges the current catalog with any
+# user-customized fields (name, api_key, etc.) so nothing is lost.
+#
+# Previously setup.sh skipped the entire update when the provider key
+# was already present, which left config.yaml stale after plugin upgrades.
+
+# Always run the Python updater so config.yaml stays current with the
+# plugin's declared model catalog (including new models, default model
+# changes, and the _revision bump that forces a re-read).
 
 # Backup
 cp "$CONFIG" "$BACKUP"
@@ -76,14 +84,74 @@ cat > "$BLOCK_FILE" <<EOF
 EOF
 
 python3 - "$CONFIG" "$BLOCK_FILE" <<'PY'
-import sys
-cfg, blockfile = sys.argv[1], sys.argv[2]
+import sys, yaml
+
+cfg_path, blockfile = sys.argv[1], sys.argv[2]
 block = open(blockfile).read().rstrip("\n")
-lines = open(cfg).read().splitlines()
-if any(l.strip() == "aws-builder:" for l in lines):
-    sys.exit(0)  # idempotent guard (shell already checked)
-# Insert inside an existing providers: block, OR append a new providers:
-# block at EOF if none exists (common when config has no providers: yet).
+
+with open(cfg_path) as f:
+    raw = f.read()
+
+# If aws-builder already exists, update it in place rather than skipping.
+# This ensures config.yaml always reflects the current model catalog
+# (including newly added models like 'auto' after plugin upgrades).
+if "aws-builder:" in raw:
+    c = yaml.safe_load(raw) or {}
+    providers = c.setdefault("providers", {})
+
+    # Parse the block to extract the model list.
+    new_models = {}
+    current_model = None
+    in_models = False
+    for line in block.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("model:"):
+            current_model = stripped.split(":", 1)[1].strip()
+        elif stripped == "models:":
+            in_models = True
+        elif in_models and stripped.startswith("- "):
+            m = stripped[2:].strip()
+            new_models[m] = {}
+        elif in_models and stripped and not stripped.startswith("-") and not stripped.startswith("#"):
+            # key: {} entry
+            if ":" in stripped:
+                k = stripped.split(":")[0].strip()
+                if k and k != "":
+                    new_models[k] = {}
+        elif in_models and not stripped:
+            pass  # blank line within models block
+
+    existing = providers.get("aws-builder", {})
+    if isinstance(existing, dict):
+        # Preserve user-customized fields (name, api_key, etc.) but
+        # update the model catalog and transport/base_url.
+        existing["models"] = new_models
+        if current_model:
+            existing["model"] = current_model
+        # Keep the existing base_url or set the default
+        existing.setdefault("base_url", "http://localhost:8088/v1")
+        existing.setdefault("transport", "openai_chat")
+        existing.setdefault("api_key", "no-key-required")
+        providers["aws-builder"] = existing
+    else:
+        # Existing entry is not a dict (unlikely but guard).
+        providers["aws-builder"] = {
+            "name": "AWS Builder",
+            "base_url": "http://localhost:8088/v1",
+            "transport": "openai_chat",
+            "api_key": "no-key-required",
+            "model": current_model or "auto",
+            "models": new_models,
+        }
+
+    with open(cfg_path, "w") as f:
+        yaml.safe_dump(c, f, default_flow_style=False, sort_keys=False)
+    print("✓ updated providers: aws-builder in config.yaml (model catalog refreshed)")
+    # Don't also append the block — we're done.
+    sys.exit(0)
+
+# No aws-builder entry yet — insert inside existing providers: block or append new one.
+lines = raw.splitlines()
 if any(l.strip() == "providers:" for l in lines):
     out, i, n, in_prov, done = [], 0, len(lines), False, False
     while i < n:
@@ -98,10 +166,10 @@ if any(l.strip() == "providers:" for l in lines):
         elif lines[i] and not lines[i].startswith("  ") and lines[i] != "providers:":
             in_prov = False  # left the providers block (next top-level key)
         i += 1
-    open(cfg, "w").write("\n".join(out) + "\n")
+    open(cfg_path, "w").write("\n".join(out) + "\n")
 else:
     # No providers: block yet — append one with the aws-builder entry.
-    with open(cfg, "a") as fh:
+    with open(cfg_path, "a") as fh:
         fh.write("\nproviders:\n" + "\n".join("  " + ln for ln in block.splitlines()) + "\n")
 PY
 rm -f "$BLOCK_FILE"

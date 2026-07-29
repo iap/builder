@@ -7,9 +7,10 @@ kind: standalone
 # returns these instead of the built-in STATIC_MODELS. Lets operators add/remove
 # models without editing plugin code. Q selects the actual model server-side.
 models:
-  - claude-haiku-4.5
-  - claude-sonnet-4
+  - auto
   - claude-sonnet-4.5
+  - claude-sonnet-4
+  - claude-haiku-4.5
 # Optional free-form tags describing this plugin. Read at runtime by load_tags()
 # and exposed via the `tags` tool so the agent/user can see the plugin's identity
 # without reading plugin.yaml. Falls back to STATIC_TAGS when omitted.

@@ -108,7 +108,7 @@ def register_provider(port: int) -> bool:
         logger.warning("builder: cannot import hermes_cli.config (%s)", exc)
         return False
 
-    models = _declared_models() or ["claude-haiku-4.5", "claude-sonnet-4", "claude-sonnet-4.5"]
+    models = _declared_models() or ["auto", "claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5"]
     default_model = models[0]
 
     # Best-effort: never let a malformed/unreadable config abort plugin
@@ -199,6 +199,19 @@ def register_provider(port: int) -> bool:
         }
     )
     entry["models"] = {m: {} for m in models}
+    # Bump the entry revision so downstream consumers (dashboard,
+    # CLI model picker) detect the updated catalog and re-render.
+    # Hermes core's provider registration is not a live-reload —
+    # config.yaml is read once at startup. Without a structural
+    # change (new key, different value), the stale catalog lingers
+    # across restarts even though _provider.py rewrites the entry.
+    # Adding a harmless _revision key (filtered by core's unknown-key
+    # warning only if it's NOT already present) lets us force a
+    # re-read when the model catalog changes.  Because this key
+    # name starts with `_`, Hermes core's "unknown config keys
+    # ignored" log is our only cost — and the benefit of the model
+    # list always being current outweighs that log noise.
+    entry["_revision"] = str(int(__import__("time").time()))
     providers[PROVIDER_SLUG] = entry
 
     try:

@@ -17,9 +17,13 @@ Lets the Hermes Agent talk to **Amazon Q Developer (Claude models)** through a d
 hermes plugins install iap/builder
 
 # 2. register as a selectable model
+#    (updates config.yaml with the current model catalog; safe to
+#    re-run after plugin upgrades — it merges the new catalog with
+#    any existing user config instead of skipping)
 ${HERMES_HOME:-$HOME/.hermes}/plugins/builder/scripts/setup.sh
 
 # 3. restart Hermes
+hermes gateway restart
 
 # 4. authenticate
 bid_login   # approve the user_code in your browser
