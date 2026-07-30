@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: MIT OR Apache-2.0
+# SPDX-License-Identifier: MIT
 """builder — standalone CLI for the Amazon Builder ID (BID) auth + chat plugin.
 
 This is the copy-device-link method you can run from a terminal, without the
