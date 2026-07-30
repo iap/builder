@@ -35,9 +35,8 @@ dev-dependencies = [
 ]
 
 [tool.ty]
-# typecheck targets: plugin source + tests
-src = ["__init__.py", "backend.py", "adapter.py", "_provider.py", "_format.py", "auth", "dashboard", "tests"]
-exclude = ["dashboard/dist"]
+src = ["."]
+exclude = ["dashboard/dist", "__pycache__", ".venv"]
 
 [tool.mise]
-# tools are managed via mise's uv backend; see .mise.toml for pins
+# tools are managed via mise's uv backend; see .mise.toml
