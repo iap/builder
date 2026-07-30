@@ -1,4 +1,3 @@
-[mise]
 # Python runtime — pinned to the version used by this project.
 [[mise.tools]]
 name = "python"
