@@ -1,0 +1,9 @@
+# Mise (formerly mise) tool versions for the builder project.
+# See https://mise.en.dev/ for details.
+#
+# Python and uv are managed via mise's built-in uv backend.
+# Add `mise install` once and all tools are pinned for the project.
+
+[tools]
+python = "3.12"
+uv = "0.5"
