@@ -29,16 +29,17 @@ def _plugin_pre_tool_call(
     args: dict[str, Any],
     **kwargs: Any,
 ) -> dict[str, str] | None:
-    """Builder plugin guard: blocks dangerous tool calls that could
-    break the Hermes installation or compromise security.
+    """Builder plugin guard: blocks dangerous tool calls.
 
     Registered as a ``pre_tool_call`` hook in ``register()``. Hermes
     core calls ``get_pre_tool_call_block_message()`` before dispatching
     each tool call; the first ``{"action": "block", "message": "..."}``
     return wins and prevents execution.
 
-    This is a plugin-level boundary guard — additive to Hermes's
-    global ``approvals.mode`` setting, not a replacement for it.
+    This defense-in-depth guard covers (a) future builder tool additions
+    and (b) any tool call that Hermes routes through the plugin's hook.
+    It is additive to Hermes's global ``approvals.mode`` — it does not
+    replace or override it.
     """
     _HERMES_CORE = (
         os.path.expanduser("~/.hermes/hermes-agent"),
@@ -67,7 +68,7 @@ def _plugin_pre_tool_call(
                 return {
                     "action": "block",
                     "message": (
-                        "⚠ Destructive shell command blocked by builder guard: "
+                        "\u26a0 Destructive shell command blocked by builder guard: "
                         f"`{cmd[:200]}`. Set approvals.mode to 'off' in your "
                         "Hermes config to allow auto-approval of non-destructive "
                         "commands, or run this command directly from a terminal."
@@ -78,7 +79,7 @@ def _plugin_pre_tool_call(
                 return {
                     "action": "block",
                     "message": (
-                        "⚠ Privilege escalation blocked by builder guard: "
+                        "\u26a0 Privilege escalation blocked by builder guard: "
                         f"`{cmd[:200]}`. Plugin-originated shell commands do "
                         "not support sudo/su. Run such commands directly from "
                         "a terminal session."
@@ -91,7 +92,7 @@ def _plugin_pre_tool_call(
                 return {
                     "action": "block",
                     "message": (
-                        "⚠ Write to Hermes protected path blocked by builder "
+                        "\u26a0 Write to Hermes protected path blocked by builder "
                         f"guard: `{target}`. Modifying Hermes core files may "
                         "break the installation."
                     ),
