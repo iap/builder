@@ -1,0 +1,18 @@
+[mise]
+# Python runtime — pinned to the version used by this project.
+[[mise.tools]]
+name = "python"
+version = "3.12"
+backend = "uv"
+
+# Type checker (ruff-based, fast, Python 3.12-compatible)
+[[mise.tools]]
+name = "ty"
+version = "0.0.58"
+backend = "uv"
+
+[env]
+# uv is the Python package manager and runtime manager.
+UV_PROJECT_ENVIRONMENT = ".venv"
+# Python path used by verify.py and tests.
+PYTHONPATH = "."
