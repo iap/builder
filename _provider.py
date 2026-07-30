@@ -198,19 +198,23 @@ def register_provider(port: int) -> bool:
         }
     )
     entry["models"] = {m: {} for m in models}
-    # Bump the entry revision so downstream consumers (dashboard,
-    # CLI model picker) detect the updated catalog and re-render.
-    # Hermes core's provider registration is not a live-reload —
-    # config.yaml is read once at startup. Without a structural
-    # change (new key, different value), the stale catalog lingers
-    # across restarts even though _provider.py rewrites the entry.
-    # Adding a harmless _revision key (filtered by core's unknown-key
-    # warning only if it's NOT already present) lets us force a
-    # re-read when the model catalog changes.  Because this key
-    # name starts with `_`, Hermes core's "unknown config keys
-    # ignored" log is our only cost — and the benefit of the model
-    # list always being current outweighs that log noise.
-    entry["_revision"] = str(int(__import__("time").time()))
+    # Bump the entry revision only when the model catalog or other
+    # key fields actually changed — not on every register_provider()
+    # call.  Without this guard, every Hermes session start rewrites
+    # config.yaml with a fresh _revision timestamp for no reason
+    # (churns the mtime and creates spurious diffs in backups).
+    # The key is filtered by core's unknown-key warning only if it's
+    # NOT already present, so omitting it when nothing changed is
+    # harmless (the previous _revision persists in the entry).
+    _catalog_changed = (
+        not existing
+        or not isinstance(existing, dict)
+        or existing.get("models") != entry["models"]
+        or existing.get("base_url") != entry["base_url"]
+        or existing.get("default_model") != entry.get("model")
+    )
+    if _catalog_changed:
+        entry["_revision"] = str(int(__import__("time").time()))
     providers[PROVIDER_SLUG] = entry
 
     try:
