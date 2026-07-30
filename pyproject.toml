@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hermes-plugin-builder"
+version = "0.1.0"
+description = "Amazon Q Developer (Builder ID) plugin for Hermes Agent"
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.33",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0",
+    "pytest-asyncio>=1.4",
+    "fastapi>=0.139",
+    "uvicorn>=0.52",
+    "openai>=1.0",
+    "botocore>=1.42",
+    "cryptography>=48.0.1",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=9.0",
+    "pytest-asyncio>=1.4",
+    "fastapi>=0.139",
+    "uvicorn>=0.52",
+    "openai>=1.0",
+    "botocore>=1.42",
+    "cryptography>=48.0.1",
+]
+
+[tool.ty]
+# typecheck targets: plugin source + tests
+src = ["__init__.py", "backend.py", "adapter.py", "_provider.py", "_format.py", "auth", "dashboard", "tests"]
+exclude = ["dashboard/dist"]
+
+[tool.mise]
+# tools are managed via mise's uv backend; see .mise.toml for pins
