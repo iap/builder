@@ -11,6 +11,7 @@ model/tag listing are also registered.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 try:
@@ -21,6 +22,81 @@ except ImportError:
     from backend import chat, list_models, load_tags
 
 logger = logging.getLogger(__name__)
+
+
+def _plugin_pre_tool_call(
+    tool_name: str,
+    args: dict[str, Any],
+    **kwargs: Any,
+) -> dict[str, str] | None:
+    """Builder plugin guard: blocks dangerous tool calls that could
+    break the Hermes installation or compromise security.
+
+    Registered as a ``pre_tool_call`` hook in ``register()``. Hermes
+    core calls ``get_pre_tool_call_block_message()`` before dispatching
+    each tool call; the first ``{"action": "block", "message": "..."}``
+    return wins and prevents execution.
+
+    This is a plugin-level boundary guard — additive to Hermes's
+    global ``approvals.mode`` setting, not a replacement for it.
+    """
+    _HERMES_CORE = (
+        os.path.expanduser("~/.hermes/hermes-agent"),
+        os.path.expanduser("~/.hermes/config.yaml"),
+    )
+    _DESTRUCTIVE = (
+        "rm -rf ",
+        "shutil.rmtree",
+        "chmod -R",
+        ">/dev/sda",
+        "mkfs",
+        "dd if=",
+    )
+    _PRIVILEGE = (
+        "sudo ",
+        "su -",
+        "su ",
+        "pkexec ",
+        "doas ",
+    )
+
+    if tool_name == "terminal":
+        cmd = (args.get("command") or "").strip()
+        for pattern in _DESTRUCTIVE:
+            if pattern in cmd:
+                return {
+                    "action": "block",
+                    "message": (
+                        "⚠ Destructive shell command blocked by builder guard: "
+                        f"`{cmd[:200]}`. Set approvals.mode to 'off' in your "
+                        "Hermes config to allow auto-approval of non-destructive "
+                        "commands, or run this command directly from a terminal."
+                    ),
+                }
+        for pattern in _PRIVILEGE:
+            if cmd.startswith(pattern):
+                return {
+                    "action": "block",
+                    "message": (
+                        "⚠ Privilege escalation blocked by builder guard: "
+                        f"`{cmd[:200]}`. Plugin-originated shell commands do "
+                        "not support sudo/su. Run such commands directly from "
+                        "a terminal session."
+                    ),
+                }
+    elif tool_name in ("write_file", "patch"):
+        target = str(args.get("path") or args.get("file") or "")
+        for core_path in _HERMES_CORE:
+            if target.startswith(core_path):
+                return {
+                    "action": "block",
+                    "message": (
+                        "⚠ Write to Hermes protected path blocked by builder "
+                        f"guard: `{target}`. Modifying Hermes core files may "
+                        "break the installation."
+                    ),
+                }
+    return None
 
 
 def _tool_result_helpers():
@@ -325,6 +401,12 @@ def register(ctx) -> None:
     (NOT a separate standalone server). If it fails to bind
     we log and continue; the ask_q tool still works tool-only.
     """
+    # Register the plugin-level tool guard as a pre_tool_call hook.
+    # Hermes core calls get_pre_tool_call_block_message() before
+    # dispatching each tool call; the first {"action": "block"}
+    # return wins and prevents execution.
+    ctx.register_hook("pre_tool_call", _plugin_pre_tool_call)
+
     for name, schema, handler, check_fn, emoji in _TOOLS:
         ctx.register_tool(
             name=name,
