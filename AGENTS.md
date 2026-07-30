@@ -18,7 +18,7 @@ __init__.py          tool registration + register()/unregister() hooks
 backend.py           direct HTTPS chat with Amazon Q (GenerateAssistantResponse)
 adapter.py           OpenAI-compatible /v1/chat/completions SSE server (:8088)
 _provider.py         writes/removes providers.aws-builder in Hermes config.yaml
-_format.py           reads Hermes render_mode/theme for self-adapting output
+_format.py           reads Hermes render_mode/theme for q_debug metadata
 build_cli.py         standalone CLI (login/status/whoami/logout/models)
 verify.py            headless load + tool-registration + secret-leak checks
 conftest.py          pytest path setup + throwaway HERMES_HOME fixture
