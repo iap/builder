@@ -74,6 +74,17 @@ Edit `plugin.yaml` `models:` only. `backend.list_models()` reads it lazily; no c
 
 All auth logic lives in `auth/sso_oidc.py`. The public API (`start_login`, `get_status`, `logout`, `show_identity`, `refresh_token`, `ensure_valid`) is pinned by `tests/test_import_contract.py`. Do not rename or remove these symbols.
 
+### Adding a tool guard (plugin-level enforcement)
+
+The builder can enforce tool-use boundaries via Hermes's existing `pre_tool_call` hook — no Hermes core changes needed. The guard is registered in `register()` via `ctx.register_hook("pre_tool_call", _plugin_pre_tool_call)`. Hermes core calls `get_pre_tool_call_block_message()` before dispatching each tool call; the first `{"action": "block", "message": "..."}` return wins and prevents execution.
+
+The guard currently blocks:
+- Destructive shell patterns (`rm -rf`, `shutil.rmtree`, `chmod -R`, `>/dev/sda`, `mkfs`, `dd if=`)
+- Privilege escalation (`sudo`, `su`, `su -`, `pkexec`, `doas`)
+- Writes to Hermes core paths (`~/.hermes/hermes-agent/`, `~/.hermes/config.yaml`)
+
+This is additive to Hermes's global `approvals.mode` setting — it does not override or bypass it.
+
 ### Changing the adapter
 
 - Keep `_resolve_bind_host()` intact.
