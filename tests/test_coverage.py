@@ -2,14 +2,10 @@
 # SPDX-License-Identifier: MIT
 from __future__ import annotations
 
-import io
 import json
-import sys
-import types
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
 
 # --- __init__.py: pre_tool_call guard ---
 
@@ -28,8 +24,9 @@ def test_pre_tool_call_blocks_sudo():
 
 
 def test_pre_tool_call_blocks_hermes_core_path():
-    import __init__ as plugin
     import os
+
+    import __init__ as plugin
     path = os.path.expanduser("~/.hermes/hermes-agent/foo.py")
     result = plugin._plugin_pre_tool_call("write_file", {"path": path})
     assert result is not None
@@ -46,9 +43,10 @@ def test_pre_tool_call_allows_safe():
 
 def test_handler_get_healthz():
     import urllib.request
+
     from adapter import start, stop
     try:
-        srv, port = start(port=0)  # OS picks free port
+        _srv, port = start(port=0)  # OS picks free port
         url = f"http://127.0.0.1:{port}/healthz"
         with urllib.request.urlopen(url, timeout=2) as r:
             body = json.loads(r.read())
@@ -58,11 +56,12 @@ def test_handler_get_healthz():
 
 
 def test_handler_get_unknown_path():
-    import urllib.request
     import urllib.error
+    import urllib.request
+
     from adapter import start, stop
     try:
-        srv, port = start(port=0)
+        _srv, port = start(port=0)
         url = f"http://127.0.0.1:{port}/unknown"
         with pytest.raises(urllib.error.HTTPError) as exc_info:
             urllib.request.urlopen(url, timeout=2)
@@ -73,10 +72,11 @@ def test_handler_get_unknown_path():
 
 def test_handler_post_chat_completions():
     import urllib.request
+
     from adapter import start, stop
     with patch("backend.chat", return_value=("hello", "", "")):
         try:
-            srv, port = start(port=0)
+            _srv, port = start(port=0)
             payload = json.dumps({"messages": [{"role": "user", "content": "hi"}]}).encode()
             req = urllib.request.Request(
                 f"http://127.0.0.1:{port}/v1/chat/completions",
@@ -92,11 +92,12 @@ def test_handler_post_chat_completions():
 
 
 def test_handler_post_unknown_path():
-    import urllib.request
     import urllib.error
+    import urllib.request
+
     from adapter import start, stop
     try:
-        srv, port = start(port=0)
+        _srv, port = start(port=0)
         payload = b"{}"
         req = urllib.request.Request(
             f"http://127.0.0.1:{port}/unknown",
@@ -114,8 +115,8 @@ def test_handler_post_unknown_path():
 # --- build_cli.py: polling loop and edge cases ---
 
 def test_cmd_login_polls_until_authenticated(capsys):
-    from build_cli import cmd_login, build_parser
-    import argparse
+
+    from build_cli import build_parser, cmd_login
     args = build_parser().parse_args(["login"])
     call_count = 0
 
@@ -131,32 +132,28 @@ def test_cmd_login_polls_until_authenticated(capsys):
         "verification_uri_complete": "https://device.sso.example.com/",
         "expires_in": 600,
         "interval": 0,
-    }):
-        with patch("auth.sso_oidc.get_status", side_effect=fake_get_status):
-            with patch("time.sleep"):
-                rc = cmd_login(args)
+    }), patch("auth.sso_oidc.get_status", side_effect=fake_get_status), patch("time.sleep"):
+        rc = cmd_login(args)
     assert rc == 0
     out = capsys.readouterr().out
     assert "Authenticated" in out
 
 
 def test_cmd_login_error_phase(capsys):
-    from build_cli import cmd_login, build_parser
+    from build_cli import build_parser, cmd_login
     args = build_parser().parse_args(["login"])
     with patch("auth.sso_oidc.start_login", return_value={
         "user_code": "ABC-123",
         "verification_uri_complete": "https://device.sso.example.com/",
         "expires_in": 600,
         "interval": 0,
-    }):
-        with patch("auth.sso_oidc.get_status", return_value={"authenticated": False, "phase": "error", "error": "bad"}):
-            with patch("time.sleep"):
-                rc = cmd_login(args)
+    }), patch("auth.sso_oidc.get_status", return_value={"authenticated": False, "phase": "error", "error": "bad"}), patch("time.sleep"):
+        rc = cmd_login(args)
     assert rc == 1
 
 
 def test_cmd_whoami_not_authenticated(capsys):
-    from build_cli import cmd_whoami, build_parser
+    from build_cli import build_parser, cmd_whoami
     args = build_parser().parse_args(["whoami"])
     with patch("auth.sso_oidc.show_identity", return_value={"authenticated": False}):
         rc = cmd_whoami(args)
