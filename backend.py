@@ -69,9 +69,11 @@ def _import_sso_oidc():
     """
     try:
         from .auth import sso_oidc  # type: ignore  # package load (core)
+
         return sso_oidc
     except ImportError:
         from auth import sso_oidc  # type: ignore  # dir-on-path (standalone)
+
         return sso_oidc
 
 
@@ -241,7 +243,17 @@ def chat(
         err_low = err.lower()
         # Entitlement / subscription failures: Q returns non-200 with AccessDenied / subscription body.
         # Surface it clearly but avoid exposing internal auth flow details in CLI output.
-        if any(k in err_low for k in ("subscri", "accessdenied", "not entitled", "not activat", "free tier", "q developer")):
+        if any(
+            k in err_low
+            for k in (
+                "subscri",
+                "accessdenied",
+                "not entitled",
+                "not activat",
+                "free tier",
+                "q developer",
+            )
+        ):
             raise RuntimeError(
                 "Amazon Q rejected the chat request due to entitlement/subscription."
                 "Activate Amazon Q Developer (free) at console.aws.amazon.com/amazonq."
@@ -381,7 +393,9 @@ def _extract_tool_use_id(text: str) -> str | None:
     return None
 
 
-def _extract_answer_with_conversation_id(response: requests.Response) -> tuple[str, str | None, str | None]:
+def _extract_answer_with_conversation_id(
+    response: requests.Response,
+) -> tuple[str, str | None, str | None]:
     """Like `_extract_answer`, but also returns Q's `conversationId` and `toolUseId`."""
     raw = b""
     for chunk in response.iter_content(chunk_size=4096):

@@ -47,6 +47,7 @@ _lock = threading.Lock()
 _stop = threading.Event()
 _poll_thread: threading.Thread | None = None
 
+
 # This plugin is fully self-contained: the authenticated token lives ONLY in
 # the local `auth/bid_token.json` mirror under HERMES_HOME. It does NOT use the
 # Hermes credential pool / `hermes auth` mechanism (that integration was never
@@ -60,6 +61,7 @@ def _home() -> Path:
     # 2. Core Hermes path mechanism
     try:
         from hermes_constants import get_hermes_home
+
         return Path(get_hermes_home())
     except ImportError:
         pass
@@ -83,6 +85,7 @@ _FLOW_FILENAME = "bid_flow.json"
 _LEGACY_REG_FILENAME = ".bid_registration.json"
 _LEGACY_TOKEN_FILENAME = ".bid_token.json"
 _LEGACY_FLOW_FILENAME = ".bid_flow.json"
+
 
 # The token store lives OUTSIDE the plugin install dir (under
 # ~/.hermes/builder/auth/, not ~/.hermes/plugins/builder/auth/). This is
@@ -368,9 +371,7 @@ def _start_poll_thread(reg: dict, flow: dict) -> None:
     with _lock:
         if _poll_thread and _poll_thread.is_alive():
             return
-    _poll_thread = threading.Thread(
-        target=_poll_loop, args=(reg, flow), daemon=True
-    )
+    _poll_thread = threading.Thread(target=_poll_loop, args=(reg, flow), daemon=True)
     _poll_thread.start()
 
 
@@ -434,7 +435,7 @@ def refresh_token() -> bool:
             return True
         except Exception:
             if attempt < 2:
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
                 continue
             logger.exception("token refresh failed")
             return False
@@ -464,7 +465,11 @@ def get_status() -> dict:
     the Hermes credential pool).
     """
     mirror_tok = _load_token()
-    tok = mirror_tok if (mirror_tok and mirror_tok.get("expires_at", 0) > time.time()) else None
+    tok = (
+        mirror_tok
+        if (mirror_tok and mirror_tok.get("expires_at", 0) > time.time())
+        else None
+    )
     refreshed = False
     expired_token_present = bool(
         mirror_tok and mirror_tok.get("expires_at", 0) <= time.time()
@@ -521,7 +526,9 @@ def get_status() -> dict:
         "authenticated": False,
         "phase": "expired" if expired_token_present else phase,
         "user_code": flow.get("user_code") if flow else None,
-        "verification_uri_complete": flow.get("verification_uri_complete") if flow else None,
+        "verification_uri_complete": flow.get("verification_uri_complete")
+        if flow
+        else None,
         "expires_in": flow.get("expires_in") if flow else None,
         "interval": flow.get("interval") if flow else None,
         "error": error,

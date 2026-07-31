@@ -1,4 +1,5 @@
 """Minimal dashboard server for the builder plugin."""
+
 from __future__ import annotations
 
 import json

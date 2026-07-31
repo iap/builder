@@ -64,7 +64,10 @@ def cmd_login(args: argparse.Namespace) -> int:
         print(f"  expires_at: {_fmt_iso(st.get('token_expires_at'))}")
         return 0
     if not info.get("user_code"):
-        print("error: device authorization failed to start (no user_code returned).", file=sys.stderr)
+        print(
+            "error: device authorization failed to start (no user_code returned).",
+            file=sys.stderr,
+        )
         return 1
 
     print("Approve this Amazon Builder ID login in your browser:")
@@ -88,11 +91,16 @@ def cmd_login(args: argparse.Namespace) -> int:
                 return 1
             time.sleep(interval)
     except KeyboardInterrupt:
-        print("\ncancelled; the pending flow is saved — run `status` to resume polling.")
+        print(
+            "\ncancelled; the pending flow is saved — run `status` to resume polling."
+        )
         return 130
 
     if not status or not status.get("authenticated"):
-        print("error: login was not approved in time. Re-run `login` to try again.", file=sys.stderr)
+        print(
+            "error: login was not approved in time. Re-run `login` to try again.",
+            file=sys.stderr,
+        )
         return 1
 
     print("Authenticated. Token stored at $HERMES_HOME/builder/auth/bid_token.json.")
@@ -157,7 +165,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("login", help="start device login; print a copyable verification link")
+    sub.add_parser(
+        "login", help="start device login; print a copyable verification link"
+    )
     sub.add_parser("status", help="show current auth / device-flow state")
     sub.add_parser("whoami", help="show token identity (no raw token)")
     sub.add_parser("logout", help="clear stored secrets")

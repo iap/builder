@@ -1,4 +1,5 @@
 """Offline tests for dashboard/plugin_api.py routes."""
+
 # SPDX-License-Identifier: MIT
 from __future__ import annotations
 

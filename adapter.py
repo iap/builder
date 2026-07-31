@@ -73,6 +73,7 @@ class _FamilyAwareHTTPServer(ThreadingHTTPServer):
         self.address_family = socket.AF_INET6 if ":" in host else socket.AF_INET
         super().__init__(server_address, *args, **kwargs)
 
+
 # backend.chat() is the single source of truth for Q's wire format + token.
 try:
     from . import backend  # type: ignore  # package import
@@ -104,6 +105,7 @@ def _resolve_bind_host(requested: str) -> str:
         "The adapter is a local-only token server and must not be network-exposed. "
         "Bind 127.0.0.1 (default) or set AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1 to override. "
     )
+
 
 _server: ThreadingHTTPServer | None = None
 _thread: threading.Thread | None = None
@@ -165,7 +167,9 @@ def _flatten_messages(messages: list[dict[str, Any]], tools: list | None = None)
                 names.append(nm)
         if names:
             parts.append(
-                "Available tools you may call: " + ", ".join(names) + ".\n"
+                "Available tools you may call: "
+                + ", ".join(names)
+                + ".\n"
                 + _TOOL_CALL_INSTRUCTION
             )
     parts.extend([c for c in convo if c])
@@ -226,7 +230,9 @@ def _parse_tool_calls(answer: str) -> list[dict[str, Any]]:
             args = parsed.get("arguments")
             if not isinstance(args, dict):
                 args = {}
-            calls.append({"name": name, "arguments": json.dumps(args, ensure_ascii=False)})
+            calls.append(
+                {"name": name, "arguments": json.dumps(args, ensure_ascii=False)}
+            )
             if len(calls) >= 20:
                 # Hard cap to avoid pathological answers with many JSON objects.
                 break
@@ -279,7 +285,7 @@ def _strip_tool_call_xml(answer: str) -> str:
         close = out.find("</tool_call>", end if obj else m.end())
         if close == -1:
             break
-        out = out[: m.start()] + out[close + len("</tool_call>"):]
+        out = out[: m.start()] + out[close + len("</tool_call>") :]
     return out.strip()
 
 
@@ -328,9 +334,13 @@ def _handle_chat(body: dict[str, Any]) -> bytes:
     try:
         answer, _cid, _tuid = backend.chat(prompt, model=str(model))
     except Exception as exc:
-        err = b"data: " + json.dumps(
-            {"error": {"message": str(exc), "type": "aws_build_error"}}
-        ).encode("utf-8") + b"\n\n"
+        err = (
+            b"data: "
+            + json.dumps(
+                {"error": {"message": str(exc), "type": "aws_build_error"}}
+            ).encode("utf-8")
+            + b"\n\n"
+        )
         # Still terminate the SSE stream so Hermes's parser sees [DONE]
         # and doesn't hang waiting for the stream to close.
         return err + b"data: [DONE]\n\n"
@@ -349,7 +359,9 @@ def _handle_chat(body: dict[str, Any]) -> bytes:
     return b"".join(frames)
 
 
-def _tool_calls_frames(calls: list[dict[str, Any]], text: str = "", model: str = "builder") -> bytes:
+def _tool_calls_frames(
+    calls: list[dict[str, Any]], text: str = "", model: str = "builder"
+) -> bytes:
     """Emit OpenAI streaming `tool_calls` frames for parsed Q tool calls.
 
     Mirrors what a native function-calling model streams: a role frame, one
@@ -361,13 +373,11 @@ def _tool_calls_frames(calls: list[dict[str, Any]], text: str = "", model: str =
     the action for this turn).
     """
     frames: list[bytes] = [
-        b"data: "
-        + _sse([{"index": 0, "delta": {"role": "assistant"}}], model=model),
+        b"data: " + _sse([{"index": 0, "delta": {"role": "assistant"}}], model=model),
     ]
     if text:
         frames.append(
-            b"data: "
-            + _sse([{"index": 0, "delta": {"content": text}}], model=model)
+            b"data: " + _sse([{"index": 0, "delta": {"content": text}}], model=model)
         )
     for i, call in enumerate(calls):
         call_id = f"call_awsbuild_{i}"
@@ -414,7 +424,9 @@ def _tool_calls_frames(calls: list[dict[str, Any]], text: str = "", model: str =
 class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
-    def log_message(self, format: str, *args: Any) -> None:  # silence default stderr logging
+    def log_message(
+        self, format: str, *args: Any
+    ) -> None:  # silence default stderr logging
         pass
 
     def _send(self, status: int, data: bytes, ctype: str = "application/json") -> None:
@@ -450,7 +462,9 @@ class _Handler(BaseHTTPRequestHandler):
         self._send(200, out, ctype="text/event-stream")
 
 
-def start(host: str = HOST, port: int = DEFAULT_PORT) -> tuple[ThreadingHTTPServer, int]:
+def start(
+    host: str = HOST, port: int = DEFAULT_PORT
+) -> tuple[ThreadingHTTPServer, int]:
     """Launch the adapter in a daemon background thread.
 
     Returns (server, actual_port). Idempotent: calling twice returns the
@@ -498,7 +512,9 @@ def start(host: str = HOST, port: int = DEFAULT_PORT) -> tuple[ThreadingHTTPServ
         try:
             _raw = subprocess.run(
                 ["lsof", "-t", "-i", f"{bind_host}:{port}"],
-                capture_output=True, text=True, timeout=3,
+                capture_output=True,
+                text=True,
+                timeout=3,
             ).stdout.strip()
             if _raw:
                 owner = f" (held by PID {_raw.split()[0]})"
@@ -514,7 +530,9 @@ def start(host: str = HOST, port: int = DEFAULT_PORT) -> tuple[ThreadingHTTPServ
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
     _server, _thread = srv, t
-    return srv, srv.server_address[1]  # return the ACTUAL bound port (port=0 -> OS picks)
+    return srv, srv.server_address[
+        1
+    ]  # return the ACTUAL bound port (port=0 -> OS picks)
 
 
 def stop() -> None:

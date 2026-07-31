@@ -111,11 +111,13 @@ def _tool_result_helpers():
     """
     try:
         from tools.registry import tool_error, tool_result  # type: ignore
+
         return tool_result, tool_error
     except ImportError:  # __main__ / tests where hermes-agent is on sys.path
         pass
     try:
         from registry import tool_error, tool_result  # type: ignore
+
         return tool_result, tool_error
     except ImportError:
         pass
@@ -158,6 +160,7 @@ def _check_available() -> bool:
 
 # --- tool handlers ---
 
+
 def _handle_ask_q(args: dict[str, Any], **kwargs: Any) -> str:
     """Send a prompt to AWS Builder ID (Q) and return the answer."""
     prompt = args.get("prompt", "")
@@ -166,7 +169,9 @@ def _handle_ask_q(args: dict[str, Any], **kwargs: Any) -> str:
     model = args.get("model", "auto")
     conversation_id = args.get("conversation_id")
     try:
-        answer, _cid, _tool_use_id = chat(prompt, model=model, conversation_id=conversation_id)
+        answer, _cid, _tool_use_id = chat(
+            prompt, model=model, conversation_id=conversation_id
+        )
         result: dict[str, Any] = {"answer": answer}
         if _cid:
             result["conversation_id"] = _cid
@@ -183,17 +188,21 @@ def _handle_bid_login(args: dict[str, Any], **kwargs: Any) -> str:
         # cleanup is needed here.
         info = start_login()
         if info.get("already_authenticated"):
-            return _success({
-                "message": "Already authenticated with Amazon Q. No new login needed.",
+            return _success(
+                {
+                    "message": "Already authenticated with Amazon Q. No new login needed.",
+                    **info,
+                }
+            )
+        return _success(
+            {
+                "message": (
+                    "Open the verification URL in your browser and enter the "
+                    "user_code to approve. Call bid_status to check completion."
+                ),
                 **info,
-            })
-        return _success({
-            "message": (
-                "Open the verification URL in your browser and enter the "
-                "user_code to approve. Call bid_status to check completion."
-            ),
-            **info,
-        })
+            }
+        )
     except Exception as exc:
         logger.exception("bid_login failed")
         return _error(str(exc), code="login_failed")
@@ -290,7 +299,10 @@ _TOOLS = (
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "prompt": {"type": "string", "description": "The prompt to send to Q."},
+                    "prompt": {
+                        "type": "string",
+                        "description": "The prompt to send to Q.",
+                    },
                     "model": {
                         "type": "string",
                         "description": "Model to use; sent to Q as modelId. Defaults to 'auto' (Q picks). Named Claude variants are advertised but the account's entitlement decides which are usable.",
@@ -433,7 +445,9 @@ def register(ctx) -> None:
         # everything else. Probe the port (not just this process's _server)
         # so the warning is suppressed when another session owns it.
         if not adapter.is_running(host=adapter.HOST, port=port):
-            logger.warning("builder adapter failed to start (tool-only mode OK): %s", exc)
+            logger.warning(
+                "builder adapter failed to start (tool-only mode OK): %s", exc
+            )
         _srv, actual = None, None
     except Exception as exc:  # noqa: BLE001
         logger.warning("builder adapter failed to start (tool-only mode OK): %s", exc)

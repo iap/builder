@@ -14,6 +14,7 @@ import pytest
 
 # --- adapter (OpenAI-compatible front-end) ---
 
+
 def test_adapter_translates_openai_request_to_q(monkeypatch):
     """The adapter must accept an OpenAI-shape /v1/chat/completions request,
     flatten `messages` into one prompt, and call backend.chat() exactly once
@@ -107,7 +108,13 @@ def test_adapter_surfaces_chat_errors_as_sse(monkeypatch):
     import adapter
 
     backend = import_module("backend")
-    monkeypatch.setattr(backend, "chat", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("No valid Amazon Q token available")))
+    monkeypatch.setattr(
+        backend,
+        "chat",
+        lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError("No valid Amazon Q token available")
+        ),
+    )
     monkeypatch.setattr(adapter, "backend", backend)
 
     out = adapter._handle_chat({"messages": [{"role": "user", "content": "hi"}]})
@@ -139,15 +146,20 @@ def test_adapter_does_not_forward_tools_to_q(monkeypatch):
 
     tools = [
         {"type": "function", "function": {"name": "fs_write", "parameters": {}}},
-        {"type": "function", "function": {"name": "mcp__github__search", "parameters": {}}},
+        {
+            "type": "function",
+            "function": {"name": "mcp__github__search", "parameters": {}},
+        },
     ]
-    adapter._handle_chat({
-        "model": "claude-sonnet-4.5",
-        "messages": [{"role": "user", "content": "use a tool to write a file"}],
-        "tools": tools,
-        "tool_choice": "auto",
-        "stream": True,
-    })
+    adapter._handle_chat(
+        {
+            "model": "claude-sonnet-4.5",
+            "messages": [{"role": "user", "content": "use a tool to write a file"}],
+            "tools": tools,
+            "tool_choice": "auto",
+            "stream": True,
+        }
+    )
     # backend.chat received neither tools nor tool_results.
     assert captured["kw"].get("tools") is None
     assert captured["kw"].get("tool_results") is None
@@ -181,12 +193,16 @@ def test_adapter_translates_tool_call_xml_to_openai_frames(monkeypatch):
     monkeypatch.setattr(backend, "chat", fake_chat)
     monkeypatch.setattr(adapter, "backend", backend)
 
-    out = adapter._handle_chat({
-        "model": "auto",
-        "messages": [{"role": "user", "content": "write a.txt"}],
-        "tools": [{"type": "function", "function": {"name": "fs_write", "parameters": {}}}],
-        "stream": True,
-    })
+    out = adapter._handle_chat(
+        {
+            "model": "auto",
+            "messages": [{"role": "user", "content": "write a.txt"}],
+            "tools": [
+                {"type": "function", "function": {"name": "fs_write", "parameters": {}}}
+            ],
+            "stream": True,
+        }
+    )
     text = out.decode()
     assert "tool_calls" in text
     assert '"finish_reason": "tool_calls"' in text
@@ -196,7 +212,7 @@ def test_adapter_translates_tool_call_xml_to_openai_frames(monkeypatch):
     args_by_index = {}
     for line in text.splitlines():
         if line.startswith("data:") and line != "data: [DONE]":
-            payload = json.loads(line[len("data: "):])
+            payload = json.loads(line[len("data: ") :])
             for tc in payload["choices"][0]["delta"].get("tool_calls", []):
                 idx = tc["index"]
                 fn = tc.get("function", {})
@@ -226,21 +242,26 @@ def test_adapter_multiple_tool_calls(monkeypatch):
     monkeypatch.setattr(backend, "chat", lambda *a, **k: (answer, None, None))
     monkeypatch.setattr(adapter, "backend", backend)
 
-    out = adapter._handle_chat({
-        "model": "auto",
-        "messages": [{"role": "user", "content": "copy a.txt to b.txt"}],
-        "tools": [
-            {"type": "function", "function": {"name": "fs_read", "parameters": {}}},
-            {"type": "function", "function": {"name": "fs_write", "parameters": {}}},
-        ],
-        "stream": True,
-    })
+    out = adapter._handle_chat(
+        {
+            "model": "auto",
+            "messages": [{"role": "user", "content": "copy a.txt to b.txt"}],
+            "tools": [
+                {"type": "function", "function": {"name": "fs_read", "parameters": {}}},
+                {
+                    "type": "function",
+                    "function": {"name": "fs_write", "parameters": {}},
+                },
+            ],
+            "stream": True,
+        }
+    )
     text = out.decode()
     assert "tool_calls" in text
     names = set()
     for line in text.splitlines():
         if line.startswith("data:") and line != "data: [DONE]":
-            payload = json.loads(line[len("data: "):])
+            payload = json.loads(line[len("data: ") :])
             for tc in payload["choices"][0]["delta"].get("tool_calls", []):
                 if tc.get("function", {}).get("name"):
                     names.add(tc["function"]["name"])
@@ -269,23 +290,25 @@ def test_adapter_sse_parses_via_openai_sdk(monkeypatch):
     import adapter
 
     backend = import_module("backend")
-    answer = (
-        '<tool_call>\n{"name": "fs_write", "arguments": {"path": "a.txt", "content": "hi"}}\n</tool_call>'
-    )
+    answer = '<tool_call>\n{"name": "fs_write", "arguments": {"path": "a.txt", "content": "hi"}}\n</tool_call>'
     monkeypatch.setattr(backend, "chat", lambda *a, **k: (answer, None, None))
     monkeypatch.setattr(adapter, "backend", backend)
 
-    out = adapter._handle_chat({
-        "model": "auto",
-        "messages": [{"role": "user", "content": "write a.txt"}],
-        "tools": [{"type": "function", "function": {"name": "fs_write", "parameters": {}}}],
-        "stream": True,
-    })
+    out = adapter._handle_chat(
+        {
+            "model": "auto",
+            "messages": [{"role": "user", "content": "write a.txt"}],
+            "tools": [
+                {"type": "function", "function": {"name": "fs_write", "parameters": {}}}
+            ],
+            "stream": True,
+        }
+    )
     state = ChatCompletionStreamState(input_tools=[])
     for line in out.decode().splitlines():
         if not line.startswith("data:") or line == "data: [DONE]":
             continue
-        chunk = ChatCompletionChunk.model_validate_json(line[len("data: "):])
+        chunk = ChatCompletionChunk.model_validate_json(line[len("data: ") :])
         list(state.handle_chunk(chunk))
     snap = state.current_completion_snapshot
     msg = snap.choices[0].message
@@ -304,15 +327,21 @@ def test_adapter_text_only_no_tool_calls(monkeypatch):
     import adapter
 
     backend = import_module("backend")
-    monkeypatch.setattr(backend, "chat", lambda *a, **k: ("Just a normal reply.", None, None))
+    monkeypatch.setattr(
+        backend, "chat", lambda *a, **k: ("Just a normal reply.", None, None)
+    )
     monkeypatch.setattr(adapter, "backend", backend)
 
-    out = adapter._handle_chat({
-        "model": "auto",
-        "messages": [{"role": "user", "content": "hi"}],
-        "tools": [{"type": "function", "function": {"name": "fs_write", "parameters": {}}}],
-        "stream": True,
-    })
+    out = adapter._handle_chat(
+        {
+            "model": "auto",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [
+                {"type": "function", "function": {"name": "fs_write", "parameters": {}}}
+            ],
+            "stream": True,
+        }
+    )
     text = out.decode()
     assert "tool_calls" not in text
     assert '"content": "Just a normal reply."' in text
@@ -335,19 +364,23 @@ def test_adapter_tool_call_xml_stripped_from_content(monkeypatch):
     monkeypatch.setattr(backend, "chat", lambda *a, **k: (answer, None, None))
     monkeypatch.setattr(adapter, "backend", backend)
 
-    out = adapter._handle_chat({
-        "model": "auto",
-        "messages": [{"role": "user", "content": "write a.txt"}],
-        "tools": [{"type": "function", "function": {"name": "fs_write", "parameters": {}}}],
-        "stream": True,
-    })
+    out = adapter._handle_chat(
+        {
+            "model": "auto",
+            "messages": [{"role": "user", "content": "write a.txt"}],
+            "tools": [
+                {"type": "function", "function": {"name": "fs_write", "parameters": {}}}
+            ],
+            "stream": True,
+        }
+    )
     text = out.decode()
     # A content frame carries only the prose ("Working on it."); the raw
     # <tool_call> XML must never appear in a `content` frame.
     had_content = False
     for line in text.splitlines():
         if line.startswith("data:") and line != "data: [DONE]":
-            payload = json.loads(line[len("data: "):])
+            payload = json.loads(line[len("data: ") :])
             delta = payload["choices"][0]["delta"]
             if "content" in delta:
                 had_content = True
@@ -382,16 +415,24 @@ def test_adapter_flattens_complex_multiturn_context(monkeypatch):
         "messages": [
             {"role": "system", "content": "You are a helpful agent."},
             {"role": "user", "content": "What files are in /tmp?"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "c1", "type": "function",
-                 "function": {"name": "fs_list", "arguments": '{"path":"/tmp"}'}}
-            ]},
-            {"role": "tool", "tool_call_id": "c1",
-             "content": "a.txt\nb.txt"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "fs_list", "arguments": '{"path":"/tmp"}'},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": "a.txt\nb.txt"},
             {"role": "assistant", "content": "There are a.txt and b.txt."},
             {"role": "user", "content": "Open a.txt and summarize it."},
         ],
-        "tools": [{"type": "function", "function": {"name": "fs_list", "parameters": {}}}],
+        "tools": [
+            {"type": "function", "function": {"name": "fs_list", "parameters": {}}}
+        ],
         "stream": True,
     }
     adapter._handle_chat(body)
@@ -429,10 +470,17 @@ def test_adapter_multimodal_content_blocks_collapsed(monkeypatch):
     monkeypatch.setattr(backend, "chat", fake_chat)
     monkeypatch.setattr(adapter, "backend", backend)
 
-    body = {"messages": [{"role": "user", "content": [
-        {"type": "text", "text": "Look at this:"},
-        {"type": "text", "text": "the error log"},
-    ]}]}
+    body = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Look at this:"},
+                    {"type": "text", "text": "the error log"},
+                ],
+            }
+        ]
+    }
     adapter._handle_chat(body)
     assert "Look at this:" in captured["prompt"]
     assert "the error log" in captured["prompt"]
@@ -459,12 +507,11 @@ def test_adapter_nonascii_roundtrips_through_sse(monkeypatch):
     contents = []
     for line in text.splitlines():
         if line.startswith("data:") and line != "data: [DONE]":
-            payload = json.loads(line[len("data: "):])
+            payload = json.loads(line[len("data: ") :])
             delta = payload["choices"][0]["delta"]
             if "content" in delta:
                 contents.append(delta["content"])
     assert "".join(contents) == "café — 日本語"
-
 
 
 from conftest import load_plugin
@@ -500,7 +547,8 @@ def test_tool_output_not_ascii_escaped(mod, monkeypatch):  # noqa: ANN
     literal \\uXXXX escapes. Regression guard for the _success/_error -> house
     tool_result/tool_error switch."""
     monkeypatch.setattr(
-        mod, "_handle_ask_q",
+        mod,
+        "_handle_ask_q",
         lambda args, **kw: mod._success({"answer": "café — 日本語"}),
     )
     out = mod._handle_ask_q({})
@@ -528,7 +576,9 @@ def test_no_secrets_in_output(mod):  # noqa: ANN
         assert "client_secret" not in blob
 
 
-@pytest.mark.skipif(os.environ.get("BUILD_LIVE") != "1", reason="set BUILD_LIVE=1 for live OIDC")
+@pytest.mark.skipif(
+    os.environ.get("BUILD_LIVE") != "1", reason="set BUILD_LIVE=1 for live OIDC"
+)
 def test_live_device_start(mod):  # noqa: ANN
     res = json.loads(mod._handle_bid_login({}))
     assert res["success"] is True
@@ -562,14 +612,13 @@ def test_mirror_path_ignores_legacy_aws_build_dir(monkeypatch, tmp_path):
     legacy = tmp_path / "plugins" / "aws-build" / "auth" / "bid_token.json"
     legacy.parent.mkdir(parents=True)
     legacy.write_text("{}")
-    assert sso_oidc._token_path() == (
-        tmp_path / "builder" / "auth" / "bid_token.json"
-    )
+    assert sso_oidc._token_path() == (tmp_path / "builder" / "auth" / "bid_token.json")
 
 
 # --- get_status must report the NEWEST valid token (not a stale pool entry) ---
 # Regression: a still-valid but older pool token used to shadow a fresh
 # auth/bid_token.json from a re-auth on another account.
+
 
 def test_legacy_dotfile_token_migrates_to_auth_dir(monkeypatch, tmp_path):
     """Backward-compat: a token left at the old dotted path
@@ -583,7 +632,9 @@ def test_legacy_dotfile_token_migrates_to_auth_dir(monkeypatch, tmp_path):
     legacy_base = tmp_path / "plugins" / "aws-build"
     legacy = legacy_base / ".bid_token.json"
     legacy.parent.mkdir(parents=True)
-    legacy.write_text(json.dumps({"access_token": "LEGACY", "expires_at": time.time() + 3600}))
+    legacy.write_text(
+        json.dumps({"access_token": "LEGACY", "expires_at": time.time() + 3600})
+    )
 
     tok = sso_oidc._load_token()
     assert tok is not None
@@ -607,7 +658,9 @@ def test_plugin_install_dir_token_migrates_to_hermes_root(monkeypatch, tmp_path)
     old_base = tmp_path / "plugins" / "builder" / "auth"
     old_base.mkdir(parents=True)
     old_base.joinpath("bid_token.json").write_text(
-        json.dumps({"access_token": "FROM_INSTALL_DIR", "expires_at": time.time() + 3600})
+        json.dumps(
+            {"access_token": "FROM_INSTALL_DIR", "expires_at": time.time() + 3600}
+        )
     )
     old_base.joinpath("bid_registration.json").write_text(
         json.dumps({"device_code": "x"})
@@ -621,7 +674,9 @@ def test_plugin_install_dir_token_migrates_to_hermes_root(monkeypatch, tmp_path)
     new_reg = tmp_path / "builder" / "auth" / "bid_registration.json"
     assert new_token.exists(), "token must migrate out of the install dir"
     assert new_reg.exists(), "registration must migrate out of the install dir"
-    assert not old_base.joinpath("bid_token.json").exists(), "old file removed after migrate"
+    assert not old_base.joinpath("bid_token.json").exists(), (
+        "old file removed after migrate"
+    )
     assert json.loads(new_token.read_text())["access_token"] == "FROM_INSTALL_DIR"
 
 
@@ -711,7 +766,11 @@ def test_get_status_refreshes_expired_token(monkeypatch, tmp_path):
     # Expired access token but with a usable refresh token on disk.
     (base / "auth" / "bid_token.json").write_text(
         json.dumps(
-            {"access_token": "EXPIRED", "refresh_token": "R", "expires_at": time.time() - 10}
+            {
+                "access_token": "EXPIRED",
+                "refresh_token": "R",
+                "expires_at": time.time() - 10,
+            }
         )
     )
 
@@ -722,7 +781,11 @@ def test_get_status_refreshes_expired_token(monkeypatch, tmp_path):
         # Simulate a successful refresh: write a fresh, valid token.
         (base / "auth" / "bid_token.json").write_text(
             json.dumps(
-                {"access_token": "NEW", "refresh_token": "R", "expires_at": time.time() + 3600}
+                {
+                    "access_token": "NEW",
+                    "refresh_token": "R",
+                    "expires_at": time.time() + 3600,
+                }
             )
         )
         return True
@@ -747,7 +810,11 @@ def test_get_status_reports_expired_when_refresh_dead(monkeypatch, tmp_path):
     (base / "auth").mkdir(parents=True, exist_ok=True)
     (base / "auth" / "bid_token.json").write_text(
         json.dumps(
-            {"access_token": "EXPIRED", "refresh_token": "R", "expires_at": time.time() - 10}
+            {
+                "access_token": "EXPIRED",
+                "refresh_token": "R",
+                "expires_at": time.time() - 10,
+            }
         )
     )
 
@@ -773,12 +840,18 @@ def test_get_status_no_refresh_when_valid(monkeypatch, tmp_path):
     (base / "auth").mkdir(parents=True, exist_ok=True)
     (base / "auth" / "bid_token.json").write_text(
         json.dumps(
-            {"access_token": "OK", "refresh_token": "R", "expires_at": time.time() + 3600}
+            {
+                "access_token": "OK",
+                "refresh_token": "R",
+                "expires_at": time.time() + 3600,
+            }
         )
     )
 
     refresh_called = {"called": False}
-    monkeypatch.setattr(sso_oidc, "refresh_token", lambda: refresh_called.__setitem__("called", True))
+    monkeypatch.setattr(
+        sso_oidc, "refresh_token", lambda: refresh_called.__setitem__("called", True)
+    )
     monkeypatch.setattr(sso_oidc, "_load_flow", lambda: None)
 
     st = sso_oidc.get_status()
@@ -796,11 +869,15 @@ def test_get_status_expired_no_refresh_token(monkeypatch, tmp_path):
     base.mkdir(parents=True)
     (base / "auth").mkdir(parents=True, exist_ok=True)
     (base / "auth" / "bid_token.json").write_text(
-        json.dumps({"access_token": "OLD", "expires_at": time.time() - 10})  # no refresh_token
+        json.dumps(
+            {"access_token": "OLD", "expires_at": time.time() - 10}
+        )  # no refresh_token
     )
 
     refresh_called = {"called": False}
-    monkeypatch.setattr(sso_oidc, "refresh_token", lambda: refresh_called.__setitem__("called", True))
+    monkeypatch.setattr(
+        sso_oidc, "refresh_token", lambda: refresh_called.__setitem__("called", True)
+    )
     monkeypatch.setattr(sso_oidc, "_load_flow", lambda: None)
 
     st = sso_oidc.get_status()
@@ -825,7 +902,11 @@ def test_get_token_refresh_persists_to_origin_store(monkeypatch, tmp_path):
     q_file = base / ".q_token.json"
     sso_file.write_text(
         json.dumps(
-            {"access_token": "OLD", "refresh_token": "R", "expires_at": time.time() - 10}
+            {
+                "access_token": "OLD",
+                "refresh_token": "R",
+                "expires_at": time.time() - 10,
+            }
         )
     )
 
@@ -833,7 +914,11 @@ def test_get_token_refresh_persists_to_origin_store(monkeypatch, tmp_path):
         # Simulate a successful sso refresh writing a fresh token to auth/bid_token.json.
         sso_file.write_text(
             json.dumps(
-                {"access_token": "NEW", "refresh_token": "R", "expires_at": time.time() + 3600}
+                {
+                    "access_token": "NEW",
+                    "refresh_token": "R",
+                    "expires_at": time.time() + 3600,
+                }
             )
         )
         return True
@@ -841,13 +926,16 @@ def test_get_token_refresh_persists_to_origin_store(monkeypatch, tmp_path):
     monkeypatch.setattr(sso_oidc, "refresh_token", fake_sso_refresh)
     monkeypatch.setattr(sso_oidc, "get_status", lambda: {"authenticated": False})
     monkeypatch.setattr(
-        sso_oidc, "_load_token", lambda: json.loads(sso_file.read_text()) if sso_file.exists() else None
+        sso_oidc,
+        "_load_token",
+        lambda: json.loads(sso_file.read_text()) if sso_file.exists() else None,
     )
     tok = backend.get_token()
     assert tok["access_token"] == "NEW"
     assert sso_file.exists()
     assert "expires_at" in json.loads(sso_file.read_text())
     assert not q_file.exists(), "get_token() must never write .q_token.json"
+
 
 def test_start_login_short_circuits_when_token_present(monkeypatch):
     """Clicking login (e.g. the dashboard button) while already authed must
@@ -856,14 +944,20 @@ def test_start_login_short_circuits_when_token_present(monkeypatch):
     already_authenticated instead."""
     import auth.sso_oidc as sso
 
-    monkeypatch.setattr(sso, "_load_token", lambda: {"access_token": "x", "expires_at": 9e12})
+    monkeypatch.setattr(
+        sso, "_load_token", lambda: {"access_token": "x", "expires_at": 9e12}
+    )
     started = {"n": 0}
 
     def fake_start(*a, **k):
         started["n"] += 1
         return mock.Mock()
 
-    monkeypatch.setattr(sso, "_client", lambda: type("C", (), {"start_device_authorization": fake_start})())
+    monkeypatch.setattr(
+        sso,
+        "_client",
+        lambda: type("C", (), {"start_device_authorization": fake_start})(),
+    )
     info = sso.start_login()
     assert info.get("already_authenticated") is True
     assert started["n"] == 0, "must not call AWS start_device_authorization when authed"
@@ -879,21 +973,30 @@ def test_invalid_grant_downgraded_when_token_present(monkeypatch):
 
     import auth.sso_oidc as sso
 
-    monkeypatch.setattr(sso, "_load_token", lambda: {"access_token": "x", "expires_at": 9e12})
+    monkeypatch.setattr(
+        sso, "_load_token", lambda: {"access_token": "x", "expires_at": 9e12}
+    )
+
     # Use the REAL _poll_once; make the boto3 client raise InvalidGrantException.
     class FakeClient:
         def create_token(self, **k):
-            raise ClientError({"Error": {"Code": "InvalidGrantException"}}, "create_token")
+            raise ClientError(
+                {"Error": {"Code": "InvalidGrantException"}}, "create_token"
+            )
+
     monkeypatch.setattr(sso, "_client", lambda: FakeClient())
     errs = []
+
     class H(logging.Handler):
         def emit(self, r):
             if r.levelno >= logging.ERROR:
                 errs.append(r.getMessage())
+
     sso.logger.addHandler(H())
     sso.logger.setLevel(logging.DEBUG)
-    phase = sso._poll_once({"client_id": "c", "client_secret": "s"},
-                           {"device_code": "dc"})
+    phase = sso._poll_once(
+        {"client_id": "c", "client_secret": "s"}, {"device_code": "dc"}
+    )
     assert phase.startswith("error:InvalidGrantException")
     assert not errs, "InvalidGrant with token present must not log ERROR"
 
@@ -903,10 +1006,12 @@ def test_unregister_stops_adapter(monkeypatch):
     (core doesn't invoke this hook yet, but it's the correct contract)."""
     import __init__ as p
     import adapter as real_adapter
+
     called = {"stop": False}
 
     def fake_stop():
         called["stop"] = True
+
     monkeypatch.setattr(real_adapter, "stop", fake_stop)
     p.unregister(ctx=None)
     assert called["stop"] is True
@@ -919,6 +1024,7 @@ def test_uninstall_removes_builder_block_and_enabled(tmp_path, monkeypatch):
     import sys
 
     import yaml
+
     sys.path.insert(0, ".")
     cfg = {
         "providers": {
@@ -972,6 +1078,7 @@ def test_aws_builder_resolves_as_cli_tui_model(monkeypatch):
     import sys
 
     from conftest import HERMES_AGENT_DIR
+
     sys.path.insert(0, str(HERMES_AGENT_DIR))
     from hermes_cli.config import get_compatible_custom_providers
 
@@ -992,7 +1099,12 @@ def test_aws_builder_resolves_as_cli_tui_model(monkeypatch):
     assert e.get("api_key") == "no-key-required", "keyless-by-design signal required"
     assert "key_env" not in e, "no dummy key_env; use no-key-required"
     surfaced = set(e.get("models", {}).keys())
-    assert surfaced == {"claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5", "auto"}
+    assert surfaced == {
+        "claude-sonnet-4.5",
+        "claude-sonnet-4",
+        "claude-haiku-4.5",
+        "auto",
+    }
 
 
 def test_register_provider_adopts_legacy_markerless_entry(monkeypatch, tmp_path):
@@ -1010,22 +1122,28 @@ def test_register_provider_adopts_legacy_markerless_entry(monkeypatch, tmp_path)
     import yaml
 
     from conftest import HERMES_AGENT_DIR
+
     sys.path.insert(0, str(HERMES_AGENT_DIR))
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     cfg_path = tmp_path / "config.yaml"
     # Legacy entry: our base_url, no marker, stale dummy key_env.
-    cfg_path.write_text(yaml.safe_dump({
-        "providers": {
-            "aws-builder": {
-                "name": "AWS Builder ID",
-                "base_url": "http://localhost:8088/v1",
-                "key_env": "AWS_BUILD_ADAPTER_DUMMY",
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "providers": {
+                    "aws-builder": {
+                        "name": "AWS Builder ID",
+                        "base_url": "http://localhost:8088/v1",
+                        "key_env": "AWS_BUILD_ADAPTER_DUMMY",
+                    }
+                }
             }
-        }
-    }))
+        )
+    )
 
     import _provider
+
     wrote = _provider.register_provider(8088)
     assert wrote is True, "legacy plugin entry must be adopted (rewritten)"
 
@@ -1035,7 +1153,9 @@ def test_register_provider_adopts_legacy_markerless_entry(monkeypatch, tmp_path)
     # into config.yaml (Hermes core warns "unknown config keys ignored" for
     # any key it doesn't know — that was the 2026-07-28 `_builder_managed`
     # log spam). Ownership is detected from base_url/name instead.
-    assert all(not k.startswith("_") or k == "_revision" for k in updated), "no private marker key written"
+    assert all(not k.startswith("_") or k == "_revision" for k in updated), (
+        "no private marker key written"
+    )
     assert "key_env" not in updated, "dummy key_env removed"
 
 
@@ -1050,22 +1170,28 @@ def test_register_provider_adopts_legacy_127_entry_by_base_url(monkeypatch, tmp_
     import yaml
 
     from conftest import HERMES_AGENT_DIR
+
     sys.path.insert(0, str(HERMES_AGENT_DIR))
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     cfg_path = tmp_path / "config.yaml"
     # Real legacy output of setup.sh: 127.0.0.1 host, name RENAMED by user.
-    cfg_path.write_text(yaml.safe_dump({
-        "providers": {
-            "aws-builder": {
-                "name": "My Renamed Builder",
-                "base_url": "http://127.0.0.1:8088/v1",
-                "key_env": "AWS_BUILD_ADAPTER_DUMMY",
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "providers": {
+                    "aws-builder": {
+                        "name": "My Renamed Builder",
+                        "base_url": "http://127.0.0.1:8088/v1",
+                        "key_env": "AWS_BUILD_ADAPTER_DUMMY",
+                    }
+                }
             }
-        }
-    }))
+        )
+    )
 
     import _provider
+
     wrote = _provider.register_provider(8088)
     assert wrote is True, "legacy 127.0.0.1 entry (renamed) must be adopted"
 
@@ -1082,25 +1208,33 @@ def test_register_provider_leaves_foreign_entry_alone(monkeypatch, tmp_path):
     import yaml
 
     from conftest import HERMES_AGENT_DIR
+
     sys.path.insert(0, str(HERMES_AGENT_DIR))
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     cfg_path = tmp_path / "config.yaml"
-    cfg_path.write_text(yaml.safe_dump({
-        "providers": {
-            "aws-builder": {
-                "name": "My Custom Endpoint",
-                "base_url": "https://example.com/v1",
-                "api_key": "«redacted:sk-…»",
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "providers": {
+                    "aws-builder": {
+                        "name": "My Custom Endpoint",
+                        "base_url": "https://example.com/v1",
+                        "api_key": "«redacted:sk-…»",
+                    }
+                }
             }
-        }
-    }))
+        )
+    )
     import _provider
+
     wrote = _provider.register_provider(8088)
     assert wrote is False, "foreign entry must be skipped"
     kept = yaml.safe_load(cfg_path.read_text())["providers"]["aws-builder"]
     assert kept["api_key"] == "«redacted:sk-…»", "user key preserved"
-    assert all(not k.startswith("_") or k == "_revision" for k in kept), "foreign entry not stamped with private key"
+    assert all(not k.startswith("_") or k == "_revision" for k in kept), (
+        "foreign entry not stamped with private key"
+    )
 
 
 def test_plugin_model_enum_matches_provider_block():
@@ -1113,6 +1247,7 @@ def test_plugin_model_enum_matches_provider_block():
     include 'auto' plus the concrete Claude variants. The ask_q schema
     enum also includes 'auto' so the TUI picker can surface it."""
     import sys
+
     sys.path.insert(0, ".")
 
     import backend
@@ -1122,12 +1257,22 @@ def test_plugin_model_enum_matches_provider_block():
     # plus all concrete Claude variants.
     assert "auto" in catalog, "auto must be in list_models()"
     concrete = {"claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5"}
-    assert concrete <= catalog, f"missing concrete models in catalog: {concrete - catalog}"
+    assert concrete <= catalog, (
+        f"missing concrete models in catalog: {concrete - catalog}"
+    )
     # provider block = auto + concrete variants
-    expected_provider = {"auto", "claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5"}
-    assert catalog == expected_provider, f"provider block drift: {catalog ^ expected_provider}"
+    expected_provider = {
+        "auto",
+        "claude-sonnet-4.5",
+        "claude-sonnet-4",
+        "claude-haiku-4.5",
+    }
+    assert catalog == expected_provider, (
+        f"provider block drift: {catalog ^ expected_provider}"
+    )
     # ask_q schema enum includes auto and all concrete variants
     from __init__ import _TOOLS
+
     schema = next(s for name, s, *_ in _TOOLS if name == "ask_q")
     enum = schema["parameters"]["properties"]["model"]["enum"]
     assert "auto" in enum, "ask_q model enum must include 'auto'"
@@ -1146,24 +1291,28 @@ def test_adapter_end_to_end_openai_wire(monkeypatch):
     import adapter as real_adapter
 
     captured = {}
+
     def fake_chat(prompt, model="auto", conversation_id=None):
         captured["prompt"] = prompt
         captured["model"] = model
         return ("ADAPTER-OK", None, None)
+
     monkeypatch.setattr(real_adapter.backend, "chat", fake_chat)
 
     _srv, port = real_adapter.start(host="127.0.0.1", port=0)
     try:
         req = urllib.request.Request(
             f"http://127.0.0.1:{port}/v1/chat/completions",
-            data=json.dumps({
-                "model": "claude-sonnet-4.5",
-                "messages": [
-                    {"role": "system", "content": "Be terse."},
-                    {"role": "user", "content": "ping"},
-                ],
-                "stream": True,
-            }).encode(),
+            data=json.dumps(
+                {
+                    "model": "claude-sonnet-4.5",
+                    "messages": [
+                        {"role": "system", "content": "Be terse."},
+                        {"role": "user", "content": "ping"},
+                    ],
+                    "stream": True,
+                }
+            ).encode(),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
@@ -1185,6 +1334,7 @@ def test_adapter_healthz():
     import urllib.request
 
     import adapter as real_adapter
+
     _srv, port = real_adapter.start(host="127.0.0.1", port=0)
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=5) as r:
@@ -1228,7 +1378,10 @@ def test_backend_unknown_model_falls_back_to_auto():
 
 # --- build_cli.py: standalone copy-device-link login method ---
 
-def test_cli_login_prints_copyable_link_and_polls_to_success(monkeypatch, tmp_path, capsys):
+
+def test_cli_login_prints_copyable_link_and_polls_to_success(
+    monkeypatch, tmp_path, capsys
+):
     """`builder login` must print the verification URL + user_code (the
     copy-device-link UX) and then poll get_status() to completion, writing the
     token into the plugin's OWN store (auth/bid_token.json), never the Hermes
@@ -1259,16 +1412,30 @@ def test_cli_login_prints_copyable_link_and_polls_to_success(monkeypatch, tmp_pa
     def fake_get_status():
         state["n"] += 1
         if state["n"] == 1:
-            return {"authenticated": False, "phase": "awaiting_approval",
-                    "verification_uri_complete": "https://example.com/verify?user_code=ABCD-EFGH",
-                    "user_code": "ABCD-EFGH", "expires_in": 600, "interval": 1}
+            return {
+                "authenticated": False,
+                "phase": "awaiting_approval",
+                "verification_uri_complete": "https://example.com/verify?user_code=ABCD-EFGH",
+                "user_code": "ABCD-EFGH",
+                "expires_in": 600,
+                "interval": 1,
+            }
         # simulate the human approving: write the token, then report authed.
         (base / "auth" / "bid_token.json").write_text(
-            json.dumps({"access_token": "T", "refresh_token": "R",
-                        "expires_at": time.time() + 3600})
+            json.dumps(
+                {
+                    "access_token": "T",
+                    "refresh_token": "R",
+                    "expires_at": time.time() + 3600,
+                }
+            )
         )
-        return {"authenticated": True, "phase": "authenticated",
-                "token_expires_at": time.time() + 3600, "refreshed": False}
+        return {
+            "authenticated": True,
+            "phase": "authenticated",
+            "token_expires_at": time.time() + 3600,
+            "refreshed": False,
+        }
 
     monkeypatch.setattr(sso_oidc, "get_status", fake_get_status)
 
@@ -1277,7 +1444,9 @@ def test_cli_login_prints_copyable_link_and_polls_to_success(monkeypatch, tmp_pa
 
     assert rc == 0, "login should succeed on approval"
     assert "ABCD-EFGH" in out, "user_code must be printed (copy-device-link)"
-    assert "https://example.com/verify?user_code=ABCD-EFGH" in out, "verification URL must be printed"
+    assert "https://example.com/verify?user_code=ABCD-EFGH" in out, (
+        "verification URL must be printed"
+    )
     # token written to the plugin's own store, not the Hermes pool.
     assert (base / "auth" / "bid_token.json").exists()
 
@@ -1293,14 +1462,22 @@ def test_cli_login_already_authenticated(monkeypatch, tmp_path, capsys):
     base = tmp_path / "builder"
     (base / "auth").mkdir(parents=True, exist_ok=True)
     (base / "auth" / "bid_token.json").write_text(
-        json.dumps({"access_token": "T", "refresh_token": "R", "expires_at": time.time() + 3600})
+        json.dumps(
+            {
+                "access_token": "T",
+                "refresh_token": "R",
+                "expires_at": time.time() + 3600,
+            }
+        )
     )
     started = {"n": 0}
     monkeypatch.setattr(
         sso_oidc,
         "start_login",
-        lambda: started.__setitem__("n", started["n"] + 1)
-        or {"already_authenticated": True, "phase": "authenticated"},
+        lambda: (
+            started.__setitem__("n", started["n"] + 1)
+            or {"already_authenticated": True, "phase": "authenticated"}
+        ),
     )
 
     rc = cli.main(["login"])
@@ -1322,8 +1499,15 @@ def test_cli_status_and_whoami_report_store_state(monkeypatch, tmp_path, capsys)
     base = tmp_path / "builder"
     (base / "auth").mkdir(parents=True, exist_ok=True)
     (base / "auth" / "bid_token.json").write_text(
-        json.dumps({"access_token": "T", "refresh_token": "R", "expires_at": time.time() + 3600,
-                    "token_type": "Bearer", "scopes": ["codewhisperer:conversations"]})
+        json.dumps(
+            {
+                "access_token": "T",
+                "refresh_token": "R",
+                "expires_at": time.time() + 3600,
+                "token_type": "Bearer",
+                "scopes": ["codewhisperer:conversations"],
+            }
+        )
     )
 
     assert cli.main(["status"]) == 0
@@ -1344,10 +1528,18 @@ def test_cli_logout_clears_store(monkeypatch, tmp_path, capsys):
     base = tmp_path / "builder"
     (base / "auth").mkdir(parents=True, exist_ok=True)
     (base / "auth" / "bid_token.json").write_text(
-        json.dumps({"access_token": "T", "refresh_token": "R", "expires_at": time.time() + 3600})
+        json.dumps(
+            {
+                "access_token": "T",
+                "refresh_token": "R",
+                "expires_at": time.time() + 3600,
+            }
+        )
     )
     cleared = {"n": 0}
-    monkeypatch.setattr(sso_oidc, "logout", lambda: cleared.__setitem__("n", cleared["n"] + 1))
+    monkeypatch.setattr(
+        sso_oidc, "logout", lambda: cleared.__setitem__("n", cleared["n"] + 1)
+    )
 
     assert cli.main(["logout"]) == 0
     assert cleared["n"] == 1
@@ -1355,6 +1547,7 @@ def test_cli_logout_clears_store(monkeypatch, tmp_path, capsys):
 
 
 # --- backend.chat(): wire-protocol body (tools / history / modelId) ---
+
 
 class _FakeResp:
     status_code = 200
@@ -1387,7 +1580,9 @@ def test_chat_wires_userinputmessagecontext_and_modelid(monkeypatch):
     monkeypatch.setattr(backend, "requests", type("R", (), {"post": FakePost()})())
     monkeypatch.setattr(backend, "get_token", lambda: {"access_token": "TOK"})
 
-    tools = [{"type": "function", "function": {"name": "fs_read", "description": "read"}}]
+    tools = [
+        {"type": "function", "function": {"name": "fs_read", "description": "read"}}
+    ]
     history = [{"role": "user", "content": "prior"}]
     answer, _cid, _tuid = backend.chat(
         "current prompt",
@@ -1425,13 +1620,17 @@ def test_chat_omits_context_when_no_tools(monkeypatch):
     class FakePost:
         def __call__(self, url, data=None, headers=None, timeout=None, stream=False):
             captured["data"] = data
-            return _FakeResp('{"assistantResponseEvent":{"content":"hi","modelId":"auto"}}')
+            return _FakeResp(
+                '{"assistantResponseEvent":{"content":"hi","modelId":"auto"}}'
+            )
 
     monkeypatch.setattr(backend, "requests", type("R", (), {"post": FakePost()})())
     monkeypatch.setattr(backend, "get_token", lambda: {"access_token": "TOK"})
 
     backend.chat("plain prompt")
-    msg = json.loads(captured["data"])["conversationState"]["currentMessage"]["userInputMessage"]
+    msg = json.loads(captured["data"])["conversationState"]["currentMessage"][
+        "userInputMessage"
+    ]
     assert "userInputMessageContext" not in msg
     assert msg["content"] == "plain prompt"
 
@@ -1447,6 +1646,7 @@ def test_get_token_handles_none_status(monkeypatch):
     monkeypatch.setattr(sso_oidc, "get_status", lambda: None)
     monkeypatch.setattr(sso_oidc, "refresh_token", lambda: False)
     import pytest
+
     with pytest.raises(RuntimeError, match="No valid Amazon Q token"):
         backend.get_token()
 
@@ -1457,8 +1657,10 @@ def test_adapter_default_port_avoids_gateway_8077():
     caused a silent '[Errno 48]' whenever the gateway ran. DEFAULT_PORT must be
     8088."""
     import adapter as real_adapter
+
     assert real_adapter.DEFAULT_PORT == 8088
     import os
+
     os.environ.pop("AWS_BUILD_ADAPTER_PORT", None)
     assert int(os.environ.get("AWS_BUILD_ADAPTER_PORT", "8088")) == 8088
 
@@ -1490,11 +1692,12 @@ def test_q_debug_includes_render_prefs(mod, monkeypatch):
     """q_debug surfaces the active host render prefs so a Q agent can adapt."""
     # _handle_q_debug does `from . import _format` -> resolves under mod's package.
     fmt_mod = __import__(f"{mod.__package__}._format", fromlist=["_format"])
-    monkeypatch.setattr(fmt_mod, "load_render_prefs",
-                        lambda: {"render_mode": "cli", "theme": "ember"})
+    monkeypatch.setattr(
+        fmt_mod, "load_render_prefs", lambda: {"render_mode": "cli", "theme": "ember"}
+    )
     out = mod._handle_q_debug({})
     import json as _json
+
     data = _json.loads(out)
     assert data["success"] is True
     assert data["render"] == {"render_mode": "cli", "theme": "ember"}
-
