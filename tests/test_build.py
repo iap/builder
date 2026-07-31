@@ -929,10 +929,12 @@ def test_uninstall_removes_builder_block_and_enabled(tmp_path, monkeypatch):
         "model": {"provider": "kilo"},
     }
     path = tmp_path / "config.yaml"
-    yaml.safe_dump(cfg, open(path, "w"), sort_keys=False)
+    with open(path, "w") as fh:
+        yaml.safe_dump(cfg, fh, sort_keys=False)
 
     # replicate the uninstall.py block-removal logic
-    lines = open(path).read().splitlines()
+    with open(path) as fh:
+        lines = fh.read().splitlines()
     out, drop = [], False
     for ln in lines:
         if ln.strip() == "builder:":
@@ -944,9 +946,11 @@ def test_uninstall_removes_builder_block_and_enabled(tmp_path, monkeypatch):
             else:
                 continue
         out.append(ln)
-    open(path, "w").write("\n".join(out).rstrip("\n") + "\n")
+    with open(path, "w") as fh:
+        fh.write("\n".join(out).rstrip("\n") + "\n")
 
-    c = yaml.safe_load(open(path))
+    with open(path) as fh:
+        c = yaml.safe_load(fh)
     assert "builder" not in c.get("providers", {})
     assert "example-provider" in c["providers"]
     c["plugins"]["enabled"] = [x for x in c["plugins"]["enabled"] if x != "builder"]

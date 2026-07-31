@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """Verify the builder plugin loads + tools work (HEADLESS, no browser, no secrets)."""
 
@@ -13,7 +12,7 @@ import types
 # would point at the temp dir, not the real installed plugin.
 _REAL_HERMES_HOME = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
 
-from conftest import load_plugin
+from conftest import load_plugin  # noqa: E402
 
 errors = []
 
@@ -41,7 +40,8 @@ def check_drift() -> None:
     rev_file = os.path.join(home, "plugins", "builder", "REVISION")
     if not os.path.isfile(rev_file):
         return  # not installed, or pre-stamp install — nothing to compare
-    installed = open(rev_file).read().strip()
+    with open(rev_file) as fh:
+        installed = fh.read().strip()
     repo_root = os.path.dirname(os.path.abspath(__file__))
     try:
         head = subprocess.run(
