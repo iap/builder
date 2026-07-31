@@ -25,11 +25,24 @@ jobs:
         run: uv run ruff format --check .
       - name: Tests
         run: uv run pytest -x -q tests
+
+  verify:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.5.x"
+      - run: uv --version
+      - name: Install deps
+        run: uv sync --extra dev
       - name: Verify
         run: uv run python verify.py
 
   integration-test:
     runs-on: ubuntu-latest
+    needs: verify
     steps:
       - uses: actions/checkout@v4
         with:
