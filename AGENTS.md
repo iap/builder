@@ -148,3 +148,4 @@ Before every PR:
 - [ ] Secret files still written via `_write_secret()` (chmod 600, atomic)
 - [ ] No new hardcoded credentials or endpoints beyond the pinned Q/OIDC hosts
 - [ ] No raw token returned from any tool handler or dashboard endpoint
+- [ ] Workflow actions in `.github/workflows/*.yml` are pinned to commit SHAs, not mutable tags like `@v4` or `@v3`

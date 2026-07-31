@@ -10,8 +10,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+      - uses: astral-sh/setup-uv@094aa226ed0e8f079adf9b0803105ffdac7bb465
         with:
           version: "0.5.x"
       - run: uv --version
@@ -30,8 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+      - uses: astral-sh/setup-uv@094aa226ed0e8f079adf9b0803105ffdac7bb465
         with:
           version: "0.5.x"
       - run: uv --version
@@ -44,14 +44,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: verify
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
           repository: NousResearch/hermes-agent
           path: hermes-agent
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
           path: plugin-src
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@094aa226ed0e8f079adf9b0803105ffdac7bb465
         with:
           version: "0.5.x"
       - run: uv --version
