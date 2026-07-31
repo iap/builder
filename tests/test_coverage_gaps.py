@@ -151,3 +151,58 @@ def test_load_tags_exception_returns_empty():
     from backend import load_tags
     with patch("builtins.open", side_effect=OSError("no file")):
         assert load_tags() == []
+
+
+# --- _provider.py: register/unregister body ---
+
+def _make_hermes_cli_mock(initial_config=None):
+    import sys, types, copy
+    saved = [copy.deepcopy(initial_config or {})]
+    fake_cfg = types.ModuleType('hermes_cli.config')
+    fake_cfg.load_config = lambda: copy.deepcopy(saved[0])
+    fake_cfg.save_config = lambda c: saved.__setitem__(0, copy.deepcopy(c))
+    fake_hermes = types.ModuleType('hermes_cli')
+    fake_hermes.config = fake_cfg
+    return fake_hermes, fake_cfg, saved
+
+
+def test_provider_register_writes_entry(monkeypatch):
+    import sys, _provider
+    fake_hermes, fake_cfg, saved = _make_hermes_cli_mock()
+    monkeypatch.setitem(sys.modules, 'hermes_cli', fake_hermes)
+    monkeypatch.setitem(sys.modules, 'hermes_cli.config', fake_cfg)
+    result = _provider.register_provider(8088)
+    assert result is True
+    assert _provider.PROVIDER_SLUG in saved[0].get('providers', {})
+
+
+def test_provider_register_skips_user_managed(monkeypatch):
+    import sys, _provider
+    existing = {'base_url': 'http://example.com/v1', 'name': 'Other'}
+    cfg = {'providers': {_provider.PROVIDER_SLUG: existing}}
+    fake_hermes, fake_cfg, saved = _make_hermes_cli_mock(cfg)
+    monkeypatch.setitem(sys.modules, 'hermes_cli', fake_hermes)
+    monkeypatch.setitem(sys.modules, 'hermes_cli.config', fake_cfg)
+    result = _provider.register_provider(8088)
+    assert result is False
+
+
+def test_provider_unregister_removes_our_entry(monkeypatch):
+    import sys, _provider
+    cfg = {'providers': {_provider.PROVIDER_SLUG: {'base_url': 'http://localhost:8088/v1'}}}
+    fake_hermes, fake_cfg, saved = _make_hermes_cli_mock(cfg)
+    monkeypatch.setitem(sys.modules, 'hermes_cli', fake_hermes)
+    monkeypatch.setitem(sys.modules, 'hermes_cli.config', fake_cfg)
+    result = _provider.unregister_provider()
+    assert result is True
+    assert _provider.PROVIDER_SLUG not in saved[0].get('providers', {})
+
+
+def test_provider_unregister_leaves_foreign_entry(monkeypatch):
+    import sys, _provider
+    cfg = {'providers': {_provider.PROVIDER_SLUG: {'base_url': 'http://example.com/v1'}}}
+    fake_hermes, fake_cfg, saved = _make_hermes_cli_mock(cfg)
+    monkeypatch.setitem(sys.modules, 'hermes_cli', fake_hermes)
+    monkeypatch.setitem(sys.modules, 'hermes_cli.config', fake_cfg)
+    result = _provider.unregister_provider()
+    assert result is False
