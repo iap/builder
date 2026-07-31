@@ -31,7 +31,7 @@ PROVIDER_NAME = "AWS Builder"
 # config free of undocumented keys.
 
 
-def _declared_models() -> list[dict]:
+def _declared_models() -> list[str]:
     """Return the plugin's declared models via the single source of truth.
 
     Delegates to ``backend.list_models()`` (which reads the ``models:``

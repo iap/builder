@@ -14,6 +14,9 @@ jobs:
       - uses: astral-sh/setup-uv@v3
         with:
           version: "0.5.x"
+      - run: uv --version
+      - run: uv tool install ruff@0.15
+      - run: uv run ruff --version
       - name: Install deps
         run: uv sync --extra dev
       - name: Lint

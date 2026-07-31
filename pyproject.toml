@@ -21,6 +21,7 @@ dev = [
     "openai>=1.0",
     "botocore>=1.42",
     "cryptography>=48.0.1",
+    "ruff>=0.15",
 ]
 
 [tool.uv]
@@ -32,6 +33,7 @@ dev-dependencies = [
     "openai>=1.0",
     "botocore>=1.42",
     "cryptography>=48.0.1",
+    "ruff>=0.15",
 ]
 
 [tool.hatch.build.targets.wheel]
