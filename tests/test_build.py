@@ -1085,7 +1085,9 @@ def test_aws_builder_resolves_as_cli_tui_model(monkeypatch):
     try:
         from hermes_cli.config import get_compatible_custom_providers
     except ImportError:
-        pytest.skip("hermes_cli not importable; skipping real-core resolver integration test")
+        pytest.skip(
+            "hermes_cli not importable; skipping real-core resolver integration test"
+        )
 
     provider_block = {
         "name": "AWS Builder ID",
