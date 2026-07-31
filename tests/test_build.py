@@ -1013,7 +1013,14 @@ def test_unregister_stops_adapter(monkeypatch):
         called["stop"] = True
 
     monkeypatch.setattr(real_adapter, "stop", fake_stop)
-    p.unregister(ctx=None)
+    # unregister() is idempotent-guarded: simulate a registered plugin state.
+    p._registered = True
+    p.unregister(
+        ctx=types.SimpleNamespace(
+            register_hook=lambda *a, **k: None,
+            unregister_hook=lambda *a, **k: None,
+        )
+    )
     assert called["stop"] is True
 
 

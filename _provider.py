@@ -163,19 +163,13 @@ def register_provider(port: int) -> bool:
     def _is_user_managed(entry: Any) -> bool:
         """True if an existing entry is a genuine user config we must not clobber.
 
-        A managed entry (ours, with the marker) is always rewritten with the
-        current signal. A legacy plugin entry written before the marker existed
-        (old setup.sh / hand-edits) is still ours — adopt it (rebuild + mark) so
-        a dashboard rebuild self-heals stale fields (e.g. the old
-        ``key_env: AWS_BUILD_ADAPTER_DUMMY`` that triggered a false 'No API key'
-        notification). Only a real foreign entry — different base_url/name and no
-        marker — is treated as user-managed.
+        Ownership is determined from observable fields only: the adapter's
+        loopback base_url (127.0.0.1/localhost:<adapter port>). We do not
+        write undocumented marker keys into config.yaml. A foreign entry with
+        a different base_url, even if named "AWS Builder", is left untouched.
         """
         if not isinstance(entry, dict):
             return False
-        # Ours (we wrote it, or an old setup.sh wrote the same adapter endpoint):
-        # caller adopts/rewrites it. A foreign/user-managed entry (different
-        # base_url and a name we don't own) is left untouched.
         return not _is_our_entry(entry)
 
     if isinstance(existing, dict) and _is_user_managed(existing):
@@ -248,6 +242,8 @@ def unregister_provider() -> bool:
     """Remove the builder-managed provider entry, if present.
 
     Returns True if an entry was removed. Leaves user-managed entries alone.
+    Removes both the current slug ``aws-builder`` and the legacy ``builder``
+    slug from pre-rename installs.
     """
     try:
         from hermes_cli.config import load_config, save_config
@@ -260,7 +256,8 @@ def unregister_provider() -> bool:
         config = load_config()
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "builder: load_config failed, skipping provider unregistration: %s", exc
+            "builder: load_config failed, skipping provider unregistration: %s",
+            exc,
         )
         return False
     # Deep-copy: hermes_cli.config caches the loaded dict; never mutate it
@@ -271,15 +268,24 @@ def unregister_provider() -> bool:
     providers = config.get("providers")
     if not isinstance(providers, dict):
         return False
-    entry = providers.get(PROVIDER_SLUG)
-    if not isinstance(entry, dict) or not _is_our_entry(entry):
-        return False
 
-    providers.pop(PROVIDER_SLUG, None)
-    try:
-        save_config(config)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("builder: save_config failed, provider not removed: %s", exc)
-        return False
-    logger.info("builder: removed provider '%s'", PROVIDER_SLUG)
-    return True
+    removed = False
+    for slug in (PROVIDER_SLUG, "builder"):
+        entry = providers.get(slug)
+        if not isinstance(entry, dict) or not _is_our_entry(entry):
+            continue
+        providers.pop(slug, None)
+        removed = True
+
+    if removed:
+        if not providers:
+            config.pop("providers", None)
+        try:
+            save_config(config)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("builder: save_config failed, provider not removed: %s", exc)
+            return False
+        logger.info("builder: removed provider entries for aws-builder/builder")
+        return True
+
+    return False

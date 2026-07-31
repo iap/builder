@@ -135,14 +135,16 @@ def _tool_result_helpers():
     return _result, _error
 
 
+_TOOL_RESULT, _TOOL_ERROR = _tool_result_helpers()
+_registered = False
+
+
 def _success(data: dict[str, Any]) -> str:
-    tool_result, _ = _tool_result_helpers()
-    return tool_result(success=True, **data)
+    return _TOOL_RESULT(success=True, **data)
 
 
 def _error(message: str, code: str = "error") -> str:
-    _, tool_error = _tool_result_helpers()
-    return tool_error(message, code=code, success=False)
+    return _TOOL_ERROR(message, code=code, success=False)
 
 
 def _check_available() -> bool:
@@ -414,6 +416,10 @@ def register(ctx) -> None:
     (NOT a separate standalone server). If it fails to bind
     we log and continue; the ask_q tool still works tool-only.
     """
+    global _registered
+    if _registered:
+        return
+
     # Register the plugin-level tool guard as a pre_tool_call hook.
     # Hermes core calls get_pre_tool_call_block_message() before
     # dispatching each tool call; the first {"action": "block"}
@@ -429,6 +435,7 @@ def register(ctx) -> None:
             check_fn=check_fn,
             emoji=emoji,
         )
+
     # Best-effort: start the local OpenAI-compatible adapter so Hermes can
     # route chat turns to builder as a model. No-op if already running.
     try:
@@ -436,9 +443,13 @@ def register(ctx) -> None:
     except ImportError:  # __main__ / direct
         import adapter  # type: ignore
     port = int(__import__("os").environ.get("AWS_BUILD_ADAPTER_PORT", "8088"))
+    actual = None
     try:
-        srv, actual = adapter.start(port=port)
-        print(f"[builder] OpenAI adapter listening on :{actual} (model-provider mode)")
+        _srv, actual = adapter.start(port=port)
+        logger.info(
+            "OpenAI adapter listening on :%s (model-provider mode)",
+            actual,
+        )
     except OSError as exc:
         # If the adapter is already running (another active Hermes session
         # bound the port), that is healthy — skip the warning. Surface
@@ -448,10 +459,10 @@ def register(ctx) -> None:
             logger.warning(
                 "builder adapter failed to start (tool-only mode OK): %s", exc
             )
-        _srv, actual = None, None
+        _srv = None
     except Exception as exc:  # noqa: BLE001
         logger.warning("builder adapter failed to start (tool-only mode OK): %s", exc)
-        _srv, actual = None, None
+        _srv = None
     # Surface the adapter as a selectable model provider in the dashboard
     # Models picker (see https://github.com/iap/builder/issues/20). Best-effort:
     # if config is unavailable or a user already manages this provider, skip.
@@ -462,6 +473,8 @@ def register(ctx) -> None:
             import _provider  # type: ignore
         _provider.register_provider(actual)
 
+    _registered = True
+
 
 def unregister(ctx) -> None:
     """Best-effort teardown: stop the local OpenAI adapter so the :8088
@@ -469,13 +482,17 @@ def unregister(ctx) -> None:
     exit). Hermes core does not currently invoke this hook, but defining
     it is the correct plugin contract and makes reinstall/rebind clean.
     """
+    global _registered
+    if not _registered:
+        return
+
     try:
         from . import adapter  # package import
     except ImportError:  # __main__ / direct
         import adapter  # type: ignore
     try:
         adapter.stop()
-        print("[builder] OpenAI adapter stopped (model-provider mode off)")
+        logger.info("OpenAI adapter stopped (model-provider mode off)")
     except Exception as exc:  # noqa: BLE001
         logger.warning("builder adapter stop failed (ignore): %s", exc)
     # Drop the model-provider entry we registered (no-op if user-managed).
@@ -487,3 +504,10 @@ def unregister(ctx) -> None:
         _provider.unregister_provider()
     except Exception as exc:  # noqa: BLE001
         logger.warning("builder provider unregister failed (ignore): %s", exc)
+
+    try:
+        ctx.unregister_hook("pre_tool_call", _plugin_pre_tool_call)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("builder hook unregister failed (ignore): %s", exc)
+
+    _registered = False

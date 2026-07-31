@@ -4,7 +4,7 @@
 # WHY: Hermes routes chat through providers declared in ${HERMES_HOME:-$HOME/.hermes}/config.yaml
 # with transport: openai_chat. The plugin ships a self-contained OpenAI-
 # compatible adapter (adapter.py, launched by register()) that translates to
-# Amazon Q. This script adds the providers: builder entry pointing at that
+# Amazon Q. This script adds the providers: aws-builder entry pointing at that
 # adapter (localhost :8088) — no daemon, no orphaned ref.
 #
 # SAFE: idempotent (skips if already present), always backs up config.yaml
@@ -19,7 +19,6 @@ set -euo pipefail
 CONFIG="${HERMES_HOME:-$HOME/.hermes}/config.yaml"
 BACKUP="${CONFIG}.bak.$(date +%Y%m%d_%H%M%S)"
 PORT="${AWS_BUILD_ADAPTER_PORT:-8088}"
-
 
 if [[ ! -f "$CONFIG" ]]; then
   echo "✗ config.yaml not found at $CONFIG" >&2
@@ -43,21 +42,6 @@ else
     || echo "  (skipped REVISION stamp)" >&2
 fi
 
-# Idempotency: already present? Match the provider key specifically
-# (^aws-builder:), NOT a bare `builder:` which also appears under unrelated
-# keys like `plugins.entries.builder:` — a loose match there caused setup.sh
-# to falsely report "already present" and skip (re)writing the provider entry
-# even when providers.aws-builder was actually absent (see issue from #26).
-#
-# IMPORTANT: even when the provider block exists, we still run the Python
-# updater below. This ensures that if the model catalog changes (new models
-# added, models removed, default model changed), config.yaml is always
-# brought up to date. The updater merges the current catalog with any
-# user-customized fields (name, api_key, etc.) so nothing is lost.
-#
-# Previously setup.sh skipped the entire update when the provider key
-# was already present, which left config.yaml stale after plugin upgrades.
-
 # Always run the Python updater so config.yaml stays current with the
 # plugin's declared model catalog (including new models, default model
 # changes, and the _revision bump that forces a re-read).
@@ -66,9 +50,36 @@ fi
 cp "$CONFIG" "$BACKUP"
 echo "✓ backed up config → $BACKUP"
 
-# Insert the block as a top-level providers: key, using Python
-# (reliable indentation handling). Idempotent: only if absent.
-# Write the block to a temp file (real newlines, not escaped).
+# Detect existing providers: block indentation so the inserted aws-builder
+# block matches the file's style instead of hard-coding 2 spaces.
+INDENT=$(python3 - "$CONFIG" <<'PY'
+import sys
+from pathlib import Path
+
+cfg = Path(sys.argv[1])
+if not cfg.exists():
+    raise SystemExit(2)
+text = cfg.read_text()
+for line in text.splitlines():
+    if line.strip() == "providers:":
+        # Next non-empty line under providers: determines indent
+        idx = text.splitlines().index(line)
+        for nxt in text.splitlines()[idx + 1:]:
+            if nxt.strip():
+                indent = len(nxt) - len(nxt.lstrip())
+                print(max(indent, 2))
+                raise SystemExit(0)
+        print(2)
+        raise SystemExit(0)
+print(2)
+PY
+)
+if [[ ! "$INDENT" =~ ^[0-9]+$ ]]; then
+  INDENT=2
+fi
+
+# Build indented provider block lines and pass via a temp file so
+# multiline YAML does not break shell argument passing on bash 3.2.
 BLOCK_FILE="$(mktemp)"
 cat > "$BLOCK_FILE" <<EOF
   aws-builder:
@@ -83,23 +94,38 @@ cat > "$BLOCK_FILE" <<EOF
       - claude-haiku-4.5
 EOF
 
-python3 - "$CONFIG" "$BLOCK_FILE" <<'PY'
-import sys, yaml
+# Rewrite the temp file with the detected indent.
+python3 - "$CONFIG" "$INDENT" "$BLOCK_FILE" <<'PY'
+import sys
+from pathlib import Path
 
-cfg_path, blockfile = sys.argv[1], sys.argv[2]
-block = open(blockfile).read().rstrip("\n")
+cfg_path, indent_str, blockfile = sys.argv[1], sys.argv[2], sys.argv[3]
+indent = int(indent_str)
+raw = Path(cfg_path).read_text()
+block = Path(blockfile).read_text().rstrip("\n")
+prefix = " " * indent
+lines = []
+for line in block.splitlines():
+    if line.startswith("  "):
+        lines.append(prefix + line[2:])
+    else:
+        lines.append(line)
+block = "\n".join(lines)
 
-with open(cfg_path) as f:
-    raw = f.read()
+# Re-parse with a fixed prefix width so YAML loading is based on config
+# content, not shell-quoted text.
+prefix = " " * indent
+expected_prefix = prefix + "aws-builder:\n"
 
-# If aws-builder already exists, update it in place rather than skipping.
-# This ensures config.yaml always reflects the current model catalog
-# (including newly added models like 'auto' after plugin upgrades).
-if "aws-builder:" in raw:
-    c = yaml.safe_load(raw) or {}
+if expected_prefix in raw:
+    c = {}
+    try:
+        import yaml
+        c = yaml.safe_load(raw) or {}
+    except Exception:
+        c = {}
     providers = c.setdefault("providers", {})
 
-    # Parse the block to extract the model list.
     new_models = {}
     current_model = None
     in_models = False
@@ -113,28 +139,21 @@ if "aws-builder:" in raw:
             m = stripped[2:].strip()
             new_models[m] = {}
         elif in_models and stripped and not stripped.startswith("-") and not stripped.startswith("#"):
-            # key: {} entry
             if ":" in stripped:
                 k = stripped.split(":")[0].strip()
-                if k and k != "":
+                if k:
                     new_models[k] = {}
-        elif in_models and not stripped:
-            pass  # blank line within models block
 
     existing = providers.get("aws-builder", {})
     if isinstance(existing, dict):
-        # Preserve user-customized fields (name, api_key, etc.) but
-        # update the model catalog and transport/base_url.
         existing["models"] = new_models
         if current_model:
             existing["model"] = current_model
-        # Keep the existing base_url or set the default
-        existing.setdefault("base_url", "http://localhost:8088/v1")
+        existing.setdefault("base_url", f"http://localhost:8088/v1")
         existing.setdefault("transport", "openai_chat")
         existing.setdefault("api_key", "no-key-required")
         providers["aws-builder"] = existing
     else:
-        # Existing entry is not a dict (unlikely but guard).
         providers["aws-builder"] = {
             "name": "AWS Builder",
             "base_url": "http://localhost:8088/v1",
@@ -144,62 +163,84 @@ if "aws-builder:" in raw:
             "models": new_models,
         }
 
-    with open(cfg_path, "w") as f:
-        yaml.safe_dump(c, f, default_flow_style=False, sort_keys=False)
+    try:
+        import yaml
+        Path(cfg_path).write_text(
+            yaml.safe_dump(c, default_flow_style=False, sort_keys=False) + "\n"
+        )
+    except Exception as exc:
+        print(f"✗ failed to update config: {exc}", file=sys.stderr)
+        sys.exit(2)
     print("✓ updated providers: aws-builder in config.yaml (model catalog refreshed)")
-    # Don't also append the block — we're done.
     sys.exit(0)
 
-# No aws-builder entry yet — insert inside existing providers: block or append new one.
+# No aws-builder entry yet — insert under existing providers: block or append new one.
 lines = raw.splitlines()
-if any(l.strip() == "providers:" for l in lines):
+if any(line.strip() == "providers:" for line in lines):
     out, i, n, in_prov, done = [], 0, len(lines), False, False
     while i < n:
         out.append(lines[i])
-        if not done and in_prov and (
-            i + 1 == n or (lines[i + 1] and not lines[i + 1].startswith("  "))
+        if (
+            not done
+            and in_prov
+            and (i + 1 == n or (lines[i + 1] and not lines[i + 1].startswith(prefix)))
         ):
             out.extend(block.splitlines())
             done = True
-        if lines[i] == "providers:":
+        if lines[i].strip() == "providers:":
             in_prov = True
-        elif lines[i] and not lines[i].startswith("  ") and lines[i] != "providers:":
-            in_prov = False  # left the providers block (next top-level key)
+        elif lines[i] and not lines[i].startswith(prefix) and lines[i].strip() != "providers:":
+            in_prov = False
         i += 1
-    open(cfg_path, "w").write("\n".join(out) + "\n")
+    Path(cfg_path).write_text("\n".join(out) + "\n")
 else:
     # No providers: block yet — append one with the aws-builder entry.
     with open(cfg_path, "a") as fh:
-        fh.write("\nproviders:\n" + "\n".join("  " + ln for ln in block.splitlines()) + "\n")
+        fh.write("\nproviders:\n" + "\n".join(prefix + ln for ln in block.splitlines()) + "\n")
 PY
-rm -f "$BLOCK_FILE"
 
-if grep -qE '^[[:space:]]*aws-builder:' "$CONFIG"; then
-  echo "✓ added providers: aws-builder → http://localhost:${PORT}/v1 (transport: openai_chat, in-process adapter on :${PORT}, api_key: no-key-required)"
-  # Ensure builder is in plugins.enabled so the dashboard tab + the plugin
-  # loader actually activate it. The builder plugin is kind: standalone, which
-  # is opt-in via plugins.enabled; without this entry it is silently gated out
-  # of both the dashboard sidebar and the agent plugin loader (see uninstall.sh,
-  # which removes the same key). Idempotent + sibling-safe.
-  python3 - "$CONFIG" <<'PY'
+if ! grep -qE '^[[:space:]]*aws-builder:' "$CONFIG"; then
+  echo "✗ insert failed; restored from backup." >&2
+  cp "$BACKUP" "$CONFIG"
+  exit 1
+fi
+
+# Ensure builder is in plugins.enabled so the dashboard tab + the plugin
+# loader actually activate it. The builder plugin is kind: standalone, which
+# is opt-in via plugins.enabled; without this entry it is silently gated out
+# of both the dashboard sidebar and the agent plugin loader.
+python3 - "$CONFIG" <<'PY'
 import sys, yaml
+from pathlib import Path
+
 p = sys.argv[1]
-c = yaml.safe_load(open(p)) or {}
+c = yaml.safe_load(Path(p).read_text()) or {}
 if not isinstance(c.get("plugins"), dict):
     c["plugins"] = {}
 c["plugins"].setdefault("enabled", [])
 if "builder" not in c["plugins"]["enabled"]:
     c["plugins"]["enabled"].append("builder")
-    yaml.safe_dump(c, open(p, "w"), default_flow_style=False, sort_keys=False)
+    Path(p).write_text(
+        yaml.safe_dump(c, default_flow_style=False, sort_keys=False) + "\n"
+    )
     print("✓ added builder to plugins.enabled")
 else:
     print("✓ builder already in plugins.enabled")
 PY
-  echo
-  echo "NEXT: restart Hermes, then in TUI/CLI use '-m aws-builder' or pick 'AWS Builder'."
-  echo "      (login once with: bid_login  — approve in browser)"
+
+echo
+echo "NEXT: restart Hermes, then in TUI/CLI use '-m aws-builder' or pick 'AWS Builder'."
+echo "      (login once with: bid_login  — approve in browser)"
+
+# Best-effort reachability probe: if the adapter is already running on the
+# configured port, verify it answers. This does not start the adapter;
+# register() does that when Hermes loads the plugin.
+if command -v curl >/dev/null 2>&1; then
+  if curl -fsS --max-time 2 "http://localhost:${PORT}/healthz" >/dev/null 2>&1; then
+    echo "✓ adapter reachability probe passed on :${PORT}"
+  else
+    echo "ℹ adapter not reachable yet on :${PORT} — it will start when Hermes loads the plugin"
+  fi
 else
-  echo "✗ insert failed; restored from backup." >&2
-  cp "$BACKUP" "$CONFIG"
-  exit 1
+  echo "ℹ curl not available; skipping adapter reachability probe"
 fi
