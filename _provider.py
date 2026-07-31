@@ -31,7 +31,7 @@ PROVIDER_NAME = "AWS Builder"
 # config free of undocumented keys.
 
 
-def _declared_models() -> list[str]:
+def _declared_models() -> list[dict]:
     """Return the plugin's declared models via the single source of truth.
 
     Delegates to ``backend.list_models()`` (which reads the ``models:``
@@ -197,7 +197,7 @@ def register_provider(port: int) -> bool:
             "api_key": "no-key-required",
         }
     )
-    entry["models"] = {m: {} for m in models}
+    entry["models"] = {m["id"]: {} for m in models}
     # Bump the entry revision only when the model catalog or other
     # key fields actually changed — not on every register_provider()
     # call.  Without this guard, every Hermes session start rewrites
