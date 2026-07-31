@@ -53,5 +53,14 @@ exclude = [
     "build",
 ]
 
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401", "RUF059"]
+"_format.py" = ["S110"]
+"adapter.py" = ["BLE001", "S110", "S112", "PLW1510"]
+"auth/sso_oidc.py" = ["S112"]
+"backend.py" = ["BLE001", "S112"]
+"tests/test_build.py" = ["BLE001"]
+"verify.py" = ["RUF100"]
+
 [tool.mise]
 # tools are managed via mise's uv backend; see .mise.toml

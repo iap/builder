@@ -327,7 +327,7 @@ def _handle_chat(body: dict[str, Any]) -> bytes:
 
     try:
         answer, _cid, _tuid = backend.chat(prompt, model=str(model))
-    except Exception as exc:  # noqa: BLE001 - surface as OpenAI-style error frame
+    except Exception as exc:
         err = b"data: " + json.dumps(
             {"error": {"message": str(exc), "type": "aws_build_error"}}
         ).encode("utf-8") + b"\n\n"
@@ -439,12 +439,12 @@ class _Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length) if length else b"{}"
             body = json.loads(raw.decode("utf-8") or "{}")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self._send(400, json.dumps({"error": f"bad request: {exc}"}).encode())
             return
         try:
             out = _handle_chat(body)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self._send(500, json.dumps({"error": str(exc)}).encode())
             return
         self._send(200, out, ctype="text/event-stream")
@@ -502,7 +502,7 @@ def start(host: str = HOST, port: int = DEFAULT_PORT) -> tuple[ThreadingHTTPServ
             ).stdout.strip()
             if _raw:
                 owner = f" (held by PID {_raw.split()[0]})"
-        except Exception:  # noqa: BLE001 - best-effort identification only
+        except Exception:
             pass
         raise OSError(
             f"builder adapter cannot bind {bind_host}:{port}{owner} — port already "
