@@ -17,7 +17,6 @@ handler to ``PUBLIC_SYMBOLS`` below so the guard stays meaningful.
 
 from conftest import load_plugin
 
-
 PUBLIC_SYMBOLS = (
     "register",
     "unregister",
@@ -60,3 +59,14 @@ def test_sso_oidc_token_store_contract():
         from auth import sso_oidc
     missing = [name for name in SSO_OIDC_SYMBOLS if not hasattr(sso_oidc, name)]
     assert not missing, f"missing sso_oidc symbols: {missing}"
+
+
+def test_ask_q_model_enum_has_no_duplicate_auto():
+    """The ask_q model enum must include 'auto' exactly once."""
+    mod = load_plugin()
+    catalog = list(mod.list_models())
+    assert "auto" in catalog
+    ask_q_tool = next(tool for tool in mod._TOOLS if tool[0] == "ask_q")
+    enum = ask_q_tool[1]["parameters"]["properties"]["model"]["enum"]
+    assert enum.count("auto") == 1
+    assert len(enum) == len(catalog)

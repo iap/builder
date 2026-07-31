@@ -15,10 +15,10 @@ Hermes config without importing core.
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from collections.abc import Callable
 
-_cache: Optional[dict[str, str]] = None
-_load_config_fn: Optional[Callable[[], dict]] = None
+_cache: dict[str, str] | None = None
+_load_config_fn: Callable[[], dict] | None = None
 
 
 def _default_load_config() -> dict:
@@ -27,7 +27,7 @@ def _default_load_config() -> dict:
     return load_config() or {}
 
 
-def set_load_config_fn(fn: Optional[Callable[[], dict]]) -> None:
+def set_load_config_fn(fn: Callable[[], dict] | None) -> None:
     """Inject a config loader (tests). ``None`` restores the default."""
     global _load_config_fn, _cache
     _load_config_fn = fn

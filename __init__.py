@@ -15,10 +15,10 @@ import os
 from typing import Any
 
 try:
-    from .auth import get_status, logout, show_identity, start_login, sso_oidc
+    from .auth import get_status, logout, show_identity, sso_oidc, start_login
     from .backend import chat, list_models, load_tags
 except ImportError:
-    from auth import get_status, logout, show_identity, start_login, sso_oidc
+    from auth import get_status, logout, show_identity, sso_oidc, start_login
     from backend import chat, list_models, load_tags
 
 logger = logging.getLogger(__name__)
@@ -110,12 +110,14 @@ def _tool_result_helpers():
     fallback import matches the pattern auth/sso_oidc uses under Hermes core.
     """
     try:
-        from tools.registry import tool_result, tool_error  # type: ignore
+        from tools.registry import tool_error, tool_result  # type: ignore
+
         return tool_result, tool_error
     except ImportError:  # __main__ / tests where hermes-agent is on sys.path
         pass
     try:
-        from registry import tool_result, tool_error  # type: ignore
+        from registry import tool_error, tool_result  # type: ignore
+
         return tool_result, tool_error
     except ImportError:
         pass
@@ -158,6 +160,7 @@ def _check_available() -> bool:
 
 # --- tool handlers ---
 
+
 def _handle_ask_q(args: dict[str, Any], **kwargs: Any) -> str:
     """Send a prompt to AWS Builder ID (Q) and return the answer."""
     prompt = args.get("prompt", "")
@@ -166,12 +169,14 @@ def _handle_ask_q(args: dict[str, Any], **kwargs: Any) -> str:
     model = args.get("model", "auto")
     conversation_id = args.get("conversation_id")
     try:
-        answer, _cid, _tool_use_id = chat(prompt, model=model, conversation_id=conversation_id)
+        answer, _cid, _tool_use_id = chat(
+            prompt, model=model, conversation_id=conversation_id
+        )
         result: dict[str, Any] = {"answer": answer}
         if _cid:
             result["conversation_id"] = _cid
         return _success(result)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("ask_q failed")
         return _error(str(exc), code="chat_failed")
 
@@ -183,18 +188,22 @@ def _handle_bid_login(args: dict[str, Any], **kwargs: Any) -> str:
         # cleanup is needed here.
         info = start_login()
         if info.get("already_authenticated"):
-            return _success({
-                "message": "Already authenticated with Amazon Q. No new login needed.",
+            return _success(
+                {
+                    "message": "Already authenticated with Amazon Q. No new login needed.",
+                    **info,
+                }
+            )
+        return _success(
+            {
+                "message": (
+                    "Open the verification URL in your browser and enter the "
+                    "user_code to approve. Call bid_status to check completion."
+                ),
                 **info,
-            })
-        return _success({
-            "message": (
-                "Open the verification URL in your browser and enter the "
-                "user_code to approve. Call bid_status to check completion."
-            ),
-            **info,
-        })
-    except Exception as exc:  # noqa: BLE001
+            }
+        )
+    except Exception as exc:
         logger.exception("bid_login failed")
         return _error(str(exc), code="login_failed")
 
@@ -202,7 +211,7 @@ def _handle_bid_login(args: dict[str, Any], **kwargs: Any) -> str:
 def _handle_bid_status(args: dict[str, Any], **kwargs: Any) -> str:
     try:
         return _success(get_status())
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("bid_status failed")
         return _error(str(exc), code="status_failed")
 
@@ -210,7 +219,7 @@ def _handle_bid_status(args: dict[str, Any], **kwargs: Any) -> str:
 def _handle_bid_show_identity(args: dict[str, Any], **kwargs: Any) -> str:
     try:
         return _success(show_identity())
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("bid_show_identity failed")
         return _error(str(exc), code="identity_failed")
 
@@ -220,7 +229,7 @@ def _handle_bid_logout(args: dict[str, Any], **kwargs: Any) -> str:
         # logout() clears the sso mirror (auth/bid_token.json, auth/bid_registration.json, auth/bid_flow.json).
         logout()
         return _success({"message": "Logged out; secrets cleared."})
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("bid_logout failed")
         return _error(str(exc), code="logout_failed")
 
@@ -242,12 +251,12 @@ def _handle_q_debug(args: dict[str, Any], **kwargs: Any) -> str:
     """
     try:
         status = get_status()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("q_debug status failed")
         return _error(str(exc), code="status_failed")
     try:
         identity = show_identity()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("q_debug identity failed")
         return _error(str(exc), code="identity_failed")
     try:
@@ -290,7 +299,10 @@ _TOOLS = (
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "prompt": {"type": "string", "description": "The prompt to send to Q."},
+                    "prompt": {
+                        "type": "string",
+                        "description": "The prompt to send to Q.",
+                    },
                     "model": {
                         "type": "string",
                         "description": "Model to use; sent to Q as modelId. Defaults to 'auto' (Q picks). Named Claude variants are advertised but the account's entitlement decides which are usable.",
@@ -433,11 +445,13 @@ def register(ctx) -> None:
         # everything else. Probe the port (not just this process's _server)
         # so the warning is suppressed when another session owns it.
         if not adapter.is_running(host=adapter.HOST, port=port):
-            logger.warning("builder adapter failed to start (tool-only mode OK): %s", exc)
-        srv, actual = None, None
+            logger.warning(
+                "builder adapter failed to start (tool-only mode OK): %s", exc
+            )
+        _srv, actual = None, None
     except Exception as exc:  # noqa: BLE001
         logger.warning("builder adapter failed to start (tool-only mode OK): %s", exc)
-        srv, actual = None, None
+        _srv, actual = None, None
     # Surface the adapter as a selectable model provider in the dashboard
     # Models picker (see https://github.com/iap/builder/issues/20). Best-effort:
     # if config is unavailable or a user already manages this provider, skip.

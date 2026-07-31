@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,9 @@ def _declared_models() -> list[str]:
     try:
         return list(backend.list_models())
     except Exception as exc:  # noqa: BLE001
-        logger.warning("builder: backend.list_models() failed, using empty catalog: %s", exc)
+        logger.warning(
+            "builder: backend.list_models() failed, using empty catalog: %s", exc
+        )
         return []
 
 
@@ -107,7 +109,12 @@ def register_provider(port: int) -> bool:
         logger.warning("builder: cannot import hermes_cli.config (%s)", exc)
         return False
 
-    models = _declared_models() or ["auto", "claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5"]
+    models = _declared_models() or [
+        "auto",
+        "claude-sonnet-4.5",
+        "claude-sonnet-4",
+        "claude-haiku-4.5",
+    ]
     default_model = models[0]
 
     # Best-effort: never let a malformed/unreadable config abort plugin
@@ -115,17 +122,22 @@ def register_provider(port: int) -> bool:
     try:
         config = load_config()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("builder: load_config failed, skipping provider registration: %s", exc)
+        logger.warning(
+            "builder: load_config failed, skipping provider registration: %s", exc
+        )
         return False
     # A malformed config can parse to a non-mapping value (e.g. a scalar or
     # list); guard against AttributeError on .get() below (Greptile P1).
     if not isinstance(config, dict):
-        logger.warning("builder: config is not a mapping, skipping provider registration")
+        logger.warning(
+            "builder: config is not a mapping, skipping provider registration"
+        )
         return False
     # hermes_cli.config caches the loaded dict (keyed by path/mtime); never
     # mutate that cached object in place. Deep-copy so our rebuild below can't
     # leak into the framework's cache or bleed across test/session boundaries.
     import copy
+
     config = copy.deepcopy(config)
     providers = config.get("providers")
     if not isinstance(providers, dict):
@@ -139,7 +151,9 @@ def register_provider(port: int) -> bool:
     _LEGACY_SLUG = "aws-build"
     legacy = providers.get(_LEGACY_SLUG)
     if isinstance(legacy, dict) and _is_our_entry(legacy):
-        logger.info("builder: migrating provider '%s' -> '%s'", _LEGACY_SLUG, PROVIDER_SLUG)
+        logger.info(
+            "builder: migrating provider '%s' -> '%s'", _LEGACY_SLUG, PROVIDER_SLUG
+        )
         providers.pop(_LEGACY_SLUG, None)
         if not isinstance(providers.get(PROVIDER_SLUG), dict):
             providers[PROVIDER_SLUG] = legacy
@@ -165,7 +179,9 @@ def register_provider(port: int) -> bool:
         return not _is_our_entry(entry)
 
     if isinstance(existing, dict) and _is_user_managed(existing):
-        logger.info("builder: providers.%s present and user-managed; leaving it.", PROVIDER_SLUG)
+        logger.info(
+            "builder: providers.%s present and user-managed; leaving it.", PROVIDER_SLUG
+        )
         return False
 
     # We own this entry (managed, or a legacy plugin entry we adopt), so
@@ -222,7 +238,9 @@ def register_provider(port: int) -> bool:
     except Exception as exc:  # noqa: BLE001
         logger.warning("builder: save_config failed, provider not persisted: %s", exc)
         return False
-    logger.info("builder: registered provider '%s' -> %s", PROVIDER_SLUG, entry["base_url"])
+    logger.info(
+        "builder: registered provider '%s' -> %s", PROVIDER_SLUG, entry["base_url"]
+    )
     return True
 
 
@@ -241,11 +259,14 @@ def unregister_provider() -> bool:
     try:
         config = load_config()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("builder: load_config failed, skipping provider unregistration: %s", exc)
+        logger.warning(
+            "builder: load_config failed, skipping provider unregistration: %s", exc
+        )
         return False
     # Deep-copy: hermes_cli.config caches the loaded dict; never mutate it
     # in place (would leak into the framework cache / bleed across tests).
     import copy
+
     config = copy.deepcopy(config)
     providers = config.get("providers")
     if not isinstance(providers, dict):

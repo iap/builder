@@ -38,7 +38,9 @@ def _ensure_plugin_package() -> str:
     so the backend reuses the same functions (and the same on-disk token/flow
     files) as the agent tools — one auth state, no drift.
     """
-    root = Path(__file__).resolve().parent.parent  # plugin root under HERMES_HOME/plugins/builder
+    root = (
+        Path(__file__).resolve().parent.parent
+    )  # plugin root under HERMES_HOME/plugins/builder
     ns = "hermes_plugins"
     if ns not in sys.modules:
         ns_pkg = types.ModuleType(ns)
@@ -67,7 +69,7 @@ async def status() -> dict[str, Any]:
     """Return current device-login / auth state (actively polls a pending flow)."""
     try:
         return _sso().get_status()
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception:  # pragma: no cover - defensive
         logger.debug("builder status failed", exc_info=True)
         return {"authenticated": False, "phase": "error", "error": "internal_error"}
 
@@ -89,7 +91,7 @@ async def login() -> dict[str, Any]:
                 "user_code to approve. The card polls automatically."
             ),
         }
-    except Exception as exc:
+    except Exception:
         logger.exception("builder dashboard login failed")
         return {"success": False, "error": "internal_error", "code": "login_failed"}
 
@@ -100,6 +102,6 @@ async def logout() -> dict[str, Any]:
     try:
         _sso().logout()
         return {"success": True, "message": "Logged out; secrets cleared."}
-    except Exception as exc:
+    except Exception:
         logger.exception("builder dashboard logout failed")
         return {"success": False, "error": "internal_error", "code": "logout_failed"}

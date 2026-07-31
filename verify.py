@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """Verify the builder plugin loads + tools work (HEADLESS, no browser, no secrets)."""
 
@@ -13,7 +12,7 @@ import types
 # would point at the temp dir, not the real installed plugin.
 _REAL_HERMES_HOME = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
 
-from conftest import load_plugin
+from conftest import load_plugin  # noqa: E402
 
 errors = []
 
@@ -41,12 +40,16 @@ def check_drift() -> None:
     rev_file = os.path.join(home, "plugins", "builder", "REVISION")
     if not os.path.isfile(rev_file):
         return  # not installed, or pre-stamp install — nothing to compare
-    installed = open(rev_file).read().strip()
+    with open(rev_file) as fh:
+        installed = fh.read().strip()
     repo_root = os.path.dirname(os.path.abspath(__file__))
     try:
         head = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=repo_root,
-            capture_output=True, text=True, check=True,
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
         return  # not a git repo — can't compare
@@ -60,10 +63,15 @@ def check_drift() -> None:
     # former warrants the reinstall prompt; the latter is informational.
     behind = False
     try:
-        behind = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", installed, head],
-            cwd=repo_root, capture_output=True, check=True,
-        ).returncode == 0
+        behind = (
+            subprocess.run(
+                ["git", "merge-base", "--is-ancestor", installed, head],
+                cwd=repo_root,
+                capture_output=True,
+                check=True,
+            ).returncode
+            == 0
+        )
     except (subprocess.CalledProcessError, FileNotFoundError):
         behind = False
     if behind:
@@ -80,11 +88,17 @@ def check_drift() -> None:
     try:
         installed_tree = subprocess.run(
             ["git", "rev-parse", f"{installed}^{{tree}}"],
-            cwd=repo_root, capture_output=True, text=True, check=True,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
         head_tree = subprocess.run(
             ["git", "rev-parse", "HEAD^{tree}"],
-            cwd=repo_root, capture_output=True, text=True, check=True,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
         if installed_tree and installed_tree == head_tree:
             return  # trees identical → install is current
@@ -108,9 +122,19 @@ def main() -> int:
     def reg_tool(**kw):  # noqa: ANN
         captured[kw["name"]] = kw
 
-    ctx = types.SimpleNamespace(register_tool=reg_tool, register_hook=lambda *a, **k: None)
+    ctx = types.SimpleNamespace(
+        register_tool=reg_tool, register_hook=lambda *a, **k: None
+    )
     mod.register(ctx)
-    expected = {"ask_q", "bid_login", "bid_status", "bid_show_identity", "bid_logout", "models", "tags"}
+    expected = {
+        "ask_q",
+        "bid_login",
+        "bid_status",
+        "bid_show_identity",
+        "bid_logout",
+        "models",
+        "tags",
+    }
     check(expected.issubset(set(captured)), f"all tools registered: {sorted(captured)}")
 
     for name, spec in captured.items():
@@ -142,12 +166,13 @@ def main() -> int:
     # the config entry deterministically, restoring any pre-existing entry.
     try:
         from hermes_cli.config import load_config, save_config
+
         # _provider lives in the plugin dir; make it importable like the
         # plugin itself is (load_plugin sets submodule_search_locations).
         _plugin_dir = os.path.dirname(os.path.abspath(__file__))
         if _plugin_dir not in sys.path:
             sys.path.insert(0, _plugin_dir)
-        import _provider as _prov_mod  # noqa: E402
+        import _provider as _prov_mod
 
         PROVIDER_SLUG = _prov_mod.PROVIDER_SLUG
         register_provider = _prov_mod.register_provider
@@ -162,7 +187,9 @@ def main() -> int:
             cfg2 = load_config()
             entry = (cfg2.get("providers") or {}).get(PROVIDER_SLUG)
             check(
-                wrote and isinstance(entry, dict) and "localhost:8088/v1" in str(entry.get("base_url")),
+                wrote
+                and isinstance(entry, dict)
+                and "localhost:8088/v1" in str(entry.get("base_url")),
                 "provider registration writes providers.aws-builder -> adapter base_url",
             )
         finally:

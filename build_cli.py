@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: MIT OR Apache-2.0
+# SPDX-License-Identifier: MIT
 """builder — standalone CLI for the Amazon Builder ID (BID) auth + chat plugin.
 
 This is the copy-device-link method you can run from a terminal, without the
@@ -26,7 +26,8 @@ import argparse
 import os
 import sys
 import time
-from typing import Any, Optional
+from datetime import UTC
+from typing import Any
 
 # Make the plugin importable whether invoked from its own dir or elsewhere.
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -46,12 +47,12 @@ def _load_modules():
     return sso_oidc, list_models, load_tags
 
 
-def _fmt_iso(expires_at: Optional[float]) -> str:
+def _fmt_iso(expires_at: float | None) -> str:
     if not expires_at:
         return "n/a"
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    return datetime.fromtimestamp(expires_at, tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
 
 
 def cmd_login(args: argparse.Namespace) -> int:
@@ -63,7 +64,10 @@ def cmd_login(args: argparse.Namespace) -> int:
         print(f"  expires_at: {_fmt_iso(st.get('token_expires_at'))}")
         return 0
     if not info.get("user_code"):
-        print("error: device authorization failed to start (no user_code returned).", file=sys.stderr)
+        print(
+            "error: device authorization failed to start (no user_code returned).",
+            file=sys.stderr,
+        )
         return 1
 
     print("Approve this Amazon Builder ID login in your browser:")
@@ -87,11 +91,16 @@ def cmd_login(args: argparse.Namespace) -> int:
                 return 1
             time.sleep(interval)
     except KeyboardInterrupt:
-        print("\ncancelled; the pending flow is saved — run `status` to resume polling.")
+        print(
+            "\ncancelled; the pending flow is saved — run `status` to resume polling."
+        )
         return 130
 
     if not status or not status.get("authenticated"):
-        print("error: login was not approved in time. Re-run `login` to try again.", file=sys.stderr)
+        print(
+            "error: login was not approved in time. Re-run `login` to try again.",
+            file=sys.stderr,
+        )
         return 1
 
     print("Authenticated. Token stored at $HERMES_HOME/builder/auth/bid_token.json.")
@@ -156,7 +165,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("login", help="start device login; print a copyable verification link")
+    sub.add_parser(
+        "login", help="start device login; print a copyable verification link"
+    )
     sub.add_parser("status", help="show current auth / device-flow state")
     sub.add_parser("whoami", help="show token identity (no raw token)")
     sub.add_parser("logout", help="clear stored secrets")
@@ -164,7 +175,7 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     handlers: dict[str, Any] = {

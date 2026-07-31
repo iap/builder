@@ -6,9 +6,9 @@ Builder ID session:
     (verified live: assistantResponseEvent payload is {"content":...,"modelId":...}).
   * _sign_request — Bearer-only auth (no SigV4; the OIDC access_token is the chat bearer).
 """
+
 import importlib.util
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -31,8 +31,7 @@ class _FakeResp:
         self._chunks = [c.encode() if isinstance(c, str) else c for c in chunks]
 
     def iter_content(self, chunk_size=1024):
-        for c in self._chunks:
-            yield c
+        yield from self._chunks
 
 
 def test_extract_answer_single_event():
@@ -55,7 +54,7 @@ def test_extract_answer_event_stream_framed():
         b"\x00\x00\x00\x0er\x00\x00\x00\x10:event-type\x07\x00\x00\x00\x10initial-response"
         b"\r:content-type\x07\x00\x00\x00\x1aapplication/x-amz-json-1.0\r"
         b":message-type\x07\x00\x00\x00\x05event{}\t%"
-        b'\x00\x00\x00\x80\x00\x00\x00\\:\x0b:event-type\x07\x00\x00\x00\x16assistantResponseEvent'
+        b"\x00\x00\x00\x80\x00\x00\x00\\:\x0b:event-type\x07\x00\x00\x00\x16assistantResponseEvent"
         b"\r:content-type\x07\x00\x00\x00\x10application/json\r:message-type\x07\x00\x00\x00\x05event"
         b'{"content":"CHATDIRECT_OK","modelId":"auto"}'
     )
@@ -73,7 +72,6 @@ def test_chat_body_shape():
     # Verified against q's GenerateAssistantResponse serializer: conversationState
     # with currentMessage.userInputMessage.content, chatTriggerType "MANUAL", and
     # NO messageId / NO SigV4 headers. Build the body the way chat() does.
-    import time
     prompt = "hi"
     body = {
         "conversationState": {
@@ -157,20 +155,23 @@ def test_chat_returns_tuple_with_conversation_id(monkeypatch):
 
 def test_chat_extracts_tool_use_id(monkeypatch):
     """A toolUseEvent in the stream must surface its toolUseId."""
+
     class _FakeResp:
         status_code = 200
 
         def iter_content(self, chunk_size=1024):
-            yield (b'{"content":"<function_calls><invoke name=\\"fs_write\\">'
-                   b'<parameter name=\\"path\\">a.txt</parameter>'
-                   b'<parameter name=\\"content\\">x</parameter></invoke>'
-                   b'</function_calls>","modelId":"auto","conversationId":"c1"}')
+            yield (
+                b'{"content":"<function_calls><invoke name=\\"fs_write\\">'
+                b'<parameter name=\\"path\\">a.txt</parameter>'
+                b'<parameter name=\\"content\\">x</parameter></invoke>'
+                b'</function_calls>","modelId":"auto","conversationId":"c1"}'
+            )
             yield b'{"toolUseId":"tu-9","name":"fs_write","input":{"path":"a.txt","content":"x"}}'
 
     monkeypatch.setattr(backend, "get_token", lambda: {"access_token": "tok"})
     monkeypatch.setattr(backend.requests, "post", lambda *a, **k: _FakeResp())
 
-    answer, cid, tool_use_id = backend.chat("hi", model="claude-sonnet-4")
+    answer, _cid, tool_use_id = backend.chat("hi", model="claude-sonnet-4")
     assert "fs_write" in answer
     assert tool_use_id == "tu-9"
 
@@ -259,7 +260,7 @@ def test_list_models_caches_override(monkeypatch):
 
 def test_list_models_empty_override_falls_back_to_static(monkeypatch):
     monkeypatch.setattr(backend, "_MODEL_OVERRIDE", None)
-    monkeypatch.setattr(backend, "_load_model_override", lambda: [])
+    monkeypatch.setattr(backend, "_load_model_override", list)
     assert backend.list_models() == backend.STATIC_MODELS
 
 
@@ -296,7 +297,7 @@ def test_load_tags_caches_override(monkeypatch):
 
 def test_load_tags_empty_override_falls_back_to_static(monkeypatch):
     monkeypatch.setattr(backend, "_TAG_OVERRIDE", None)
-    monkeypatch.setattr(backend, "_load_tag_override", lambda: [])
+    monkeypatch.setattr(backend, "_load_tag_override", list)
     assert backend.load_tags() == backend.STATIC_TAGS
 
 
@@ -336,7 +337,7 @@ def test_chat_sends_model_id(monkeypatch):
 
         def iter_content(self, chunk_size=1024):
             # minimal valid stream carrying content + modelId
-            yield '{"content":"ok","modelId":"claude-sonnet-4.5"}'.encode()
+            yield b'{"content":"ok","modelId":"claude-sonnet-4.5"}'
 
     def _fake_post(url, **kwargs):
         captured["body"] = kwargs.get("data")
@@ -347,7 +348,10 @@ def test_chat_sends_model_id(monkeypatch):
 
     backend.chat("hi", model="claude-sonnet-4.5")
     body = json.loads(captured["body"])
-    assert body["conversationState"]["currentMessage"]["userInputMessage"]["modelId"] == "claude-sonnet-4.5"
+    assert (
+        body["conversationState"]["currentMessage"]["userInputMessage"]["modelId"]
+        == "claude-sonnet-4.5"
+    )
 
 
 def test_chat_defaults_model_to_auto(monkeypatch):
@@ -360,7 +364,7 @@ def test_chat_defaults_model_to_auto(monkeypatch):
         status_code = 200
 
         def iter_content(self, chunk_size=1024):
-            yield '{"content":"ok","modelId":"auto"}'.encode()
+            yield b'{"content":"ok","modelId":"auto"}'
 
     def _fake_post(url, **kwargs):
         captured["body"] = kwargs.get("data")
@@ -371,7 +375,10 @@ def test_chat_defaults_model_to_auto(monkeypatch):
 
     backend.chat("hi")
     body = json.loads(captured["body"])
-    assert body["conversationState"]["currentMessage"]["userInputMessage"]["modelId"] == "auto"
+    assert (
+        body["conversationState"]["currentMessage"]["userInputMessage"]["modelId"]
+        == "auto"
+    )
 
 
 def test_chat_surfaces_subscription_error(monkeypatch):
@@ -393,10 +400,11 @@ def test_chat_surfaces_subscription_error(monkeypatch):
 
     with pytest.raises(RuntimeError) as exc:
         backend.chat("hi", model="claude-sonnet-4.5")
-    assert "entitlement" in str(exc.value).lower() or "subscri" in str(exc.value).lower()
+    assert (
+        "entitlement" in str(exc.value).lower() or "subscri" in str(exc.value).lower()
+    )
     # Must NOT attempt a token refresh on a subscription error.
     assert "rejected the bearer token" not in str(exc.value)
-
 
 
 # --- chat() works across EVERY model the plugin advertises ---
@@ -404,8 +412,6 @@ def test_chat_surfaces_subscription_error(monkeypatch):
 # must survive a full chat() call -> Q request -> streamed answer parse.
 # Uses a fake Q responder (no live token / network).
 
-
-import itertools as _it
 
 _ALL_PLUGIN_MODELS = list(backend.list_models()) + ["auto"]
 
@@ -420,7 +426,7 @@ def test_chat_works_for_every_advertised_model(monkeypatch):
         def iter_content(self, chunk_size=1024):
             # Minimal valid assistantResponseEvent stream.
             yield (
-                '{"content":"ok","modelId":"%s"}' % captured["model"]
+                '{{"content":"ok","modelId":"{}"}}'.format(captured["model"])
             ).encode()
 
     def _fake_post(url, **kwargs):
@@ -435,7 +441,9 @@ def test_chat_works_for_every_advertised_model(monkeypatch):
         captured.clear()
         answer, _cid, _tuid = backend.chat("ping", model=m)
         body = json.loads(captured["body"])
-        sent = body["conversationState"]["currentMessage"]["userInputMessage"]["modelId"]
+        sent = body["conversationState"]["currentMessage"]["userInputMessage"][
+            "modelId"
+        ]
         assert sent == m, f"model '{m}' not forwarded as modelId (got '{sent}')"
         assert answer == "ok", f"model '{m}' yielded no parsed answer"
     # No model left untested.
@@ -455,7 +463,7 @@ def test_chat_empty_model_defaults_to_auto(monkeypatch):
         status_code = 200
 
         def iter_content(self, chunk_size=1024):
-            yield '{"content":"ok","modelId":"auto"}'.encode()
+            yield b'{"content":"ok","modelId":"auto"}'
 
     def _fake_post(url, **kwargs):
         captured["body"] = kwargs.get("data")
@@ -467,7 +475,8 @@ def test_chat_empty_model_defaults_to_auto(monkeypatch):
     backend.chat("hi", model="")
     body = json.loads(captured["body"])
     assert (
-        body["conversationState"]["currentMessage"]["userInputMessage"]["modelId"] == "auto"
+        body["conversationState"]["currentMessage"]["userInputMessage"]["modelId"]
+        == "auto"
     )
 
 
@@ -506,7 +515,7 @@ def test_chat_coerces_unknown_model_to_auto(monkeypatch):
         status_code = 200
 
         def iter_content(self, chunk_size=1024):
-            yield '{"content":"ok","modelId":"auto"}'.encode()
+            yield b'{"content":"ok","modelId":"auto"}'
 
     def _fake_post(url, **kwargs):
         captured["body"] = kwargs.get("data")
@@ -518,7 +527,8 @@ def test_chat_coerces_unknown_model_to_auto(monkeypatch):
     backend.chat("hi", model="gpt-4-turbo")
     body = json.loads(captured["body"])
     assert (
-        body["conversationState"]["currentMessage"]["userInputMessage"]["modelId"] == "auto"
+        body["conversationState"]["currentMessage"]["userInputMessage"]["modelId"]
+        == "auto"
     )
 
 
@@ -544,7 +554,9 @@ def test_parse_tool_calls_fenced_json_block():
     ) == [
         {
             "name": "fs_write",
-            "arguments": json.dumps({"path": "a.txt", "content": "x"}, ensure_ascii=False),
+            "arguments": json.dumps(
+                {"path": "a.txt", "content": "x"}, ensure_ascii=False
+            ),
         }
     ]
 
@@ -558,7 +570,9 @@ def test_parse_tool_calls_inline_backtick_json():
     ) == [
         {
             "name": "fs_write",
-            "arguments": json.dumps({"path": "a.txt", "content": "x"}, ensure_ascii=False),
+            "arguments": json.dumps(
+                {"path": "a.txt", "content": "x"}, ensure_ascii=False
+            ),
         }
     ]
 
@@ -572,7 +586,9 @@ def test_parse_tool_calls_bare_json_object():
     ) == [
         {
             "name": "fs_write",
-            "arguments": json.dumps({"path": "b.txt", "content": "y"}, ensure_ascii=False),
+            "arguments": json.dumps(
+                {"path": "b.txt", "content": "y"}, ensure_ascii=False
+            ),
         }
     ]
 
@@ -581,25 +597,27 @@ def test_parse_tool_calls_skips_unrelated_json():
     """JSON objects without tool-call shape are ignored."""
     from adapter import _parse_tool_calls
 
-    assert _parse_tool_calls(
-        'random {"hello":"world","nested":{"a":1,"b":2}} tail'
-    ) == []
+    assert (
+        _parse_tool_calls('random {"hello":"world","nested":{"a":1,"b":2}} tail') == []
+    )
 
 
 def test_parse_tool_calls_missing_arguments_defaults_to_empty():
     """A JSON object with name but no arguments should produce empty args."""
     from adapter import _parse_tool_calls
 
-    assert _parse_tool_calls(
-        '```json\n{"name": "fs_write"}\n```'
-    ) == [{"name": "fs_write", "arguments": json.dumps({}, ensure_ascii=False)}]
+    assert _parse_tool_calls('```json\n{"name": "fs_write"}\n```') == [
+        {"name": "fs_write", "arguments": json.dumps({}, ensure_ascii=False)}
+    ]
 
 
 def test_parse_tool_calls_multiple_calls_hard_capped():
     """Many valid tool-call objects are collected, but pathological answers are capped."""
     from adapter import _parse_tool_calls
 
-    answer = " ".join(f'{{"name": "tool_{idx}", "arguments": {{}}}}' for idx in range(30))
+    answer = " ".join(
+        f'{{"name": "tool_{idx}", "arguments": {{}}}}' for idx in range(30)
+    )
     calls = _parse_tool_calls(answer)
     assert len(calls) <= 20
     assert all(c["name"].startswith("tool_") for c in calls)
@@ -617,9 +635,7 @@ def test_parse_tool_calls_malformed_json_is_skipped():
     """Malformed JSON blocks are skipped rather than crashing."""
     from adapter import _parse_tool_calls
 
-    assert _parse_tool_calls(
-        "bad: ```json\n{name: fs_write, arguments: {}}\n```"
-    ) == []
+    assert _parse_tool_calls("bad: ```json\n{name: fs_write, arguments: {}}\n```") == []
     assert _parse_tool_calls(
         'ok then `{"name":"ok","arguments":{}}` then `not-a-json`'
     ) == [{"name": "ok", "arguments": json.dumps({}, ensure_ascii=False)}]
@@ -629,9 +645,9 @@ def test_parse_tool_calls_non_dict_arguments_coerced():
     """Non-dict arguments are coerced to {} so downstream never sees nonstandard types."""
     from adapter import _parse_tool_calls
 
-    assert _parse_tool_calls(
-        '```json\n{"name": "t", "arguments": null}\n```'
-    ) == [{"name": "t", "arguments": json.dumps({}, ensure_ascii=False)}]
+    assert _parse_tool_calls('```json\n{"name": "t", "arguments": null}\n```') == [
+        {"name": "t", "arguments": json.dumps({}, ensure_ascii=False)}
+    ]
 
 
 def test_parse_tool_calls_xml_takes_precedence_over_json():
@@ -646,4 +662,3 @@ def test_parse_tool_calls_xml_takes_precedence_over_json():
     calls = _parse_tool_calls(answer)
     assert len(calls) == 1
     assert calls[0]["name"] == "tool_xml"
-
