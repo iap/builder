@@ -55,16 +55,19 @@ print("✓ backed up config →", backup)
 
 c = yaml.safe_load(raw) or {}
 
-# 1) providers entry (aws-builder is the current slug written by
-#    _provider.register_provider; builder was the pre-rename fallback).
+# 1) providers entries (aws-builder is the current slug; builder was the
+#    pre-rename slug). Both are removed if present.
 providers = c.get("providers")
 if isinstance(providers, dict):
+    removed_slugs = []
     for slug in ("aws-builder", "builder"):
         if slug in providers:
             del providers[slug]
-            if not providers:
-                c.pop("providers", None)
-            print(f"✓ removed providers: {slug}")
+            removed_slugs.append(slug)
+    if removed_slugs:
+        if not providers:
+            c.pop("providers", None)
+        print("✓ removed providers:", ", ".join(removed_slugs))
 
 # 2) plugins.enabled entry
 plugins = c.setdefault("plugins", {})
@@ -81,19 +84,24 @@ for key in ("platform_toolsets", "known_plugin_toolsets"):
         for sub, val in block.items():
             if isinstance(val, list) and "builder" in val:
                 block[sub] = [x for x in val if x != "builder"]
-                removed_lists.append(f"{key}.{sub}")
+                if not block[sub]:
+                    del block[sub]
+                else:
+                    removed_lists.append(f"{key}.{sub}")
 
-# 4) providers entry — remove ONLY the aws-builder provider block.
-#    User-managed custom providers (different base_url/name) are
-#    left untouched; this only removes the provider we created.
-providers = c.get("providers")
-if isinstance(providers, dict):
-    for slug in ("aws-builder", "builder"):
-        if slug in providers:
-            del providers[slug]
-            if not providers:
-                c.pop("providers", None)
-            print(f"✓ removed providers: {slug}")
+# 4) top-level model default, if it pointed at a removed slug.
+model = c.get("model")
+if isinstance(model, dict) and model.get("provider") in {"aws-builder", "builder"}:
+    model.pop("provider", None)
+    if not model:
+        c.pop("model", None)
+    print("✓ removed dangling model.provider")
+
+# 5) prune empty stubs we may have emptied above.
+for key in ("plugins", "platform_toolsets", "known_plugin_toolsets"):
+    block = c.get(key)
+    if isinstance(block, dict) and not block:
+        c.pop(key, None)
 
 if removed_lists:
     print("✓ removed builder from toolset lists:", ", ".join(removed_lists))
