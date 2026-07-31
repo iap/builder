@@ -18,16 +18,25 @@ conftest.py, so no real user secrets are read).
 import json
 import sys
 
+import pytest
+
 # conftest.py already put HERMES_AGENT_DIR on sys.path and redirected HERMES_HOME.
 from conftest import HERMES_AGENT_DIR
 
 # Importing model_tools triggers plugin discovery (the same side effect the chat
 # CLI relies on), so tools.registry is fully populated with builder's tools.
-if HERMES_AGENT_DIR.exists():
-    sys.path.insert(0, str(HERMES_AGENT_DIR))
-
-import model_tools  # noqa: F401  (imports tools.registry, discovers plugins)
-from tools.registry import registry
+# This requires hermes-agent to be importable; in the plugin's standalone CI
+# it may be absent, so skip rather than crash collection.
+try:
+    if HERMES_AGENT_DIR.exists():
+        sys.path.insert(0, str(HERMES_AGENT_DIR))
+    import model_tools  # noqa: F401  (imports tools.registry, discovers plugins)
+    from tools.registry import registry
+except ImportError:  # pragma: no cover - exercised in CI without hermes-agent
+    pytest.skip(
+        "hermes-agent not importable; skipping chat-dispatch integration tests",
+        allow_module_level=True,
+    )
 
 
 def _plugin_manager():
