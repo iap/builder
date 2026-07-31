@@ -24,6 +24,40 @@ jobs:
       - name: Format
         run: uv run ruff format --check .
       - name: Tests
-        run: uv run pytest -x -q
+        run: uv run pytest -x -q tests
       - name: Verify
         run: uv run python verify.py
+
+  integration-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: NousResearch/hermes-agent
+          path: hermes-agent
+      - uses: actions/checkout@v4
+        with:
+          path: plugin-src
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.5.x"
+      - run: uv --version
+      - run: uv tool install ruff@0.15
+      - run: uv run ruff --version
+      - name: Install deps
+        run: |
+          set -euo pipefail
+          HM="${{ github.workspace }}/hm"
+          mkdir -p "$HM/plugins"
+          ln -s "${{ github.workspace }}/plugin-src" "$HM/plugins/builder"
+          echo "HERMES_HOME=$HM" >> "$GITHUB_ENV"
+          cd "${{ github.workspace }}/plugin-src"
+          uv sync --extra dev
+      - name: Integration tests
+        env:
+          HERMES_HOME: ${{ env.HERMES_HOME }}
+          PYTHONPATH: ${{ github.workspace }}/hermes-agent
+        run: |
+          set -euo pipefail
+          cd "${{ github.workspace }}/plugin-src"
+          uv run pytest -x -q tests/integration
