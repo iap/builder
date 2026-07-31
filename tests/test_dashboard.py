@@ -19,34 +19,46 @@ def client():
 
 
 def test_status_ok(client):
-    with patch("dashboard.plugin_api.get_status", return_value={"authenticated": False, "phase": "idle"}):
-        r = client.get("/builder/status")
+    fake_status = {"authenticated": False, "phase": "idle"}
+    with patch("dashboard.plugin_api._sso") as mock_sso:
+        mock_sso.return_value.get_status.return_value = fake_status
+        r = client.get("/status")
     assert r.status_code == 200
-    assert r.json()["phase"] == "idle"
+    assert r.json() == fake_status
 
 
-def test_identity_ok(client):
-    with patch("dashboard.plugin_api.show_identity", return_value={"authenticated": False}):
-        r = client.get("/builder/identity")
+def test_login_ok(client):
+    fake_info = {
+        "success": True,
+        "user_code": "ABCD-1234",
+        "verification_uri": "https://example.com",
+        "verification_uri_complete": "https://example.com/complete",
+        "expires_in": 300,
+        "interval": 5,
+        "message": "ok",
+    }
+    with patch("dashboard.plugin_api._sso") as mock_sso:
+        mock_sso.return_value.start_login.return_value = fake_info
+        r = client.post("/login")
     assert r.status_code == 200
-    assert "authenticated" in r.json()
+    assert r.json()["success"] is True
+    assert r.json()["user_code"] == "ABCD-1234"
 
 
-def test_models_ok(client):
-    with patch("dashboard.plugin_api.list_models", return_value=["auto", "amazon.nova-pro-v1:0"]):
-        r = client.get("/builder/models")
+def test_logout_ok(client):
+    with patch("dashboard.plugin_api._sso") as mock_sso:
+        mock_sso.return_value.logout.return_value = None
+        r = client.post("/logout")
     assert r.status_code == 200
-    assert "auto" in r.json()
+    assert r.json()["success"] is True
 
 
-def test_tags_ok(client):
-    with patch("dashboard.plugin_api.load_tags", return_value=["fast", "vision"]):
-        r = client.get("/builder/tags")
+def test_status_error_returns_internal_error(client):
+    with patch("dashboard.plugin_api._sso") as mock_sso:
+        mock_sso.return_value.get_status.side_effect = RuntimeError("boom")
+        r = client.get("/status")
     assert r.status_code == 200
-    assert "fast" in r.json()
-
-
-def test_status_error(client):
-    with patch("dashboard.plugin_api.get_status", side_effect=RuntimeError("boom")):
-        r = client.get("/builder/status")
-    assert r.status_code == 500
+    body = r.json()
+    assert body["authenticated"] is False
+    assert body["phase"] == "error"
+    assert body["error"] == "internal_error"

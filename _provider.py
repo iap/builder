@@ -197,7 +197,7 @@ def register_provider(port: int) -> bool:
             "api_key": "no-key-required",
         }
     )
-    entry["models"] = {m["id"]: {} for m in models}
+    entry["models"] = {m: {} for m in models}
     # Bump the entry revision only when the model catalog or other
     # key fields actually changed — not on every register_provider()
     # call.  Without this guard, every Hermes session start rewrites

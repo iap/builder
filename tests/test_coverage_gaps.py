@@ -119,15 +119,16 @@ def test_tool_calls_frames_with_text():
 # --- __init__.py handler coverage ---
 
 def test_handle_bid_login_already_authenticated():
+    import json
     import __init__ as plugin
-    with patch("auth.sso_oidc.start_login", return_value={"already_authenticated": True, "phase": "authenticated"}):
+    with patch.object(plugin, "start_login", return_value={"already_authenticated": True, "phase": "authenticated"}):
         result = json.loads(plugin._handle_bid_login({}))
-    assert result.get("phase") == "authenticated" or "already_authenticated" in result
-
+    assert result["success"] is True
+    assert result["phase"] == "authenticated"
 
 def test_handle_bid_logout():
     import __init__ as plugin
-    with patch("auth.sso_oidc.logout") as mock_logout:
+    with patch.object(plugin, "logout") as mock_logout:
         result = json.loads(plugin._handle_bid_logout({}))
     mock_logout.assert_called_once()
     assert result.get("success") is True
@@ -135,22 +136,22 @@ def test_handle_bid_logout():
 
 def test_handle_models():
     import __init__ as plugin
-    result = json.loads(plugin._handle_models({}))
-    assert isinstance(result, list) or "models" in result
+    result = json.loads(plugin._handle_bid_models({}))
+    assert isinstance(result, dict) and ("models" in result or "tags" in result)
 
 
 def test_handle_tags():
     import __init__ as plugin
     result = json.loads(plugin._handle_tags({}))
-    assert isinstance(result, list) or "tags" in result
+    assert isinstance(result, dict) and "tags" in result
 
 
 # --- backend.py ---
 
-def test_load_tags_exception_returns_empty():
-    from backend import load_tags
+def test_load_tags_exception_returns_fallback():
+    from backend import load_tags, STATIC_TAGS
     with patch("builtins.open", side_effect=OSError("no file")):
-        assert load_tags() == []
+        assert load_tags() == STATIC_TAGS
 
 
 # --- _provider.py: register/unregister body ---
