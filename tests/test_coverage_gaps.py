@@ -1,9 +1,9 @@
 """Targeted tests for remaining coverage gaps."""
 # SPDX-License-Identifier: MIT
 from __future__ import annotations
+
 import json
 from unittest.mock import MagicMock, patch
-
 
 # --- _format.py ---
 
@@ -67,7 +67,7 @@ def test_provider_unregister_skips_when_import_fails():
 
 
 def test_provider_register_with_mock_config():
-    from _provider import register_provider, PROVIDER_SLUG
+    from _provider import PROVIDER_SLUG, register_provider
     cfg = {}
     mock_load = MagicMock(return_value=cfg)
     mock_save = MagicMock()
@@ -81,7 +81,7 @@ def test_provider_register_with_mock_config():
 
 
 def test_provider_unregister_with_mock_config():
-    from _provider import unregister_provider, PROVIDER_SLUG
+    from _provider import PROVIDER_SLUG, unregister_provider
     cfg = {"providers": {PROVIDER_SLUG: {"base_url": "http://localhost:8088/v1"}}}
     mock_load = MagicMock(return_value=cfg)
     mock_save = MagicMock()
@@ -120,6 +120,7 @@ def test_tool_calls_frames_with_text():
 
 def test_handle_bid_login_already_authenticated():
     import json
+
     import __init__ as plugin
     with patch.object(plugin, "start_login", return_value={"already_authenticated": True, "phase": "authenticated"}):
         result = json.loads(plugin._handle_bid_login({}))
@@ -149,7 +150,7 @@ def test_handle_tags():
 # --- backend.py ---
 
 def test_load_tags_exception_returns_fallback():
-    from backend import load_tags, STATIC_TAGS
+    from backend import STATIC_TAGS, load_tags
     with patch("builtins.open", side_effect=OSError("no file")):
         assert load_tags() == STATIC_TAGS
 
@@ -157,7 +158,8 @@ def test_load_tags_exception_returns_fallback():
 # --- _provider.py: register/unregister body ---
 
 def _make_hermes_cli_mock(initial_config=None):
-    import sys, types, copy
+    import copy
+    import types
     saved = [copy.deepcopy(initial_config or {})]
     fake_cfg = types.ModuleType('hermes_cli.config')
     fake_cfg.load_config = lambda: copy.deepcopy(saved[0])
@@ -168,7 +170,9 @@ def _make_hermes_cli_mock(initial_config=None):
 
 
 def test_provider_register_writes_entry(monkeypatch):
-    import sys, _provider
+    import sys
+
+    import _provider
     fake_hermes, fake_cfg, saved = _make_hermes_cli_mock()
     monkeypatch.setitem(sys.modules, 'hermes_cli', fake_hermes)
     monkeypatch.setitem(sys.modules, 'hermes_cli.config', fake_cfg)
@@ -178,10 +182,12 @@ def test_provider_register_writes_entry(monkeypatch):
 
 
 def test_provider_register_skips_user_managed(monkeypatch):
-    import sys, _provider
+    import sys
+
+    import _provider
     existing = {'base_url': 'http://example.com/v1', 'name': 'Other'}
     cfg = {'providers': {_provider.PROVIDER_SLUG: existing}}
-    fake_hermes, fake_cfg, saved = _make_hermes_cli_mock(cfg)
+    fake_hermes, fake_cfg, _saved = _make_hermes_cli_mock(cfg)
     monkeypatch.setitem(sys.modules, 'hermes_cli', fake_hermes)
     monkeypatch.setitem(sys.modules, 'hermes_cli.config', fake_cfg)
     result = _provider.register_provider(8088)
@@ -189,7 +195,9 @@ def test_provider_register_skips_user_managed(monkeypatch):
 
 
 def test_provider_unregister_removes_our_entry(monkeypatch):
-    import sys, _provider
+    import sys
+
+    import _provider
     cfg = {'providers': {_provider.PROVIDER_SLUG: {'base_url': 'http://localhost:8088/v1'}}}
     fake_hermes, fake_cfg, saved = _make_hermes_cli_mock(cfg)
     monkeypatch.setitem(sys.modules, 'hermes_cli', fake_hermes)
@@ -200,9 +208,11 @@ def test_provider_unregister_removes_our_entry(monkeypatch):
 
 
 def test_provider_unregister_leaves_foreign_entry(monkeypatch):
-    import sys, _provider
+    import sys
+
+    import _provider
     cfg = {'providers': {_provider.PROVIDER_SLUG: {'base_url': 'http://example.com/v1'}}}
-    fake_hermes, fake_cfg, saved = _make_hermes_cli_mock(cfg)
+    fake_hermes, fake_cfg, _saved = _make_hermes_cli_mock(cfg)
     monkeypatch.setitem(sys.modules, 'hermes_cli', fake_hermes)
     monkeypatch.setitem(sys.modules, 'hermes_cli.config', fake_cfg)
     result = _provider.unregister_provider()

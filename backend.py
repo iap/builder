@@ -47,9 +47,7 @@ from __future__ import annotations
 
 import json
 import re
-import time
 from pathlib import Path
-from typing import Optional
 
 import requests
 
@@ -125,7 +123,7 @@ def _sign_request(bearer: str) -> dict:
 
 
 # --- chat ---
-def _resolve_model_id(model: Optional[str]) -> str:
+def _resolve_model_id(model: str | None) -> str:
     """Map a requested model name to a modelId Q will accept.
 
     Q returns an opaque HTTP 500 (InternalServerException) for ANY modelId
@@ -161,12 +159,12 @@ def _resolve_model_id(model: Optional[str]) -> str:
 def chat(
     prompt: str,
     model: str = "auto",
-    conversation_id: Optional[str] = None,
-    tools: Optional[list] = None,
-    tool_results: Optional[list] = None,
-    history: Optional[list] = None,
+    conversation_id: str | None = None,
+    tools: list | None = None,
+    tool_results: list | None = None,
+    history: list | None = None,
     _retries: int = 0,
-) -> tuple[str, Optional[str], Optional[str]]:
+) -> tuple[str, str | None, str | None]:
     """Send `prompt` to Q's GenerateAssistantResponse and return (answer, conversation_id, tool_use_id).
 
     `model` is sent to Q as `modelId` in the request body (verified live: Q
@@ -337,7 +335,7 @@ def _extract_answer(response: requests.Response) -> str:
     return answer
 
 
-def _extract_conversation_id(text: str) -> Optional[str]:
+def _extract_conversation_id(text: str) -> str | None:
     """Pull Q's `conversationId` from the response stream.
 
     The `assistantResponseEvent` payload carries both `content`/`modelId` and a
@@ -366,7 +364,7 @@ def _extract_conversation_id(text: str) -> Optional[str]:
     return None
 
 
-def _extract_tool_use_id(text: str) -> Optional[str]:
+def _extract_tool_use_id(text: str) -> str | None:
     """Pull Q's `toolUseId` from a `toolUseEvent` in the response stream.
 
     Unlike `assistantResponseEvent` (which carries `modelId`), the `toolUseEvent`
@@ -383,7 +381,7 @@ def _extract_tool_use_id(text: str) -> Optional[str]:
     return None
 
 
-def _extract_answer_with_conversation_id(response: requests.Response) -> tuple[str, Optional[str], Optional[str]]:
+def _extract_answer_with_conversation_id(response: requests.Response) -> tuple[str, str | None, str | None]:
     """Like `_extract_answer`, but also returns Q's `conversationId` and `toolUseId`."""
     raw = b""
     for chunk in response.iter_content(chunk_size=4096):
@@ -424,10 +422,10 @@ STATIC_MODELS = [
 ]
 
 _PLUGIN_YAML = Path(__file__).resolve().parent / "plugin.yaml"
-_MODEL_OVERRIDE: Optional[list[str]] = None  # None = not yet loaded
+_MODEL_OVERRIDE: list[str] | None = None  # None = not yet loaded
 
 
-def _load_model_override() -> Optional[list[str]]:
+def _load_model_override() -> list[str] | None:
     """Read an optional `models:` list from plugin.yaml.
 
     Returns the list if present and non-empty, otherwise None so the caller
@@ -477,10 +475,10 @@ STATIC_TAGS = [
     "auth",
 ]
 
-_TAG_OVERRIDE: Optional[list[str]] = None  # None = not yet loaded
+_TAG_OVERRIDE: list[str] | None = None  # None = not yet loaded
 
 
-def _load_tag_override() -> Optional[list[str]]:
+def _load_tag_override() -> list[str] | None:
     """Read an optional `tags:` list from plugin.yaml.
 
     Returns the list if present and non-empty, otherwise None so the caller

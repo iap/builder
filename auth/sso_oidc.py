@@ -23,9 +23,8 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +45,7 @@ REFRESH_GRANT_TYPE = "refresh_token"
 # --- Runtime state (process-local; synced to disk for cross-process safety) ---
 _lock = threading.Lock()
 _stop = threading.Event()
-_poll_thread: Optional[threading.Thread] = None
+_poll_thread: threading.Thread | None = None
 
 # This plugin is fully self-contained: the authenticated token lives ONLY in
 # the local `auth/bid_token.json` mirror under HERMES_HOME. It does NOT use the
@@ -122,13 +121,13 @@ def _migrate_install_dir_secrets() -> None:
             _write_secret(_canonical_path(fname), data)
             try:
                 old.unlink()
-            except OSError:  # noqa: BLE001
+            except OSError:
                 pass
     # Remove the now-empty old auth dir if nothing else remains.
     try:
         if src.is_dir() and not any(src.iterdir()):
             src.rmdir()
-    except OSError:  # noqa: BLE001
+    except OSError:
         pass
 
 
@@ -155,7 +154,7 @@ def _write_secret(path: Path, data: dict) -> None:
     tmp.replace(path)
 
 
-def _read_secret(path: Path) -> Optional[dict]:
+def _read_secret(path: Path) -> dict | None:
     """Read a secret, migrating it out of the old install-dir location first.
 
     On first read, any secret still living under the old
@@ -193,7 +192,7 @@ def _read_secret(path: Path) -> Optional[dict]:
             _write_secret(path, data)  # migrate into the new auth/ layout
             try:
                 legacy.unlink()
-            except OSError:  # noqa: BLE001
+            except OSError:
                 pass
             return data
     return None
@@ -226,7 +225,7 @@ def _client():
 # --- Client registration (cached to disk, server-recommended) ---
 
 
-def _load_registration() -> Optional[dict]:
+def _load_registration() -> dict | None:
     data = _read_secret(_reg_path())
     if not data:
         return None
@@ -269,7 +268,7 @@ def _save_token(out: dict, reg: dict) -> None:
     _write_secret(_canonical_path(_TOKEN_FILENAME), data)
 
 
-def _load_token() -> Optional[dict]:
+def _load_token() -> dict | None:
     return _read_secret(_token_path())
 
 
@@ -280,7 +279,7 @@ def _save_flow(flow: dict) -> None:
     _write_secret(_canonical_path(_FLOW_FILENAME), flow)
 
 
-def _load_flow() -> Optional[dict]:
+def _load_flow() -> dict | None:
     return _read_secret(_flow_path())
 
 
@@ -289,7 +288,11 @@ def _load_flow() -> Optional[dict]:
 
 def _poll_once(reg: dict, flow: dict) -> str:
     """Attempt one create_token call. Returns phase: authenticated/pending/error."""
-    from botocore.exceptions import ClientError, EndpointConnectionError, ConnectionError
+    from botocore.exceptions import (
+        ClientError,
+        ConnectionError,
+        EndpointConnectionError,
+    )
 
     c = _client()
     try:
@@ -302,7 +305,7 @@ def _poll_once(reg: dict, flow: dict) -> str:
         _save_token(out, reg)
         try:
             _flow_path().unlink()
-        except OSError:  # noqa: BLE001
+        except OSError:
             pass
         return "authenticated"
     except ClientError as e:
@@ -328,7 +331,7 @@ def _poll_once(reg: dict, flow: dict) -> str:
     except (EndpointConnectionError, ConnectionError) as e:
         logger.warning("transient network error during poll: %s", e)
         return "error:poll_network_error"
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.exception("device token poll crashed")
         return "error:poll_error"
 
@@ -429,7 +432,7 @@ def refresh_token() -> bool:
             )
             _save_token(out, reg)
             return True
-        except Exception:  # noqa: BLE001
+        except Exception:
             if attempt < 2:
                 time.sleep(2 ** attempt)
                 continue
@@ -484,7 +487,7 @@ def get_status() -> dict:
             "refreshed": refreshed,
             "token_expires_at": tok.get("expires_at"),
             "token_expires_at_iso": datetime.fromtimestamp(
-                tok["expires_at"], tz=timezone.utc
+                tok["expires_at"], tz=UTC
             ).isoformat(),
             "scopes": tok.get("scopes"),
         }
@@ -541,7 +544,7 @@ def show_identity() -> dict:
         "has_refresh_token": bool(tok.get("refresh_token")),
         "expires_at": tok.get("expires_at"),
         "expires_at_iso": (
-            datetime.fromtimestamp(tok["expires_at"], tz=timezone.utc).isoformat()
+            datetime.fromtimestamp(tok["expires_at"], tz=UTC).isoformat()
             if tok.get("expires_at")
             else None
         ),
@@ -570,5 +573,5 @@ def logout() -> None:
             try:
                 if p.exists():
                     p.unlink()
-            except OSError:  # noqa: BLE001
+            except OSError:
                 pass

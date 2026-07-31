@@ -17,7 +17,6 @@ handler to ``PUBLIC_SYMBOLS`` below so the guard stays meaningful.
 
 from conftest import load_plugin
 
-
 PUBLIC_SYMBOLS = (
     "register",
     "unregister",

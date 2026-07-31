@@ -147,7 +147,7 @@ def main() -> int:
         _plugin_dir = os.path.dirname(os.path.abspath(__file__))
         if _plugin_dir not in sys.path:
             sys.path.insert(0, _plugin_dir)
-        import _provider as _prov_mod  # noqa: E402
+        import _provider as _prov_mod
 
         PROVIDER_SLUG = _prov_mod.PROVIDER_SLUG
         register_provider = _prov_mod.register_provider

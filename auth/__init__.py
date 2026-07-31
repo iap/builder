@@ -5,20 +5,20 @@ Re-exports the headless SSO-OIDC device-authorization library so plugin code
 and tests can `from .auth import start_login, get_status, ...`.
 """
 
-from .sso_oidc import (  # noqa: F401
-    start_login,
+from .sso_oidc import (
+    ensure_valid,
     get_status,
     logout,
-    show_identity,
     refresh_token,
-    ensure_valid,
+    show_identity,
+    start_login,
 )
 
 __all__ = [
-    "start_login",
+    "ensure_valid",
     "get_status",
     "logout",
-    "show_identity",
     "refresh_token",
-    "ensure_valid",
+    "show_identity",
+    "start_login",
 ]

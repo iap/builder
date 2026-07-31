@@ -1,6 +1,7 @@
 """Tests for auth/sso_oidc botocore paths — botocore fully mocked."""
 # SPDX-License-Identifier: MIT
 from __future__ import annotations
+
 import importlib
 import sys
 import types

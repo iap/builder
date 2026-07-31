@@ -5,8 +5,8 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-from fastapi.testclient import TestClient
 from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from dashboard.plugin_api import router
 

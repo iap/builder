@@ -5,7 +5,7 @@ import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
-from . import __version__, q_debug
+from . import q_debug
 
 _HTML = """<!doctype html>
 <html lang="en">

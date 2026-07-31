@@ -26,7 +26,8 @@ import argparse
 import os
 import sys
 import time
-from typing import Any, Optional
+from datetime import UTC
+from typing import Any
 
 # Make the plugin importable whether invoked from its own dir or elsewhere.
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -46,12 +47,12 @@ def _load_modules():
     return sso_oidc, list_models, load_tags
 
 
-def _fmt_iso(expires_at: Optional[float]) -> str:
+def _fmt_iso(expires_at: float | None) -> str:
     if not expires_at:
         return "n/a"
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    return datetime.fromtimestamp(expires_at, tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
 
 
 def cmd_login(args: argparse.Namespace) -> int:
@@ -164,7 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     handlers: dict[str, Any] = {

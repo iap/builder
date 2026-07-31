@@ -12,7 +12,6 @@ from unittest import mock
 
 import pytest
 
-
 # --- adapter (OpenAI-compatible front-end) ---
 
 def test_adapter_translates_openai_request_to_q(monkeypatch):
@@ -21,8 +20,9 @@ def test_adapter_translates_openai_request_to_q(monkeypatch):
     with that prompt + the requested model. This is the contract that lets
     Hermes treat builder as a selectable chat model (Way A) without the
     old standalone :8088 server."""
-    import adapter
     from importlib import import_module
+
+    import adapter
 
     backend = import_module("backend")
 
@@ -59,8 +59,9 @@ def test_adapter_translates_openai_request_to_q(monkeypatch):
 def test_adapter_sse_shape(monkeypatch):
     """Output frames must be OpenAI SSE: a role frame, a content frame,
     then [DONE] — so Hermes's openai_chat transport can parse it."""
-    import adapter
     from importlib import import_module
+
+    import adapter
 
     backend = import_module("backend")
     monkeypatch.setattr(backend, "chat", lambda *a, **k: ("x", None, None))
@@ -81,8 +82,9 @@ def test_adapter_sse_frames_end_with_blank_line(monkeypatch):
     with 'Extra data: line 2 column 1' — the exact live CLI failure this
     guards against. splitlines() hid the bug because it collapses \\n and
     \\n\\n, so assert on the raw bytes instead."""
-    import adapter
     from importlib import import_module
+
+    import adapter
 
     backend = import_module("backend")
     monkeypatch.setattr(backend, "chat", lambda *a, **k: ("hello", None, None))
@@ -100,8 +102,9 @@ def test_adapter_sse_frames_end_with_blank_line(monkeypatch):
 def test_adapter_surfaces_chat_errors_as_sse(monkeypatch):
     """When backend.chat() raises (e.g. token missing), the adapter must
     return an OpenAI-style error frame, not crash the HTTP handler."""
-    import adapter
     from importlib import import_module
+
+    import adapter
 
     backend = import_module("backend")
     monkeypatch.setattr(backend, "chat", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("No valid Amazon Q token available")))
@@ -119,8 +122,9 @@ def test_adapter_does_not_forward_tools_to_q(monkeypatch):
     field) — it is chat-only at the wire level. Tool awareness is conveyed as
     text via the injected convention instead. This pins the contract so a
     future change can't accidentally forward `tools`/`tool_results` to Q."""
-    import adapter
     from importlib import import_module
+
+    import adapter
 
     backend = import_module("backend")
     captured = {}
@@ -160,8 +164,9 @@ def test_adapter_translates_tool_call_xml_to_openai_frames(monkeypatch):
     OpenAI `tool_calls` SSE frames with finish_reason='tool_calls' so Hermes's
     agentic loop (MCP / skills / native tools) actually fires. This is option
     (b): builder-as-model drives tools instead of being chat-only."""
-    import adapter
     from importlib import import_module
+
+    import adapter
 
     backend = import_module("backend")
 
@@ -209,8 +214,9 @@ def test_adapter_translates_tool_call_xml_to_openai_frames(monkeypatch):
 def test_adapter_multiple_tool_calls(monkeypatch):
     """Multiple <tool_call> blocks in one Q answer become multiple OpenAI
     tool_calls (distinct indices/ids)."""
-    import adapter
     from importlib import import_module
+
+    import adapter
 
     backend = import_module("backend")
     answer = (
@@ -258,8 +264,9 @@ def test_adapter_sse_parses_via_openai_sdk(monkeypatch):
 
     _ = openai  # referenced for clarity
 
-    import adapter
     from importlib import import_module
+
+    import adapter
 
     backend = import_module("backend")
     answer = (
@@ -292,8 +299,9 @@ def test_adapter_sse_parses_via_openai_sdk(monkeypatch):
 def test_adapter_text_only_no_tool_calls(monkeypatch):
     """When Q answers in plain text (no <tool_call>), the adapter stays
     chat-only: emits content with finish_reason='stop' and no tool_calls."""
-    import adapter
     from importlib import import_module
+
+    import adapter
 
     backend = import_module("backend")
     monkeypatch.setattr(backend, "chat", lambda *a, **k: ("Just a normal reply.", None, None))
@@ -308,15 +316,16 @@ def test_adapter_text_only_no_tool_calls(monkeypatch):
     text = out.decode()
     assert "tool_calls" not in text
     assert '"content": "Just a normal reply."' in text
-    assert '"finish_reason": "stop"' not in text or True  # stop is default; not required
+    assert True  # stop is default; not required
     assert "data: [DONE]" in text
 
 
 def test_adapter_tool_call_xml_stripped_from_content(monkeypatch):
     """The raw <tool_call> XML must not leak into the assistant `content` shown
     to the user when we also emit tool_calls for that turn."""
-    import adapter
     from importlib import import_module
+
+    import adapter
 
     backend = import_module("backend")
     answer = (
@@ -354,8 +363,9 @@ def test_adapter_flattens_complex_multiturn_context(monkeypatch):
     into a single Q prompt with the LAST user turn as the actual ask, and
     `tool` role messages must be included (not dropped) so Q sees the tool
     output. Verifies Q gets grounded context rather than losing it."""
-    import adapter
     from importlib import import_module
+
+    import adapter
 
     backend = import_module("backend")
     captured = {}
@@ -405,8 +415,9 @@ def test_adapter_multimodal_content_blocks_collapsed(monkeypatch):
     """Hermes sends vision/tool multimodal `content` as a list of blocks. The
     adapter must join the text parts into one prompt (not crash / not pass a
     list to Q)."""
-    import adapter
     from importlib import import_module
+
+    import adapter
 
     backend = import_module("backend")
     captured = {}
@@ -432,8 +443,9 @@ def test_adapter_nonascii_roundtrips_through_sse(monkeypatch):
     """Non-ASCII answers must survive the OpenAI SSE framing verbatim (no
     \\uXXXX escapes) so the TUI renders them correctly. Mirrors the
     _success/_error ensure_ascii=False guarantee for the model path."""
-    import adapter
     from importlib import import_module
+
+    import adapter
 
     backend = import_module("backend")
     monkeypatch.setattr(backend, "chat", lambda *a, **k: ("café — 日本語", None, None))
@@ -454,7 +466,6 @@ def test_adapter_nonascii_roundtrips_through_sse(monkeypatch):
     assert "".join(contents) == "café — 日本語"
 
 
-import pytest
 
 from conftest import load_plugin
 
@@ -666,7 +677,7 @@ def test_get_status_prefers_newest_valid_token(monkeypatch, tmp_path):
     base = tmp_path / "builder"
     base.mkdir(parents=True)
     (base / "auth").mkdir(parents=True, exist_ok=True)
-    old = {"access_token": "OLD", "expires_at": time.time() + 3600}
+    {"access_token": "OLD", "expires_at": time.time() + 3600}
     new = {"access_token": "NEW", "expires_at": time.time() + 7200}
     # auth/bid_token.json carries the NEWER valid token (single store; no pool).
     (base / "auth" / "bid_token.json").write_text(json.dumps(new))
@@ -844,7 +855,6 @@ def test_start_login_short_circuits_when_token_present(monkeypatch):
     InvalidGrantException and surface a fake login error. It should return
     already_authenticated instead."""
     import auth.sso_oidc as sso
-    from unittest import mock
 
     monkeypatch.setattr(sso, "_load_token", lambda: {"access_token": "x", "expires_at": 9e12})
     started = {"n": 0}
@@ -863,9 +873,11 @@ def test_invalid_grant_downgraded_when_token_present(monkeypatch):
     """A stale/duplicate poll that hits InvalidGrantException after a token
     already exists is a benign race, not a failure - must not log at ERROR
     (which the dashboard shows as a login error)."""
-    import auth.sso_oidc as sso
-    from botocore.exceptions import ClientError
     import logging
+
+    from botocore.exceptions import ClientError
+
+    import auth.sso_oidc as sso
 
     monkeypatch.setattr(sso, "_load_token", lambda: {"access_token": "x", "expires_at": 9e12})
     # Use the REAL _poll_once; make the boto3 client raise InvalidGrantException.
@@ -904,7 +916,9 @@ def test_uninstall_removes_builder_block_and_enabled(tmp_path, monkeypatch):
     """Mirror of scripts/uninstall.sh logic: drop the providers:builder
     block (any indentation) and the enabled entry; leave siblings intact.
     Uses the same provider key (builder) that setup.sh/uninstall.sh write."""
-    import yaml, io, sys
+    import sys
+
+    import yaml
     sys.path.insert(0, ".")
     cfg = {
         "providers": {
@@ -951,7 +965,8 @@ def test_aws_builder_resolves_as_cli_tui_model(monkeypatch):
     ``key_env``. That honest signal lets the gateway's credential probe skip
     the false "No API key configured … First message will fail" warning.
     """
-    import sys, yaml
+    import sys
+
     from conftest import HERMES_AGENT_DIR
     sys.path.insert(0, str(HERMES_AGENT_DIR))
     from hermes_cli.config import get_compatible_custom_providers
@@ -986,7 +1001,10 @@ def test_register_provider_adopts_legacy_markerless_entry(monkeypatch, tmp_path)
     A genuine foreign/user-managed entry (different base_url, no marker) must
     be left untouched.
     """
-    import sys, yaml
+    import sys
+
+    import yaml
+
     from conftest import HERMES_AGENT_DIR
     sys.path.insert(0, str(HERMES_AGENT_DIR))
 
@@ -1023,7 +1041,10 @@ def test_register_provider_adopts_legacy_127_entry_by_base_url(monkeypatch, tmp_
     loopback form so a renamed legacy entry (name != PROVIDER_NAME) is still
     adopted and self-healed. This guards the exact false-negative Devin found:
     matching only on 'localhost' missed real legacy entries."""
-    import sys, yaml
+    import sys
+
+    import yaml
+
     from conftest import HERMES_AGENT_DIR
     sys.path.insert(0, str(HERMES_AGENT_DIR))
 
@@ -1052,9 +1073,11 @@ def test_register_provider_adopts_legacy_127_entry_by_base_url(monkeypatch, tmp_
 def test_register_provider_leaves_foreign_entry_alone(monkeypatch, tmp_path):
     """A providers.aws-builder entry with a foreign base_url and no marker is
     treated as user-managed and must NOT be clobbered by register_provider."""
-    import yaml
-    from conftest import HERMES_AGENT_DIR
     import sys
+
+    import yaml
+
+    from conftest import HERMES_AGENT_DIR
     sys.path.insert(0, str(HERMES_AGENT_DIR))
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
@@ -1087,7 +1110,8 @@ def test_plugin_model_enum_matches_provider_block():
     enum also includes 'auto' so the TUI picker can surface it."""
     import sys
     sys.path.insert(0, ".")
-    import backend, yaml
+
+    import backend
 
     catalog = set(backend.list_models())
     # list_models() now includes "auto" as the first element (passthrough)
@@ -1112,7 +1136,9 @@ def test_adapter_end_to_end_openai_wire(monkeypatch):
     listed. Monkeypatches backend.chat (no real Q token needed) so this is
     deterministic and offline, but exercises the real adapter HTTP+SSE
     translation that a '-m aws-builder' chat turn hits."""
-    import json, urllib.request
+    import json
+    import urllib.request
+
     import adapter as real_adapter
 
     captured = {}
@@ -1122,7 +1148,7 @@ def test_adapter_end_to_end_openai_wire(monkeypatch):
         return ("ADAPTER-OK", None, None)
     monkeypatch.setattr(real_adapter.backend, "chat", fake_chat)
 
-    srv, port = real_adapter.start(host="127.0.0.1", port=0)
+    _srv, port = real_adapter.start(host="127.0.0.1", port=0)
     try:
         req = urllib.request.Request(
             f"http://127.0.0.1:{port}/v1/chat/completions",
@@ -1153,8 +1179,9 @@ def test_adapter_end_to_end_openai_wire(monkeypatch):
 def test_adapter_healthz():
     """Health endpoint used by orchestration to confirm the listener is up."""
     import urllib.request
+
     import adapter as real_adapter
-    srv, port = real_adapter.start(host="127.0.0.1", port=0)
+    _srv, port = real_adapter.start(host="127.0.0.1", port=0)
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=5) as r:
             assert r.status == 200
@@ -1176,7 +1203,7 @@ def test_adapter_non_localhost_requires_allow_public(monkeypatch):
 
     with monkeypatch.context() as m:
         m.setenv("AWS_BUILD_ADAPTER_ALLOW_PUBLIC", "1")
-        srv, port = adapter.start(host="127.0.0.1", port=0)
+        _srv, port = adapter.start(host="127.0.0.1", port=0)
         assert port > 0
         adapter.stop()
 
@@ -1286,7 +1313,6 @@ def test_cli_status_and_whoami_report_store_state(monkeypatch, tmp_path, capsys)
     """status/whoami must reflect the plugin's own store (auth/bid_token.json),
     independent of Hermes core's credential pool."""
     import build_cli as cli
-    from auth import sso_oidc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     base = tmp_path / "builder"
@@ -1359,7 +1385,7 @@ def test_chat_wires_userinputmessagecontext_and_modelid(monkeypatch):
 
     tools = [{"type": "function", "function": {"name": "fs_read", "description": "read"}}]
     history = [{"role": "user", "content": "prior"}]
-    answer, cid, tuid = backend.chat(
+    answer, _cid, _tuid = backend.chat(
         "current prompt",
         model="not-a-real-model",
         tools=tools,

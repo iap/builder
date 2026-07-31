@@ -60,7 +60,8 @@ import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Optional
+from typing import Any
+
 
 # IPv6-capable server: the stdlib ThreadingHTTPServer binds AF_INET only,
 # so a loopback IPv6 host (::1) raises gaierror "Address family for
@@ -104,8 +105,8 @@ def _resolve_bind_host(requested: str) -> str:
         "Bind 127.0.0.1 (default) or set AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1 to override. "
     )
 
-_server: Optional["ThreadingHTTPServer"] = None
-_thread: Optional[threading.Thread] = None
+_server: ThreadingHTTPServer | None = None
+_thread: threading.Thread | None = None
 
 
 # Tool-call convention injected into Q's single prompt. Q's
@@ -123,7 +124,7 @@ _TOOL_CALL_INSTRUCTION = (
 )
 
 
-def _flatten_messages(messages: list[dict[str, Any]], tools: Optional[list] = None) -> str:
+def _flatten_messages(messages: list[dict[str, Any]], tools: list | None = None) -> str:
     """Collapse OpenAI ``messages`` into a single prompt for Q.
 
     Q takes one ``userInputMessage`` per call. We join consecutive turns with
@@ -232,7 +233,7 @@ def _parse_tool_calls(answer: str) -> list[dict[str, Any]]:
     return calls
 
 
-def _extract_balanced_brace(text: str, start: int) -> tuple[Optional[str], int]:
+def _extract_balanced_brace(text: str, start: int) -> tuple[str | None, int]:
     """Return (json_object_str, end_index) for the balanced `{...}` at `start`.
 
     Non-greedy `.*?` can't span nested braces (tool arguments are JSON objects),
@@ -495,7 +496,7 @@ def start(host: str = HOST, port: int = DEFAULT_PORT) -> tuple[ThreadingHTTPServ
     if code == 0:  # connection succeeded => port already in use by another proc
         owner = ""
         try:
-            _raw = subprocess.run(  # noqa: S603 - localhost path probe, no shell
+            _raw = subprocess.run(
                 ["lsof", "-t", "-i", f"{bind_host}:{port}"],
                 capture_output=True, text=True, timeout=3,
             ).stdout.strip()
