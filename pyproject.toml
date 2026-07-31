@@ -43,5 +43,15 @@ packages = ["."]
 src = ["."]
 exclude = ["dashboard/dist", "__pycache__", ".venv"]
 
+[tool.ruff]
+exclude = [
+    ".github",
+    ".venv",
+    "__pycache__",
+    "dashboard/dist",
+    "dist",
+    "build",
+]
+
 [tool.mise]
 # tools are managed via mise's uv backend; see .mise.toml
