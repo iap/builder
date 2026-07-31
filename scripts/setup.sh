@@ -78,17 +78,39 @@ if [[ ! "$INDENT" =~ ^[0-9]+$ ]]; then
   INDENT=2
 fi
 
-# Build indented provider block lines.
-mapfile -t BLOCK_LINES < <(printf '  aws-builder:\n    name: AWS Builder\n    transport: openai_chat\n    base_url: http://localhost:%s/v1\n    api_key: no-key-required\n    models:\n      - auto\n      - claude-sonnet-4.5\n      - claude-sonnet-4\n      - claude-haiku-4.5\n' "$PORT" | sed -e "s/^  /$(printf '%*s' "$INDENT" '')/")
+# Build indented provider block lines and pass via a temp file so
+# multiline YAML does not break shell argument passing on bash 3.2.
+BLOCK_FILE="$(mktemp)"
+cat > "$BLOCK_FILE" <<EOF
+  aws-builder:
+    name: AWS Builder
+    transport: openai_chat
+    base_url: http://localhost:${PORT}/v1
+    api_key: no-key-required
+    models:
+      - auto
+      - claude-sonnet-4.5
+      - claude-sonnet-4
+      - claude-haiku-4.5
+EOF
 
-python3 - "$CONFIG" "$INDENT" "$(printf '%s\n' "${BLOCK_LINES[@]}")" <<'PY'
+# Rewrite the temp file with the detected indent.
+python3 - "$CONFIG" "$INDENT" "$BLOCK_FILE" <<'PY'
 import sys
 from pathlib import Path
 
-cfg_path, indent_str, block = sys.argv[1], sys.argv[2], sys.argv[3]
+cfg_path, indent_str, blockfile = sys.argv[1], sys.argv[2], sys.argv[3]
 indent = int(indent_str)
 raw = Path(cfg_path).read_text()
-block = block.rstrip("\n")
+block = Path(blockfile).read_text().rstrip("\n")
+prefix = " " * indent
+lines = []
+for line in block.splitlines():
+    if line.startswith("  "):
+        lines.append(prefix + line[2:])
+    else:
+        lines.append(line)
+block = "\n".join(lines)
 
 # Re-parse with a fixed prefix width so YAML loading is based on config
 # content, not shell-quoted text.
