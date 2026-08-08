@@ -101,7 +101,10 @@ lines = [
     "    models:",
 ]
 for m in models:
-    lines.append(f"      - {m}")
+    # Quote model identifiers to prevent YAML type coercion (e.g. "4o" -> str,
+    # not float, and "4.0" -> float). The provider catalog must preserve the
+    # exact string as declared in plugin.yaml.
+    lines.append(f'      - "{m}"')
 
 with open(blockfile, "w") as fh:
     fh.write("\n".join(lines) + "\n")
@@ -149,7 +152,7 @@ if expected_prefix in raw:
         elif stripped == "models:":
             in_models = True
         elif in_models and stripped.startswith("- "):
-            m = stripped[2:].strip()
+            m = stripped[2:].strip().strip('"').strip("'")
             new_models[m] = {}
         elif in_models and stripped and not stripped.startswith("-") and not stripped.startswith("#"):
             if ":" in stripped:
