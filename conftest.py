@@ -18,10 +18,9 @@ from pathlib import Path
 
 import yaml
 
-# Suppress the starlette.testclient deprecation warning at import time (before
-# pytest's filterwarnings config takes effect). This is a known issue from the
-# starlette version Hermes core bundles — upgrading starlette here would
-# diverge from what the runtime actually uses.
+# Suppress StarletteDeprecationWarning at import time (before pytest's
+# filterwarnings config takes effect). This comes from the starlette version
+# Hermes core bundles; upgrading starlette here would diverge from the runtime.
 try:
     from starlette.exceptions import StarletteDeprecationWarning
     warnings.filterwarnings("ignore", category=StarletteDeprecationWarning)

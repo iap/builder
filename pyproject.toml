@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hermes-plugin-builder"
-version = "0.1.0"
+version = "1.1.0"
 description = "Amazon Q Developer (Builder ID) plugin for Hermes Agent"
 requires-python = ">=3.12"
 dependencies = [
@@ -16,7 +16,7 @@ dependencies = [
 dev = [
     "pytest>=9.0",
     "pytest-asyncio>=1.4",
-    "fastapi>=0.139",
+    "fastapi>=0.115",
     "uvicorn>=0.52",
     "httpx>=0.28",
     "openai>=1.0",
@@ -29,7 +29,7 @@ dev = [
 dev-dependencies = [
     "pytest>=9.0",
     "pytest-asyncio>=1.4",
-    "fastapi>=0.139",
+    "fastapi>=0.115",
     "uvicorn>=0.52",
     "httpx>=0.28",
     "openai>=1.0",
@@ -64,13 +64,14 @@ exclude = [
 "tests/test_build.py" = ["BLE001"]
 "verify.py" = ["RUF100"]
 
+# Suppress the StarletteDeprecationWarning from the starlette version
+# Hermes core bundles. Upgrading starlette here would diverge from the
+# runtime. The warning fires at import time, before pytest's own
+# filterwarnings takes effect, so we catch it here via conftest.py too.
 [tool.pytest.ini_options]
-# Suppress the starlette.testclient deprecation warning. This is a known
-# issue from the starlette version Hermes core bundles — upgrading starlette
-# here would diverge from what the runtime actually uses. The warning is
-# noise from an upstream dependency, not a bug in this plugin.
+testpaths = ["tests"]
 filterwarnings = [
-    "ignore::starlette.exceptions.StarletteDeprecationWarning",
+    "ignore::StarletteDeprecationWarning",
 ]
 
 [tool.mise]
