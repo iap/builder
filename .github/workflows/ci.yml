@@ -11,6 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+        with:
+          repository: NousResearch/hermes-agent
+          path: hermes-agent
       - uses: astral-sh/setup-uv@094aa226ed0e8f079adf9b0803105ffdac7bb465
         with:
           version: "0.5.x"
@@ -24,6 +28,9 @@ jobs:
       - name: Format
         run: uv run ruff format --check .
       - name: Tests
+        env:
+          HERMES_HOME: ${{ github.workspace }}
+          PYTHONPATH: ${{ github.workspace }}/hermes-agent
         run: uv run pytest -x -q tests
 
   verify:
