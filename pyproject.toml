@@ -53,6 +53,7 @@ exclude = [
     "dashboard/dist",
     "dist",
     "build",
+    "hermes-agent",
 ]
 
 [tool.ruff.lint.per-file-ignores]
