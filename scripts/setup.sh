@@ -44,7 +44,7 @@ fi
 
 # Always run the Python updater so config.yaml stays current with the
 # plugin's declared model catalog (including new models, default model
-# changes, and the _revision bump that forces a re-read).
+# changes, and the provider entry is refreshed on each run).
 
 # Backup
 cp "$CONFIG" "$BACKUP"
