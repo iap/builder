@@ -19,14 +19,14 @@ jobs:
         with:
           version: "0.5.x"
       - run: uv --version
-      - run: uv tool install ruff@0.15
-      - run: uv run ruff --version
+      - run: uv tool install ruff@0.16
+      - run: ruff --version
       - name: Install deps
         run: uv sync --extra dev
       - name: Lint
-        run: uv run ruff check .
+        run: ruff check .
       - name: Format
-        run: uv run ruff format --check .
+        run: ruff format --check .
       - name: Tests
         env:
           HERMES_HOME: ${{ github.workspace }}
@@ -62,8 +62,8 @@ jobs:
         with:
           version: "0.5.x"
       - run: uv --version
-      - run: uv tool install ruff@0.15
-      - run: uv run ruff --version
+      - run: uv tool install ruff@0.16
+      - run: ruff --version
       - name: Install deps
         run: |
           set -euo pipefail
@@ -80,4 +80,6 @@ jobs:
         run: |
           set -euo pipefail
           cd "${{ github.workspace }}/plugin-src"
+          ruff check .
+          ruff format --check .
           uv run pytest -x -q tests/integration
