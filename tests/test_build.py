@@ -1545,7 +1545,7 @@ def test_q_debug_includes_render_prefs(mod, monkeypatch):
     [
         # Multiple bare-JSON calls in one answer (fallback path)
         (
-            '{"name": "fs_read", "arguments": {"path": "/tmp"}}'
+            '{"name": "fs_read", "arguments": {"path": "/tmp"}}'  # noqa: ISC004
             ' {"name": "fs_write", "arguments": {"path": "/out"}}',
             ["fs_read", "fs_write"],
         ),
@@ -1605,7 +1605,7 @@ def test_extract_balanced_brace_handles_strings_with_braces():
     import adapter
 
     text = '{"name": "x", "arguments": {"cmd": "echo {not_a_nest}"}}'
-    obj, end = adapter._extract_balanced_brace(text, 0)
+    obj, _end = adapter._extract_balanced_brace(text, 0)
     assert obj is not None
     parsed = json.loads(obj)
     assert parsed["name"] == "x"
@@ -1617,7 +1617,7 @@ def test_extract_balanced_brace_handles_escaped_quotes():
     import adapter
 
     text = '{"name": "x", "arguments": {"q": "say \\"nested\\""}}'
-    obj, end = adapter._extract_balanced_brace(text, 0)
+    obj, _end = adapter._extract_balanced_brace(text, 0)
     assert obj is not None
     parsed = json.loads(obj)
     assert parsed["arguments"]["q"] == 'say "nested"'
