@@ -1656,3 +1656,41 @@ def test_parse_tool_calls_empty_string():
 
     assert adapter._parse_tool_calls("") == []
     assert adapter._parse_tool_calls("no tool text") == []
+
+
+def test_starlette_deprecation_warning_suppressed():
+    """Regression: verify that the StarletteDeprecationWarning suppression
+    is configured in both conftest.py (import-time) and pyproject.toml
+    (pytest filterwarnings). The starlette version Hermes core bundles
+    triggers this warning, and it's suppressed to avoid log noise.
+
+    This test guards against the suppression being removed — if it is,
+    the warning will reappear in test output (visible as "1 warning" in
+    the pytest summary line) and must be investigated (proper fastapi/
+    starlette upgrade).
+    """
+    import inspect
+
+    from conftest import load_plugin  # noqa: F401 — proves conftest loaded
+
+    conftest_src = inspect.getsource(__import__("conftest"))
+
+    # conftest.py must suppress at import time (before pytest applies its
+    # filterwarnings, which are session-scoped but don't cover import-time
+    # warnings from starlette.testclient).
+    assert "StarletteDeprecationWarning" in conftest_src, (
+        "conftest.py must call warnings.filterwarnings(..., "
+        "category=StarletteDeprecationWarning) to suppress the starlette "
+        "testclient deprecation at import time."
+    )
+    assert "warnings.filterwarnings" in conftest_src
+
+    # pyproject.toml must also register the filter (belt + suspenders).
+    from pathlib import Path
+
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    pyproject_src = pyproject.read_text()
+    assert "StarletteDeprecationWarning" in pyproject_src, (
+        "pyproject.toml [tool.pytest.ini_options] filterwarnings must include "
+        "ignore::starlette.exceptions.StarletteDeprecationWarning"
+    )
