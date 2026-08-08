@@ -62,8 +62,6 @@ jobs:
         with:
           version: "0.5.x"
       - run: uv --version
-      - run: uv tool install ruff@0.16
-      - run: ruff --version
       - name: Install deps
         run: |
           set -euo pipefail
