@@ -1535,3 +1535,124 @@ def test_q_debug_includes_render_prefs(mod, monkeypatch):
     data = _json.loads(out)
     assert data["success"] is True
     assert data["render"] == {"render_mode": "cli", "theme": "ember"}
+
+
+# --- adapter._parse_tool_calls: fuzz edge cases for XML/JSON parsing ---
+
+
+@pytest.mark.parametrize(
+    "answer,expected_names",
+    [
+        # Multiple bare-JSON calls in one answer (fallback path)
+        (
+            '{"name": "fs_read", "arguments": {"path": "/tmp"}}'
+            ' {"name": "fs_write", "arguments": {"path": "/out"}}',
+            ["fs_read", "fs_write"],
+        ),
+        # Nested braces in arguments (depth-aware scanning must handle)
+        (
+            '{"name": "shell", "arguments": {"cmd": "echo { nested } value"}}',
+            ["shell"],
+        ),
+        # Escaped quotes in arguments
+        (
+            '{"name": "ask", "arguments": {"q": "say \\"hello\\" world"}}',
+            ["ask"],
+        ),
+        # Empty arguments object
+        ('{"name": "noop", "arguments": {}}', ["noop"]),
+        # Arguments as JSON string (not object) — parser should still extract
+        ('{"name": "x", "arguments": "{\\"k\\":1}"}', ["x"]),
+        # No tool calls at all
+        ("Just a plain answer with no tools", []),
+        # Malformed JSON skipped, valid one after it still parsed
+        (
+            '{"name": "bad", "arguments": {"x": }} {"name": "good", "arguments": {}}',
+            ["good"],
+        ),
+        # arguments missing entirely
+        ('{"name": "noargs"}', ["noargs"]),
+        # name missing — should be skipped, next valid one parsed
+        ('{"arguments": {"x": 1}} {"name": "real", "arguments": {}}', ["real"]),
+        # XML-style  call
+        (
+            '{"name": "fs_read", "arguments": {"path": "/tmp"}}',
+            ["fs_read"],
+        ),
+        # Plain text, no JSON-like object at all
+        ("No tools here, just a response", []),
+    ],
+)
+def test_parse_tool_calls_fuzz(answer, expected_names):
+    """Parser must robustly handle nested braces, escaped quotes, malformed JSON,
+    and multiple calls without crashing."""
+    import adapter
+
+    parsed = adapter._parse_tool_calls(answer)
+    result_names = [c["name"] for c in parsed]
+    assert isinstance(parsed, list)
+    for call in parsed:
+        assert "name" in call
+        assert "arguments" in call
+        json.loads(call["arguments"])
+    assert result_names == expected_names, (
+        f"expected {expected_names}, got {result_names}"
+    )
+
+
+def test_extract_balanced_brace_handles_strings_with_braces():
+    """Brace-matching must skip braces inside JSON string values."""
+    import adapter
+
+    text = '{"name": "x", "arguments": {"cmd": "echo {not_a_nest}"}}'
+    obj, end = adapter._extract_balanced_brace(text, 0)
+    assert obj is not None
+    parsed = json.loads(obj)
+    assert parsed["name"] == "x"
+    assert "{not_a_nest}" in parsed["arguments"]["cmd"]
+
+
+def test_extract_balanced_brace_handles_escaped_quotes():
+    """Brace-matching must handle escaped quotes inside strings."""
+    import adapter
+
+    text = '{"name": "x", "arguments": {"q": "say \\"nested\\""}}'
+    obj, end = adapter._extract_balanced_brace(text, 0)
+    assert obj is not None
+    parsed = json.loads(obj)
+    assert parsed["arguments"]["q"] == 'say "nested"'
+
+
+def test_parse_tool_calls_cap_at_20():
+    """Parser must cap at 20 calls to avoid pathological answers."""
+    import adapter
+
+    many = " ".join(
+        json.dumps({"name": f"tool_{i}", "arguments": {"i": i}}) for i in range(50)
+    )
+    calls = adapter._parse_tool_calls(many)
+    assert len(calls) <= 20
+
+
+def test_strip_and_parse_xml_style_call():
+    """The full round-trip: parse an XML-style call, then verify strip removes it."""
+    import adapter
+
+    # Build the XML-style tag characters using chr() to avoid source-file issues
+    open_tag = chr(0x3c) + "tool_call" + chr(0x3e)  #  like
+    close_tag = chr(0x3c) + "/tool_call" + chr(0x3e)  #  like
+    json_payload = '{"name": "fs_read", "arguments": {"path": "/tmp"}}'
+    text = f"Here is my call: {open_tag}{json_payload}{close_tag}"
+    calls = adapter._parse_tool_calls(text)
+    assert len(calls) == 1
+    assert calls[0]["name"] == "fs_read"
+    # After stripping, the XML block should be gone
+    stripped = adapter._strip_tool_call_xml(text)
+    assert open_tag not in stripped
+    assert close_tag not in stripped
+    assert "fs_read" not in stripped
+def test_parse_tool_calls_empty_string():
+    import adapter
+
+    assert adapter._parse_tool_calls("") == []
+    assert adapter._parse_tool_calls("no tool text") == []
