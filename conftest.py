@@ -24,6 +24,7 @@ import yaml
 # diverge from what the runtime actually uses.
 try:
     from starlette.exceptions import StarletteDeprecationWarning
+
     warnings.filterwarnings("ignore", category=StarletteDeprecationWarning)
 except ImportError:
     pass

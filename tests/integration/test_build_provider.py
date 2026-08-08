@@ -61,9 +61,7 @@ def test_register_provider_adopts_legacy_markerless_entry(monkeypatch, tmp_path)
 
     updated = yaml.safe_load(cfg_path.read_text())["providers"]["aws-builder"]
     assert updated.get("api_key") == "no-key-required", "stale key_env replaced"
-    assert not any(k.startswith("_") for k in updated), (
-        "no private marker key written"
-    )
+    assert not any(k.startswith("_") for k in updated), "no private marker key written"
     assert "key_env" not in updated, "dummy key_env removed"
 
 

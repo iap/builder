@@ -1639,8 +1639,8 @@ def test_strip_and_parse_xml_style_call():
     import adapter
 
     # Build the XML-style tag characters using chr() to avoid source-file issues
-    open_tag = chr(0x3c) + "tool_call" + chr(0x3e)  #  like
-    close_tag = chr(0x3c) + "/tool_call" + chr(0x3e)  #  like
+    open_tag = chr(0x3C) + "tool_call" + chr(0x3E)  #  like
+    close_tag = chr(0x3C) + "/tool_call" + chr(0x3E)  #  like
     json_payload = '{"name": "fs_read", "arguments": {"path": "/tmp"}}'
     text = f"Here is my call: {open_tag}{json_payload}{close_tag}"
     calls = adapter._parse_tool_calls(text)
@@ -1651,6 +1651,8 @@ def test_strip_and_parse_xml_style_call():
     assert open_tag not in stripped
     assert close_tag not in stripped
     assert "fs_read" not in stripped
+
+
 def test_parse_tool_calls_empty_string():
     import adapter
 
