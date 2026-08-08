@@ -208,23 +208,6 @@ def register_provider(port: int) -> bool:
         }
     )
     entry["models"] = {m: {} for m in models}
-    # Bump the entry revision only when the model catalog or other
-    # key fields actually changed — not on every register_provider()
-    # call.  Without this guard, every Hermes session start rewrites
-    # config.yaml with a fresh _revision timestamp for no reason
-    # (churns the mtime and creates spurious diffs in backups).
-    # The key is filtered by core's unknown-key warning only if it's
-    # NOT already present, so omitting it when nothing changed is
-    # harmless (the previous _revision persists in the entry).
-    _catalog_changed = (
-        not existing
-        or not isinstance(existing, dict)
-        or existing.get("models") != entry["models"]
-        or existing.get("base_url") != entry["base_url"]
-        or existing.get("default_model") != entry.get("model")
-    )
-    if _catalog_changed:
-        entry["_revision"] = str(int(__import__("time").time()))
     providers[PROVIDER_SLUG] = entry
 
     try:
