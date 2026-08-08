@@ -64,5 +64,14 @@ exclude = [
 "tests/test_build.py" = ["BLE001"]
 "verify.py" = ["RUF100"]
 
+[tool.pytest.ini_options]
+# Suppress the starlette.testclient deprecation warning. This is a known
+# issue from the starlette version Hermes core bundles — upgrading starlette
+# here would diverge from what the runtime actually uses. The warning is
+# noise from an upstream dependency, not a bug in this plugin.
+filterwarnings = [
+    "ignore::starlette.exceptions.StarletteDeprecationWarning",
+]
+
 [tool.mise]
 # tools are managed via mise's uv backend; see .mise.toml
