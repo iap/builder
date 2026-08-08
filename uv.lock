@@ -345,7 +345,7 @@ dev = [
 requires-dist = [
     { name = "botocore", marker = "extra == 'dev'", specifier = ">=1.42" },
     { name = "cryptography", marker = "extra == 'dev'", specifier = ">=50.0.0" },
-    { name = "fastapi", marker = "extra == 'dev'", specifier = ">=0.139" },
+    { name = "fastapi", marker = "extra == 'dev'", specifier = ">=0.115" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28" },
     { name = "openai", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0" },
@@ -360,7 +360,7 @@ requires-dist = [
 dev = [
     { name = "botocore", specifier = ">=1.42" },
     { name = "cryptography", specifier = ">=50.0.0" },
-    { name = "fastapi", specifier = ">=0.139" },
+    { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "openai", specifier = ">=1.0" },
     { name = "pytest", specifier = ">=9.0" },
