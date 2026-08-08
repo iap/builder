@@ -78,21 +78,34 @@ if [[ ! "$INDENT" =~ ^[0-9]+$ ]]; then
   INDENT=2
 fi
 
-# Build indented provider block lines and pass via a temp file so
-# multiline YAML does not break shell argument passing on bash 3.2.
+# Build the provider block from plugin.yaml (single source of truth for the
+# model catalog) instead of hardcoding — setup.sh should not duplicate the
+# model list that also lives in plugin.yaml and backend.list_models().
 BLOCK_FILE="$(mktemp)"
-cat > "$BLOCK_FILE" <<EOF
-  aws-builder:
-    name: AWS Builder
-    transport: openai_chat
-    base_url: http://localhost:${PORT}/v1
-    api_key: no-key-required
-    models:
-      - auto
-      - claude-sonnet-4.5
-      - claude-sonnet-4
-      - claude-haiku-4.5
-EOF
+PLUGIN_YAML="${HERMES_HOME:-$HOME/.hermes}/plugins/builder/plugin.yaml"
+python3 - "$BLOCK_FILE" "$PLUGIN_YAML" "$PORT" <<'PY'
+import sys, yaml
+
+blockfile, plugin_yaml, port = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(plugin_yaml) as fh:
+    manifest = yaml.safe_load(fh) or {}
+
+models = manifest.get("models") or ["auto"]
+lines = [
+    "  aws-builder:",
+    "    name: AWS Builder",
+    "    transport: openai_chat",
+    f"    base_url: http://localhost:{port}/v1",
+    "    api_key: no-key-required",
+    "    model: \"auto\"",
+    "    models:",
+]
+for m in models:
+    lines.append(f"      - {m}")
+
+with open(blockfile, "w") as fh:
+    fh.write("\n".join(lines) + "\n")
+PY
 
 # Rewrite the temp file with the detected indent.
 python3 - "$CONFIG" "$INDENT" "$BLOCK_FILE" <<'PY'
