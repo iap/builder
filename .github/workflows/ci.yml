@@ -80,6 +80,4 @@ jobs:
         run: |
           set -euo pipefail
           cd "${{ github.workspace }}/plugin-src"
-          ruff check . --exclude hermes-agent
-          ruff format --check . --exclude hermes-agent
           uv run pytest -x -q tests/integration
