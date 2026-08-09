@@ -6,8 +6,9 @@ Security is a top priority for the Hermes builder plugin. If you believe you hav
 
 ### How to Report
 
-- **Email**: `iap@users.noreply.github.com` (GPG: `0049 2CBB E90A F475 521F 68B9 9166 D30F 6FE7 0F56`)
 - **GitHub Security Advisories**: Use the "Report a vulnerability" button on the [Security tab](https://github.com/iap/builder/security/policy)
+  - This is the primary and monitored channel for security reports
+  - GitHub will mediate initial contact and coordinate disclosure
 
 ### What to Include
 
