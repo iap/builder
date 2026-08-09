@@ -123,11 +123,11 @@ with open(blockfile, "w") as fh:
 PY
 
 # Rewrite the temp file with the detected indent.
-python3 - "$CONFIG" "$INDENT" "$BLOCK_FILE" <<'PY'
+python3 - "$CONFIG" "$INDENT" "$BLOCK_FILE" "$PORT" <<'PY'
 import sys
 from pathlib import Path
 
-cfg_path, indent_str, blockfile = sys.argv[1], sys.argv[2], sys.argv[3]
+cfg_path, indent_str, blockfile, port = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 indent = int(indent_str)
 raw = Path(cfg_path).read_text()
 block = Path(blockfile).read_text().rstrip("\n")
@@ -143,16 +143,20 @@ block = "\n".join(lines)
 # Re-parse with a fixed prefix width so YAML loading is based on config
 # content, not shell-quoted text.
 prefix = " " * indent
-expected_prefix = prefix + "aws-builder:\n"
 
-if expected_prefix in raw:
+# Parse the config to check if aws-builder already exists under providers.
+# Use YAML parsing instead of string matching so we detect any form of the
+# entry (dict, scalar, alias) — not just "aws-builder:\n".
+c = {}
+try:
+    import yaml
+    c = yaml.safe_load(raw) or {}
+except Exception:
     c = {}
-    try:
-        import yaml
-        c = yaml.safe_load(raw) or {}
-    except Exception:
-        c = {}
-    providers = c.setdefault("providers", {})
+providers = c.setdefault("providers", {})
+has_existing = "aws-builder" in providers
+
+if has_existing:
 
     new_models = {}
     current_model = None
@@ -166,9 +170,14 @@ if expected_prefix in raw:
     provider_block = block_parsed.get("aws-builder", {})
     if isinstance(provider_block, dict):
         current_model = provider_block.get("model")
-        models_list = provider_block.get("models") or []
-        if isinstance(models_list, list):
-            for m in models_list:
+        models_field = provider_block.get("models") or []
+        # models can be a list (from yaml.dump of a list) or a mapping
+        # (from yaml.dump of {m: {}}). Handle both.
+        if isinstance(models_field, list):
+            for m in models_field:
+                new_models[str(m)] = {}
+        elif isinstance(models_field, dict):
+            for m in models_field:
                 new_models[str(m)] = {}
 
     existing = providers.get("aws-builder", {})
@@ -176,14 +185,14 @@ if expected_prefix in raw:
         existing["models"] = new_models
         if current_model:
             existing["model"] = current_model
-        existing.setdefault("base_url", f"http://localhost:8088/v1")
+        existing.setdefault("base_url", f"http://localhost:{port}/v1")
         existing.setdefault("transport", "openai_chat")
         existing.setdefault("api_key", "no-key-required")
         providers["aws-builder"] = existing
     else:
         providers["aws-builder"] = {
             "name": "AWS Builder",
-            "base_url": "http://localhost:8088/v1",
+            "base_url": f"http://localhost:{port}/v1",
             "transport": "openai_chat",
             "api_key": "no-key-required",
             "model": current_model or "auto",
