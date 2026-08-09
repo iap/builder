@@ -188,7 +188,7 @@ if expected_prefix in raw:
     else:
         providers["aws-builder"] = {
             "name": "AWS Builder",
-            "base_url": "http://localhost:8088/v1",
+            "base_url": f"http://localhost:{port}/v1",
             "transport": "openai_chat",
             "api_key": "no-key-required",
             "model": current_model or "auto",
