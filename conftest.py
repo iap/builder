@@ -23,6 +23,7 @@ import yaml
 # Hermes core bundles; upgrading starlette here would diverge from the runtime.
 try:
     from starlette.exceptions import StarletteDeprecationWarning
+
     warnings.filterwarnings("ignore", category=StarletteDeprecationWarning)
 except ImportError:
     pass

@@ -53,15 +53,18 @@ exclude = [
     "dashboard/dist",
     "dist",
     "build",
+    "hermes-agent",
 ]
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401", "RUF059"]
 "_format.py" = ["S110"]
 "adapter.py" = ["BLE001", "S110", "S112", "PLW1510"]
 "auth/sso_oidc.py" = ["S112"]
 "backend.py" = ["BLE001", "S112"]
-"tests/test_build.py" = ["BLE001"]
+"tests/" = ["E402"]
+"tests/test_backend.py" = ["E402", "E741"]
+"tests/test_build.py" = ["BLE001", "E741", "E402"]
 "verify.py" = ["RUF100"]
 
 # Suppress the StarletteDeprecationWarning from the starlette version

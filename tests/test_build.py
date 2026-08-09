@@ -1545,7 +1545,7 @@ def test_q_debug_includes_render_prefs(mod, monkeypatch):
     [
         # Multiple bare-JSON calls in one answer (fallback path)
         (
-            '{"name": "fs_read", "arguments": {"path": "/tmp"}}'
+            '{"name": "fs_read", "arguments": {"path": "/tmp"}}'  # noqa: ISC004
             ' {"name": "fs_write", "arguments": {"path": "/out"}}',
             ["fs_read", "fs_write"],
         ),
@@ -1605,7 +1605,7 @@ def test_extract_balanced_brace_handles_strings_with_braces():
     import adapter
 
     text = '{"name": "x", "arguments": {"cmd": "echo {not_a_nest}"}}'
-    obj, end = adapter._extract_balanced_brace(text, 0)
+    obj, _end = adapter._extract_balanced_brace(text, 0)
     assert obj is not None
     parsed = json.loads(obj)
     assert parsed["name"] == "x"
@@ -1617,7 +1617,7 @@ def test_extract_balanced_brace_handles_escaped_quotes():
     import adapter
 
     text = '{"name": "x", "arguments": {"q": "say \\"nested\\""}}'
-    obj, end = adapter._extract_balanced_brace(text, 0)
+    obj, _end = adapter._extract_balanced_brace(text, 0)
     assert obj is not None
     parsed = json.loads(obj)
     assert parsed["arguments"]["q"] == 'say "nested"'
@@ -1639,8 +1639,8 @@ def test_strip_and_parse_xml_style_call():
     import adapter
 
     # Build the XML-style tag characters using chr() to avoid source-file issues
-    open_tag = chr(0x3c) + "tool_call" + chr(0x3e)  #  like
-    close_tag = chr(0x3c) + "/tool_call" + chr(0x3e)  #  like
+    open_tag = chr(0x3C) + "tool_call" + chr(0x3E)  #  like
+    close_tag = chr(0x3C) + "/tool_call" + chr(0x3E)  #  like
     json_payload = '{"name": "fs_read", "arguments": {"path": "/tmp"}}'
     text = f"Here is my call: {open_tag}{json_payload}{close_tag}"
     calls = adapter._parse_tool_calls(text)
@@ -1651,8 +1651,48 @@ def test_strip_and_parse_xml_style_call():
     assert open_tag not in stripped
     assert close_tag not in stripped
     assert "fs_read" not in stripped
+
+
 def test_parse_tool_calls_empty_string():
     import adapter
 
     assert adapter._parse_tool_calls("") == []
     assert adapter._parse_tool_calls("no tool text") == []
+
+
+def test_starlette_deprecation_warning_suppressed():
+    """Regression: verify that the StarletteDeprecationWarning suppression
+    is configured in both conftest.py (import-time) and pyproject.toml
+    (pytest filterwarnings). The starlette version Hermes core bundles
+    triggers this warning, and it's suppressed to avoid log noise.
+
+    This test guards against the suppression being removed — if it is,
+    the warning will reappear in test output (visible as "1 warning" in
+    the pytest summary line) and must be investigated (proper fastapi/
+    starlette upgrade).
+    """
+    import inspect
+
+    from conftest import load_plugin  # noqa: F401 — proves conftest loaded
+
+    conftest_src = inspect.getsource(__import__("conftest"))
+
+    # conftest.py must suppress at import time (before pytest applies its
+    # filterwarnings, which are session-scoped but don't cover import-time
+    # warnings from starlette.testclient).
+    assert "StarletteDeprecationWarning" in conftest_src, (
+        "conftest.py must call warnings.filterwarnings(..., "
+        "category=StarletteDeprecationWarning) to suppress the starlette "
+        "testclient deprecation at import time."
+    )
+    assert "warnings.filterwarnings" in conftest_src
+
+    # pyproject.toml must also register the filter (belt + suspenders).
+    from pathlib import Path
+
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    pyproject_src = pyproject.read_text()
+    assert "StarletteDeprecationWarning" in pyproject_src, (
+        "pyproject.toml [tool.pytest.ini_options] filterwarnings must include "
+        "ignore::starlette.exceptions.StarletteDeprecationWarning"
+    )
