@@ -143,16 +143,20 @@ block = "\n".join(lines)
 # Re-parse with a fixed prefix width so YAML loading is based on config
 # content, not shell-quoted text.
 prefix = " " * indent
-expected_prefix = prefix + "aws-builder:\n"
 
-if expected_prefix in raw:
+# Parse the config to check if aws-builder already exists under providers.
+# Use YAML parsing instead of string matching so we detect any form of the
+# entry (dict, scalar, alias) — not just "aws-builder:\n".
+c = {}
+try:
+    import yaml
+    c = yaml.safe_load(raw) or {}
+except Exception:
     c = {}
-    try:
-        import yaml
-        c = yaml.safe_load(raw) or {}
-    except Exception:
-        c = {}
-    providers = c.setdefault("providers", {})
+providers = c.setdefault("providers", {})
+has_existing = "aws-builder" in providers
+
+if has_existing:
 
     new_models = {}
     current_model = None
