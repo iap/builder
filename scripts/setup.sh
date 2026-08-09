@@ -123,11 +123,11 @@ with open(blockfile, "w") as fh:
 PY
 
 # Rewrite the temp file with the detected indent.
-python3 - "$CONFIG" "$INDENT" "$BLOCK_FILE" <<'PY'
+python3 - "$CONFIG" "$INDENT" "$BLOCK_FILE" "$PORT" <<'PY'
 import sys
 from pathlib import Path
 
-cfg_path, indent_str, blockfile = sys.argv[1], sys.argv[2], sys.argv[3]
+cfg_path, indent_str, blockfile, port = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 indent = int(indent_str)
 raw = Path(cfg_path).read_text()
 block = Path(blockfile).read_text().rstrip("\n")
@@ -181,7 +181,7 @@ if expected_prefix in raw:
         existing["models"] = new_models
         if current_model:
             existing["model"] = current_model
-        existing.setdefault("base_url", f"http://localhost:8088/v1")
+        existing.setdefault("base_url", f"http://localhost:{port}/v1")
         existing.setdefault("transport", "openai_chat")
         existing.setdefault("api_key", "no-key-required")
         providers["aws-builder"] = existing

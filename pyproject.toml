@@ -71,10 +71,12 @@ exclude = [
 # Hermes core bundles. Upgrading starlette here would diverge from the
 # runtime. The warning fires at import time, before pytest's own
 # filterwarnings takes effect, so we catch it here via conftest.py too.
+# Use module:class format so pytest can resolve the filter without the
+# class being in the global namespace (it is not a builtin).
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = [
-    "ignore::StarletteDeprecationWarning",
+    "ignore::starlette.exceptions.StarletteDeprecationWarning",
 ]
 
 [tool.mise]
