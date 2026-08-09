@@ -61,9 +61,7 @@ def test_register_provider_adopts_legacy_markerless_entry(monkeypatch, tmp_path)
 
     updated = yaml.safe_load(cfg_path.read_text())["providers"]["aws-builder"]
     assert updated.get("api_key") == "no-key-required", "stale key_env replaced"
-    assert all(not k.startswith("_") or k == "_revision" for k in updated), (
-        "no private marker key written"
-    )
+    assert not any(k.startswith("_") for k in updated), "no private marker key written"
     assert "key_env" not in updated, "dummy key_env removed"
 
 
@@ -121,7 +119,7 @@ def test_register_provider_leaves_foreign_entry_alone(monkeypatch, tmp_path):
     assert wrote is False, "foreign entry must be skipped"
     kept = yaml.safe_load(cfg_path.read_text())["providers"]["aws-builder"]
     assert kept["api_key"] == "«redacted:sk-…»", "user key preserved"
-    assert all(not k.startswith("_") or k == "_revision" for k in kept), (
+    assert not any(k.startswith("_") for k in kept), (
         "foreign entry not stamped with private key"
     )
 

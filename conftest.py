@@ -13,9 +13,21 @@ import os
 import sys
 import tempfile
 import types
+import warnings
 from pathlib import Path
 
 import yaml
+
+# Suppress the starlette.testclient deprecation warning at import time (before
+# pytest's filterwarnings config takes effect). This is a known issue from the
+# starlette version Hermes core bundles — upgrading starlette here would
+# diverge from what the runtime actually uses.
+try:
+    from starlette.exceptions import StarletteDeprecationWarning
+
+    warnings.filterwarnings("ignore", category=StarletteDeprecationWarning)
+except ImportError:
+    pass
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 # Hermes core (hermes-agent) lives at <HERMES_HOME>/hermes-agent. Resolve from

@@ -16,8 +16,9 @@ dependencies = [
 dev = [
     "pytest>=9.0",
     "pytest-asyncio>=1.4",
-    "fastapi>=0.139",
+    "fastapi>=0.115",
     "uvicorn>=0.52",
+    "httpx>=0.28",
     "openai>=1.0",
     "botocore>=1.42",
     "cryptography>=50.0.0",
@@ -28,8 +29,9 @@ dev = [
 dev-dependencies = [
     "pytest>=9.0",
     "pytest-asyncio>=1.4",
-    "fastapi>=0.139",
+    "fastapi>=0.115",
     "uvicorn>=0.52",
+    "httpx>=0.28",
     "openai>=1.0",
     "botocore>=1.42",
     "cryptography>=50.0.0",
@@ -51,16 +53,28 @@ exclude = [
     "dashboard/dist",
     "dist",
     "build",
+    "hermes-agent",
 ]
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401", "RUF059"]
 "_format.py" = ["S110"]
 "adapter.py" = ["BLE001", "S110", "S112", "PLW1510"]
 "auth/sso_oidc.py" = ["S112"]
 "backend.py" = ["BLE001", "S112"]
-"tests/test_build.py" = ["BLE001"]
+"tests/" = ["E402"]
+"tests/test_backend.py" = ["E402", "E741"]
+"tests/test_build.py" = ["BLE001", "E741", "E402"]
 "verify.py" = ["RUF100"]
+
+[tool.pytest.ini_options]
+# Suppress the starlette.testclient deprecation warning. This is a known
+# issue from the starlette version Hermes core bundles — upgrading starlette
+# here would diverge from what the runtime actually uses. The warning is
+# noise from an upstream dependency, not a bug in this plugin.
+filterwarnings = [
+    "ignore::starlette.exceptions.StarletteDeprecationWarning",
+]
 
 [tool.mise]
 # tools are managed via mise's uv backend; see .mise.toml

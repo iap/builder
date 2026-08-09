@@ -44,7 +44,7 @@ fi
 
 # Always run the Python updater so config.yaml stays current with the
 # plugin's declared model catalog (including new models, default model
-# changes, and the _revision bump that forces a re-read).
+# changes, and the provider entry is refreshed on each run).
 
 # Backup
 cp "$CONFIG" "$BACKUP"
@@ -78,21 +78,49 @@ if [[ ! "$INDENT" =~ ^[0-9]+$ ]]; then
   INDENT=2
 fi
 
-# Build indented provider block lines and pass via a temp file so
-# multiline YAML does not break shell argument passing on bash 3.2.
+# Build the provider block from plugin.yaml (single source of truth for the
+# model catalog) instead of hardcoding — setup.sh should not duplicate the
+# model list that also lives in plugin.yaml and backend.list_models().
 BLOCK_FILE="$(mktemp)"
-cat > "$BLOCK_FILE" <<EOF
-  aws-builder:
-    name: AWS Builder
-    transport: openai_chat
-    base_url: http://localhost:${PORT}/v1
-    api_key: no-key-required
-    models:
-      - auto
-      - claude-sonnet-4.5
-      - claude-sonnet-4
-      - claude-haiku-4.5
-EOF
+PLUGIN_YAML="${HERMES_HOME:-$HOME/.hermes}/plugins/builder/plugin.yaml"
+python3 - "$BLOCK_FILE" "$PLUGIN_YAML" "$PORT" <<'PY'
+import sys, yaml
+
+blockfile, plugin_yaml, port = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(plugin_yaml) as fh:
+    manifest = yaml.safe_load(fh) or {}
+
+models = manifest.get("models") or ["auto"]
+# Coerce all model identifiers to str — YAML 1.1 may parse numeric-looking
+# values as int/float (e.g. "4.0" as float). The model catalog must be
+# exact strings; backend.list_models() already does this coercion for the
+# same reason.
+models = [str(m) for m in models]
+# Use yaml.dump for serialized model identifiers to ensure proper scalar
+# serialization. This handles edge cases like embedded quotes, newlines,
+# and YAML-special characters that would break the config or silently alter
+# identifiers. The models block is emitted as a YAML mapping ({m: {} for m in
+# models}) to match what Hermes core expects in config.yaml providers entries.
+# We include the "models:" wrapper key in the dump so the indentation is
+# handled correctly by yaml itself.
+model_mapping = {m: {} for m in models}
+model_yaml = yaml.dump({"models": model_mapping}, default_flow_style=False)
+model_lines = model_yaml.rstrip("\n").splitlines()
+# Indent each line by 4 spaces so the block sits correctly under aws-builder
+model_lines = ["    " + ln for ln in model_lines]
+lines = [
+    "  aws-builder:",
+    "    name: AWS Builder",
+    "    transport: openai_chat",
+    f"    base_url: http://localhost:{port}/v1",
+    "    api_key: no-key-required",
+    "    model: \"auto\"",
+]
+lines.extend(model_lines)
+
+with open(blockfile, "w") as fh:
+    fh.write("\n".join(lines) + "\n")
+PY
 
 # Rewrite the temp file with the detected indent.
 python3 - "$CONFIG" "$INDENT" "$BLOCK_FILE" <<'PY'
@@ -128,21 +156,20 @@ if expected_prefix in raw:
 
     new_models = {}
     current_model = None
-    in_models = False
-    for line in block.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("model:"):
-            current_model = stripped.split(":", 1)[1].strip()
-        elif stripped == "models:":
-            in_models = True
-        elif in_models and stripped.startswith("- "):
-            m = stripped[2:].strip()
-            new_models[m] = {}
-        elif in_models and stripped and not stripped.startswith("-") and not stripped.startswith("#"):
-            if ":" in stripped:
-                k = stripped.split(":")[0].strip()
-                if k:
-                    new_models[k] = {}
+    # Parse the generated block YAML directly rather than manual string
+    # extraction — this preserves exact model identifiers with proper
+    # unquoting and handles edge cases (quotes, newlines, special chars).
+    try:
+        block_parsed = yaml.safe_load(block) or {}
+    except Exception:
+        block_parsed = {}
+    provider_block = block_parsed.get("aws-builder", {})
+    if isinstance(provider_block, dict):
+        current_model = provider_block.get("model")
+        models_list = provider_block.get("models") or []
+        if isinstance(models_list, list):
+            for m in models_list:
+                new_models[str(m)] = {}
 
     existing = providers.get("aws-builder", {})
     if isinstance(existing, dict):
@@ -165,8 +192,30 @@ if expected_prefix in raw:
 
     try:
         import yaml
+
+        # yaml.safe_dump strips quotes from string keys that look like
+        # numbers (e.g. "4o", "4.0"), causing them to be re-parsed as
+        # float/int by Hermes core. Use a SafeDumper variant that
+        # double-quotes any string scalar whose YAML-1.1 interpretation
+        # would be non-string.
+        import re as _re
+        _num_like = _re.compile(r"^(?:[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?|true|True|TRUE|false|False|FALSE|null|Null|NULL|~)$")
+
+        class _QuotedDumper(yaml.SafeDumper):
+            pass
+
+        def _str_representer(dumper, data):
+            if _num_like.match(data):
+                return dumper.represent_scalar(
+                    "tag:yaml.org,2002:str", data, style='"'
+                )
+            return dumper.represent_scalar(
+                "tag:yaml.org,2002:str", data
+            )
+
+        _QuotedDumper.add_representer(str, _str_representer)
         Path(cfg_path).write_text(
-            yaml.safe_dump(c, default_flow_style=False, sort_keys=False) + "\n"
+            yaml.dump(c, Dumper=_QuotedDumper, default_flow_style=False, sort_keys=False) + "\n"
         )
     except Exception as exc:
         print(f"✗ failed to update config: {exc}", file=sys.stderr)

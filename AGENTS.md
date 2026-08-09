@@ -85,6 +85,10 @@ The guard currently blocks:
 
 This is additive to Hermes's global `approvals.mode` setting — it does not override or bypass it.
 
+## Tooling
+
+- Prefer `uv` for Python packages and `pnpm` for Node packages. Do not introduce `nvm`, bare `pip install`, or `npm install -g` unless the user explicitly asks otherwise.
+
 ### Changing the adapter
 
 - Keep `_resolve_bind_host()` intact.

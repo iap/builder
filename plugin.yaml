@@ -1,7 +1,7 @@
 name: builder
-version: 1.0.0
+version: 1.1.0
 description: "Self-contained Amazon Builder ID auth for Hermes Agent."
-author: iap
+author: Iko <iap@users.noreply.github.com>
 kind: standalone
 # Optional override of the model catalog. If present and non-empty, list_models()
 # returns these instead of the built-in STATIC_MODELS. Lets operators add/remove
