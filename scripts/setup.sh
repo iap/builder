@@ -166,9 +166,14 @@ if expected_prefix in raw:
     provider_block = block_parsed.get("aws-builder", {})
     if isinstance(provider_block, dict):
         current_model = provider_block.get("model")
-        models_list = provider_block.get("models") or []
-        if isinstance(models_list, list):
-            for m in models_list:
+        models_field = provider_block.get("models") or []
+        # models can be a list (from yaml.dump of a list) or a mapping
+        # (from yaml.dump of {m: {}}). Handle both.
+        if isinstance(models_field, list):
+            for m in models_field:
+                new_models[str(m)] = {}
+        elif isinstance(models_field, dict):
+            for m in models_field:
                 new_models[str(m)] = {}
 
     existing = providers.get("aws-builder", {})
