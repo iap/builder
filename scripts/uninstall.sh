@@ -63,6 +63,19 @@ def _indent(ln):
     return len(ln) - len(ln.lstrip())
 
 
+def _content_indent(ln):
+    """Column where this line's content begins.
+
+    A block sequence item (`- foo`) begins its content after the `- `
+    indicator, so it is logically nested under a mapping key at the *same*
+    indentation column (the compact YAML form `cli:\n  - builder`)."""
+    s = ln.lstrip()
+    ind = len(ln) - len(s)
+    if s.startswith("-") and (len(s) == 1 or s[1] == " "):
+        return ind + 2
+    return ind
+
+
 def _is_builder_item(s):
     return s == "builder" or s == "- builder" or (s.startswith("-") and s[1:].strip() == "builder")
 
@@ -85,7 +98,7 @@ def _cleanup(lines):
         s = ln.strip()
         ind = _indent(ln)
 
-        while stack and stack[-1][0] >= ind:
+        while stack and stack[-1][0] >= _content_indent(ln):
             stack.pop()
 
         if not s or s.startswith("#"):
@@ -169,7 +182,7 @@ def _prune_empty(lines):
             if not s or s.startswith("#"):
                 out.append(ln)
                 continue
-            while stack and stack[-1][0] >= ind:
+            while stack and stack[-1][0] >= _content_indent(ln):
                 stack.pop()
             ancestors = [k for (_i, k) in stack]
             keyname = s.split(":", 1)[0].strip() if ":" in s else None

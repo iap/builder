@@ -267,3 +267,20 @@ def test_uninstall_preserves_custom_toolset_lists():
     # ...but custom toolset sub-lists (and their builder items) are preserved.
     _assert(out, removed, present=["extra:", "custom:", "- builder"])
     assert removed.count("list:builder") == 2
+
+
+def test_uninstall_removes_same_indented_toolset_entries():
+    # Greptile round 5: YAML allows a block sequence item at the same column as
+    # its mapping key (`cli:\n  - builder` parses as `cli: [builder]`). This
+    # compact form must still be cleaned up, not left as a dangling reference.
+    cfg = (
+        "platform_toolsets:\n"
+        "  cli:\n"
+        "  - builder\n"
+        "known_plugin_toolsets:\n"
+        "  cli:\n"
+        "  - builder\n"
+    )
+    out, removed = _run(cfg)
+    _assert(out, removed, absent=["cli:", "- builder"])
+    assert removed.count("list:builder") == 2
