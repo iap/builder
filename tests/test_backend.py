@@ -48,7 +48,9 @@ def _make_eventstream_frame(event_type, payload_bytes, content_type="application
         nb = name.encode()
         vb = value.encode()
         hdr += bytes([len(nb)]) + nb + b"\x07" + struct.pack(">H", len(vb)) + vb
-    prelude = struct.pack(">II", 4 + 4 + 4 + len(hdr) + len(payload_bytes) + 4, len(hdr))
+    prelude = struct.pack(
+        ">II", 4 + 4 + 4 + len(hdr) + len(payload_bytes) + 4, len(hdr)
+    )
     prelude_crc = struct.pack(">I", zlib.crc32(prelude) & 0xFFFFFFFF)
     body = prelude + prelude_crc + hdr + payload_bytes
     message_crc = struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
@@ -118,7 +120,9 @@ def test_extract_answer_eventstream_error_event():
     frame = _make_eventstream_frame(
         "errorEvent", b'{"__type":"ThrottlingException","message":"x"}'
     )
-    assert backend._extract_answer(_FakeResp([frame])) == "(Q error: ThrottlingException)"
+    assert (
+        backend._extract_answer(_FakeResp([frame])) == "(Q error: ThrottlingException)"
+    )
 
 
 def test_extract_answer_eventstream_conversation_and_tool_ids():
