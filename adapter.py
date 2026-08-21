@@ -539,7 +539,13 @@ class _Handler(BaseHTTPRequestHandler):
         # Local-only guard (M6): reject cross-origin / non-loopback requests so a
         # browser page can't drive the token proxy (quota burn / prompt injection).
         host = _host_from_header(self.headers.get("Host", ""))
-        if host and not _is_loopback_host(host):
+        # Reject a non-loopback Host only when the operator has NOT explicitly
+        # opted into public binding (Greptile review): otherwise
+        # AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1 lets the listener bind a non-loopback
+        # address but every real request was still 403'd, making the opt-in
+        # unusable. Origin protection stays regardless.
+        allow_public = os.environ.get("AWS_BUILD_ADAPTER_ALLOW_PUBLIC") == "1"
+        if host and not allow_public and not _is_loopback_host(host):
             self._send(403, b'{"error":"forbidden: non-loopback Host"}')
             return
         origin = self.headers.get("Origin")

@@ -413,7 +413,7 @@ def test_list_models_reloads_on_mtime_change(monkeypatch):
 
     def _fake_override():
         calls["n"] += 1
-        return ["v%d" % calls["n"]]
+        return [f"v{calls['n']}"]
 
     monkeypatch.setattr(backend, "_MODEL_OVERRIDE", None)
     monkeypatch.setattr(backend, "_MODEL_OVERRIDE_MTIME", None)
@@ -432,7 +432,7 @@ def test_load_tags_reloads_on_mtime_change(monkeypatch):
 
     def _fake_override():
         calls["n"] += 1
-        return ["tag%d" % calls["n"]]
+        return [f"tag{calls['n']}"]
 
     monkeypatch.setattr(backend, "_TAG_OVERRIDE", None)
     monkeypatch.setattr(backend, "_TAG_OVERRIDE_MTIME", None)
@@ -888,3 +888,40 @@ def test_adapter_loopback_guards():
     assert _origin_is_loopback("null")
     assert not _origin_is_loopback("http://evil.com")
     assert not _origin_is_loopback("http://192.168.1.1:8080")
+
+
+def test_adapter_post_host_guard_respects_public_optin(monkeypatch):
+    """The M6 Host guard must not 403 a non-loopback Host when the operator has
+    explicitly opted into public binding (Greptile review: the opt-in was
+    otherwise unusable). Origin protection stays on in both modes."""
+    import io
+
+    import adapter
+
+    sent = []
+
+    def fake_send(self, status, data, ctype="application/json"):
+        sent.append(status)
+
+    monkeypatch.setattr(adapter._Handler, "_send", fake_send)
+    monkeypatch.setattr(adapter, "_handle_chat", lambda body: b"data: ok")
+
+    def make_handler():
+        h = object.__new__(adapter._Handler)
+        h.headers = {"Host": "169.254.0.21:8088", "Content-Length": "0"}
+        h.path = "/v1/chat/completions"
+        h.rfile = io.BytesIO(b"")
+        return h
+
+    # Default: non-loopback Host is rejected.
+    monkeypatch.delenv("AWS_BUILD_ADAPTER_ALLOW_PUBLIC", raising=False)
+    h = make_handler()
+    h.do_POST()
+    assert sent == [403]
+
+    # Public opt-in: non-loopback Host is allowed through to the backend.
+    monkeypatch.setenv("AWS_BUILD_ADAPTER_ALLOW_PUBLIC", "1")
+    sent.clear()
+    h = make_handler()
+    h.do_POST()
+    assert sent == [200]

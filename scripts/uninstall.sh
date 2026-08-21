@@ -70,17 +70,36 @@ def _is_builder_item(s):
 removed = []
 
 
-def _remove_provider_blocks(lines):
-    # 1) provider blocks (aws-builder is the current slug; builder was pre-rename)
+def _cleanup(lines):
+    # Path-scoped removal (Greptile review): only touch entries this plugin
+    # actually owns, so an unrelated user key/list that merely shares the name
+    # "builder" is left alone. Tracks the YAML ancestor path via an indent-key
+    # stack instead of matching raw text/indentation in isolation.
     out = []
+    stack = []  # [(indent, key), ...] — ancestor mapping keys of the current line
     i = 0
-    while i < len(lines):
-        s = lines[i].strip()
-        if s in ("aws-builder:", "builder:"):
+    n = len(lines)
+    while i < n:
+        ln = lines[i]
+        s = ln.strip()
+        ind = _indent(ln)
+
+        while stack and stack[-1][0] >= ind:
+            stack.pop()
+
+        if not s or s.startswith("#"):
+            out.append(ln)
+            i += 1
+            continue
+
+        path = [k for (_i, k) in stack]
+
+        # 1) provider blocks: aws-builder:/builder: directly under `providers`
+        if s in ("aws-builder:", "builder:") and path == ["providers"]:
             removed.append("providers:" + s.rstrip(":"))
-            ki = _indent(lines[i])
+            ki = ind
             j = i + 1
-            while j < len(lines):
+            while j < n:
                 nxt = lines[j]
                 if nxt.strip() == "" or _indent(nxt) > ki:
                     j += 1
@@ -88,32 +107,39 @@ def _remove_provider_blocks(lines):
                 break
             i = j
             continue
-        out.append(lines[i])
-        i += 1
-    return out
 
+        # 2) `- builder` list items: only under plugins.enabled or a toolset list
+        if _is_builder_item(s):
+            top = path[0] if path else None
+            if top == "plugins" and "enabled" in path:
+                removed.append("list:builder")
+                i += 1
+                continue
+            if top in ("platform_toolsets", "known_plugin_toolsets"):
+                removed.append("list:builder")
+                i += 1
+                continue
 
-def _remove_list_items(lines):
-    # 2) "builder" list items (plugins.enabled, platform/known_plugin toolsets)
-    out = []
-    for ln in lines:
-        if _is_builder_item(ln.strip()) and _indent(ln) >= 2:
-            removed.append("list:builder")
-            continue
-        out.append(ln)
-    return out
-
-
-def _remove_model_provider(lines):
-    # 3) dangling model.provider pointing at a removed slug
-    out = []
-    for ln in lines:
-        s = ln.strip()
-        if s in ("provider: aws-builder", "provider: builder",
-                 'provider: "aws-builder"', 'provider: "builder"'):
+        # 3) dangling model.provider pointing at a removed slug
+        if (
+            s in ("provider: aws-builder", "provider: builder",
+                  'provider: "aws-builder"', 'provider: "builder"')
+            and path == ["model"]
+        ):
             removed.append("model.provider")
+            i += 1
             continue
+
         out.append(ln)
+
+        # Push this mapping key so following (deeper) lines can see it.
+        if ":" in s and not s.startswith("-"):
+            key = s.split(":", 1)[0].strip()
+            if key:
+                stack.append((ind, key))
+
+        i += 1
+
     return out
 
 
@@ -166,9 +192,7 @@ def _prune_empty(lines):
 
 try:
     lines = raw.splitlines()
-    lines = _remove_provider_blocks(lines)
-    lines = _remove_list_items(lines)
-    lines = _remove_model_provider(lines)
+    lines = _cleanup(lines)
     lines = _prune_empty(lines)
 except Exception as exc:
     # Restore the pristine config on any unexpected failure — never leave a
