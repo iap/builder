@@ -68,6 +68,7 @@ def _is_builder_item(s):
 
 
 removed = []
+emptied = set()  # container paths (tuples) that _cleanup may have emptied
 
 
 def _cleanup(lines):
@@ -97,6 +98,7 @@ def _cleanup(lines):
         # 1) provider blocks: aws-builder:/builder: directly under `providers`
         if s in ("aws-builder:", "builder:") and path == ["providers"]:
             removed.append("providers:" + s.rstrip(":"))
+            emptied.add(tuple(path))
             ki = ind
             j = i + 1
             while j < n:
@@ -116,10 +118,12 @@ def _cleanup(lines):
         if _is_builder_item(s):
             if path == ["plugins", "enabled"]:
                 removed.append("list:builder")
+                emptied.add(tuple(path))
                 i += 1
                 continue
             if len(path) == 2 and path[0] in ("platform_toolsets", "known_plugin_toolsets"):
                 removed.append("list:builder")
+                emptied.add(tuple(path))
                 i += 1
                 continue
 
@@ -130,6 +134,7 @@ def _cleanup(lines):
             and path == ["model"]
         ):
             removed.append("model.provider")
+            emptied.add(tuple(path))
             i += 1
             continue
 
@@ -147,51 +152,52 @@ def _cleanup(lines):
 
 
 def _prune_empty(lines):
-    # 4) drop containers left empty by the removals above, under the keys this
-    # plugin manages. Iterates until stable so emptying a child cascades to its
-    # parent. Unrelated empty containers (e.g. mcp_servers: {}) are untouched.
-    managed = {"providers", "plugins", "platform_toolsets", "known_plugin_toolsets", "model"}
+    # Drop only containers that _cleanup actually emptied, cascading to their
+    # empty parents. Candidates come from `emptied` (the exact container paths
+    # a builder entry was removed from), so an unrelated empty container such
+    # as plugins.user_groups: [] is never touched.
+
     changed = True
     while changed:
         changed = False
         out = []
-        cur_top = None
+        stack = []  # [(indent, key), ...] — ancestor mapping keys of current line
         for idx, ln in enumerate(lines):
             s = ln.strip()
             ind = _indent(ln)
             if not s or s.startswith("#"):
                 out.append(ln)
                 continue
-            if ind == 0:
-                cur_top = s.split(":", 1)[0].strip() if ":" in s else None
+            while stack and stack[-1][0] >= ind:
+                stack.pop()
+            ancestors = [k for (_i, k) in stack]
             keyname = s.split(":", 1)[0].strip() if ":" in s else None
-            is_managed = (ind == 0 and keyname in managed) or (ind > 0 and cur_top in managed)
-            if not is_managed:
-                out.append(ln)
-                continue
             is_empty_literal = s.endswith("[]") or s.endswith("{}")
             is_map_key = s.endswith(":") and not s.startswith("-")
-            if not (is_empty_literal or is_map_key):
-                out.append(ln)
-                continue
-            has_child = False
-            j = idx + 1
-            while j < len(lines):
-                nxt = lines[j]
-                if nxt.strip() == "":
-                    j += 1
-                    continue
-                if _indent(nxt) <= ind:
+            container_path = tuple(ancestors + ([keyname] if keyname else []))
+            if (is_empty_literal or is_map_key) and container_path in emptied:
+                # empty if no non-comment child at greater indent
+                has_child = False
+                j = idx + 1
+                while j < len(lines):
+                    nxt = lines[j]
+                    if nxt.strip() == "":
+                        j += 1
+                        continue
+                    if _indent(nxt) <= ind:
+                        break
+                    has_child = True
                     break
-                has_child = True
-                break
-            if has_child:
-                out.append(ln)
-                continue
-            changed = True  # drop this empty container
+                if not has_child:
+                    changed = True  # drop this empty container
+                    if ancestors:
+                        emptied.add(tuple(ancestors))  # cascade to the parent
+                    continue
+            out.append(ln)
+            if is_map_key and keyname:
+                stack.append((ind, keyname))
         lines = out
     return lines
-
 
 try:
     lines = raw.splitlines()

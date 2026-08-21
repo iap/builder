@@ -212,3 +212,31 @@ def test_uninstall_removes_builder_at_exact_toolset_list_path():
     out, removed = _run(cfg)
     _assert(out, removed, absent=["- builder"], present=["- ask_q"])
     assert removed.count("list:builder") == 2
+
+
+def test_uninstall_preserves_unrelated_empty_containers():
+    # Greptile re-review: _prune_empty must only remove containers at exact
+    # plugin-managed paths (plugins.enabled, toolset sub-lists, providers,
+    # model). A user-owned empty container under a managed top-level key
+    # (e.g. plugins.user_groups: []) must be preserved.
+    cfg = textwrap.dedent(
+        """\
+        plugins:
+          enabled:
+            - builder
+          user_groups: []
+        platform_toolsets:
+          cli:
+            - builder
+          extra: {}
+        known_plugin_toolsets:
+          cli:
+            - builder
+          extra: {}
+        """
+    )
+    out, removed = _run(cfg)
+    # Builder-owned containers are pruned once emptied...
+    _assert(out, removed, absent=["enabled:", "cli:", "- builder"])
+    # ...but unrelated empty containers are preserved.
+    _assert(out, removed, present=["user_groups: []", "extra: {}"])
