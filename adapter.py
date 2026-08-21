@@ -670,6 +670,9 @@ if __name__ == "__main__":
     srv, p = start()
     print(f"builder adapter listening on http://{HOST}:{p}/v1/chat/completions")
     try:
-        srv.serve_forever()
+        # start() already runs serve_forever() in a daemon thread; just keep
+        # this (main) thread alive until interrupted (L9: avoid a second,
+        # redundant serve_forever loop).
+        threading.Event().wait()
     except KeyboardInterrupt:
         stop()

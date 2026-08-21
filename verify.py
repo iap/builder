@@ -29,6 +29,43 @@ def _warn(msg: str) -> None:
     print(f"[WARN] {msg}")
 
 
+# Secret-ish key names (lower-cased) that must never appear in handler output.
+# More robust than a fixed snake_case denylist: catches camelCase variants
+# (accessToken, clientSecret, refreshToken) and generic secret/password keys,
+# without false-positiveing on safe metadata like token_type / has_refresh_token.
+_SECRET_KEY_NAMES = {
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "client_secret",
+    "secret",
+    "password",
+    "passwd",
+    "credential",
+    "credentials",
+    "authorization",
+    "api_key",
+    "apikey",
+    "private_key",
+    "bearer",
+}
+
+
+def _secret_keys_in(obj, acc=None):
+    """Return the set of JSON keys (case-insensitive) that name a secret."""
+    if acc is None:
+        acc = set()
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if str(key).lower() in _SECRET_KEY_NAMES:
+                acc.add(str(key))
+            _secret_keys_in(value, acc)
+    elif isinstance(obj, list):
+        for item in obj:
+            _secret_keys_in(item, acc)
+    return acc
+
+
 def check_drift() -> None:
     """Warn when the installed plugin copy is behind the source repo HEAD.
 
@@ -155,10 +192,11 @@ def main() -> int:
         if name not in _READONLY:
             continue
         res = json.loads(spec["handler"]({}))
-        blob = json.dumps(res)
+        leaked = _secret_keys_in(res)
         check(
-            "access_token" not in blob and "client_secret" not in blob,
-            f"{name}: no secret fields in output",
+            not leaked,
+            f"{name}: no secret fields in output"
+            + (f" (leaked: {sorted(leaked)})" if leaked else ""),
         )
 
     # Provider registration (issue #20): the adapter must surface as a
