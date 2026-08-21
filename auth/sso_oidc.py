@@ -369,6 +369,13 @@ def _poll_loop(reg: dict, flow: dict) -> None:
     while time.time() < expires_at:
         if _stop.is_set():
             return
+        # Re-read the persisted interval each pass (M13): get_status() — this
+        # process or another — may have bumped it after a SlowDownException, and
+        # we must not keep polling at the old, too-fast rate. max() keeps it
+        # monotonic (RFC 8628 §3.5: interval only ever increases).
+        persisted = _load_flow()
+        if persisted is not None:
+            interval = max(interval, persisted.get("interval", interval))
         phase = _poll_once(reg, flow)
         if phase == "authenticated":
             return
@@ -526,21 +533,27 @@ def get_status() -> dict:
     if flow:
         reg = _load_registration()
         if reg:
-            result = _poll_once(reg, flow)
-            if result == "authenticated":
-                return get_status()  # token now saved; recurse for clean shape
-            if result == "slow_down":
-                # RFC 8628 §3.5: bump interval by >=5s and persist for the
-                # next poll attempt (this process or another).
-                flow["interval"] = flow.get("interval", 1) + 5
-                _save_flow(flow)
-            if result.startswith("error:"):
-                error = result.split(":", 1)[1]
-            phase = (
-                "awaiting_approval"
-                if (result == "pending" or result == "slow_down")
-                else "error"
-            )
+            # If a background poll thread is already driving this flow, don't
+            # double-poll (M13): it would race the thread and cause repeated
+            # SlowDownException. Report the pending phase and let the thread win.
+            if _poll_thread is not None and _poll_thread.is_alive():
+                phase = "awaiting_approval"
+            else:
+                result = _poll_once(reg, flow)
+                if result == "authenticated":
+                    return get_status()  # token now saved; recurse for clean shape
+                if result == "slow_down":
+                    # RFC 8628 §3.5: bump interval by >=5s and persist for the
+                    # next poll attempt (this process or another).
+                    flow["interval"] = flow.get("interval", 1) + 5
+                    _save_flow(flow)
+                if result.startswith("error:"):
+                    error = result.split(":", 1)[1]
+                phase = (
+                    "awaiting_approval"
+                    if (result == "pending" or result == "slow_down")
+                    else "error"
+                )
         else:
             phase = "error"
             error = "no_registration"
