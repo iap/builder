@@ -11,8 +11,9 @@
 # enabled entry, and dangling toolset-list entries pointing at a removed plugin.
 #
 # SAFE: idempotent (no-op if builder is already absent everywhere), backs up
-# config.yaml once before any rewrite. User-invoked (never auto-run by the
-# plugin) to respect Hermes' config-write guard.
+# config.yaml once before any rewrite, and restores that backup on any failure.
+# User-invoked (never auto-run by the plugin) to respect Hermes' config-write
+# guard.
 #
 # USAGE:  ${HERMES_HOME:-$HOME/.hermes}/plugins/builder/scripts/uninstall.sh
 #         then run 'hermes plugins uninstall builder' to drop the dir, and restart Hermes.
@@ -26,19 +27,22 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 1
 fi
 
-# One-pass, YAML-aware cleanup. Removes ONLY builder's own entries:
+# Line-based, comment-preserving cleanup. Removes ONLY builder's own entries:
 #   * providers.builder            (setup.sh)
 #   * plugins.enabled entry        (the plugin installer)
 #   * platform_toolsets.cli        (the plugin installer)
 #   * known_plugin_toolsets.cli    (the plugin installer)
-# Sibling keys/providers are preserved — we never delete a line by indentation
-# alone, so an unrelated provider block after `builder` is left intact.
+#   * dangling model.provider      (if it pointed at the removed slug)
+# Sibling keys/providers and all user comments/formatting are preserved — we
+# never do a yaml.safe_load + safe_dump round-trip (that strips comments).
 python3 - "$CONFIG" <<'PY'
-import sys, yaml
+import sys
+import os
+from pathlib import Path
+from datetime import datetime
 
 cfg_path = sys.argv[1]
-with open(cfg_path) as fh:
-    raw = fh.read()
+raw = Path(cfg_path).read_text()
 
 # Idempotency: nothing to remove at all?
 if "builder" not in raw:
@@ -46,67 +50,139 @@ if "builder" not in raw:
     sys.exit(0)
 
 # Back up once, before any rewrite.
-import os
-from datetime import datetime
 backup = f"{cfg_path}.bak.{datetime.now():%Y%m%d_%H%M%S}"
-with open(backup, "w") as bf:
-    bf.write(raw)
+Path(backup).write_text(raw)
 print("✓ backed up config →", backup)
 
-c = yaml.safe_load(raw) or {}
 
-# 1) providers entries (aws-builder is the current slug; builder was the
-#    pre-rename slug). Both are removed if present.
-providers = c.get("providers")
-if isinstance(providers, dict):
-    removed_slugs = []
-    for slug in ("aws-builder", "builder"):
-        if slug in providers:
-            del providers[slug]
-            removed_slugs.append(slug)
-    if removed_slugs:
-        if not providers:
-            c.pop("providers", None)
-        print("✓ removed providers:", ", ".join(removed_slugs))
+def _indent(ln):
+    return len(ln) - len(ln.lstrip())
 
-# 2) plugins.enabled entry
-plugins = c.setdefault("plugins", {})
-enabled = plugins.get("enabled") or []
-if "builder" in enabled:
-    plugins["enabled"] = [x for x in enabled if x != "builder"]
-    print("✓ removed builder from plugins.enabled")
 
-# 3) toolset lists (platform / known_plugin)
-removed_lists = []
-for key in ("platform_toolsets", "known_plugin_toolsets"):
-    block = c.get(key)
-    if isinstance(block, dict):
-        for sub, val in block.items():
-            if isinstance(val, list) and "builder" in val:
-                block[sub] = [x for x in val if x != "builder"]
-                if not block[sub]:
-                    del block[sub]
-                else:
-                    removed_lists.append(f"{key}.{sub}")
+def _is_builder_item(s):
+    return s == "builder" or s == "- builder" or (s.startswith("-") and s[1:].strip() == "builder")
 
-# 4) top-level model default, if it pointed at a removed slug.
-model = c.get("model")
-if isinstance(model, dict) and model.get("provider") in {"aws-builder", "builder"}:
-    model.pop("provider", None)
-    if not model:
-        c.pop("model", None)
-    print("✓ removed dangling model.provider")
 
-# 5) prune empty stubs we may have emptied above.
-for key in ("plugins", "platform_toolsets", "known_plugin_toolsets"):
-    block = c.get(key)
-    if isinstance(block, dict) and not block:
-        c.pop(key, None)
+removed = []
 
-if removed_lists:
-    print("✓ removed builder from toolset lists:", ", ".join(removed_lists))
 
-yaml.safe_dump(c, open(cfg_path, "w"), sort_keys=False, default_flow_style=False)
+def _remove_provider_blocks(lines):
+    # 1) provider blocks (aws-builder is the current slug; builder was pre-rename)
+    out = []
+    i = 0
+    while i < len(lines):
+        s = lines[i].strip()
+        if s in ("aws-builder:", "builder:"):
+            removed.append("providers:" + s.rstrip(":"))
+            ki = _indent(lines[i])
+            j = i + 1
+            while j < len(lines):
+                nxt = lines[j]
+                if nxt.strip() == "" or _indent(nxt) > ki:
+                    j += 1
+                    continue
+                break
+            i = j
+            continue
+        out.append(lines[i])
+        i += 1
+    return out
+
+
+def _remove_list_items(lines):
+    # 2) "builder" list items (plugins.enabled, platform/known_plugin toolsets)
+    out = []
+    for ln in lines:
+        if _is_builder_item(ln.strip()) and _indent(ln) >= 2:
+            removed.append("list:builder")
+            continue
+        out.append(ln)
+    return out
+
+
+def _remove_model_provider(lines):
+    # 3) dangling model.provider pointing at a removed slug
+    out = []
+    for ln in lines:
+        s = ln.strip()
+        if s in ("provider: aws-builder", "provider: builder",
+                 'provider: "aws-builder"', 'provider: "builder"'):
+            removed.append("model.provider")
+            continue
+        out.append(ln)
+    return out
+
+
+def _prune_empty(lines):
+    # 4) drop containers left empty by the removals above, under the keys this
+    # plugin manages. Iterates until stable so emptying a child cascades to its
+    # parent. Unrelated empty containers (e.g. mcp_servers: {}) are untouched.
+    managed = {"providers", "plugins", "platform_toolsets", "known_plugin_toolsets", "model"}
+    changed = True
+    while changed:
+        changed = False
+        out = []
+        cur_top = None
+        for idx, ln in enumerate(lines):
+            s = ln.strip()
+            ind = _indent(ln)
+            if not s or s.startswith("#"):
+                out.append(ln)
+                continue
+            if ind == 0:
+                cur_top = s.split(":", 1)[0].strip() if ":" in s else None
+            keyname = s.split(":", 1)[0].strip() if ":" in s else None
+            is_managed = (ind == 0 and keyname in managed) or (ind > 0 and cur_top in managed)
+            if not is_managed:
+                out.append(ln)
+                continue
+            is_empty_literal = s.endswith("[]") or s.endswith("{}")
+            is_map_key = s.endswith(":") and not s.startswith("-")
+            if not (is_empty_literal or is_map_key):
+                out.append(ln)
+                continue
+            has_child = False
+            j = idx + 1
+            while j < len(lines):
+                nxt = lines[j]
+                if nxt.strip() == "":
+                    j += 1
+                    continue
+                if _indent(nxt) <= ind:
+                    break
+                has_child = True
+                break
+            if has_child:
+                out.append(ln)
+                continue
+            changed = True  # drop this empty container
+        lines = out
+    return lines
+
+
+try:
+    lines = raw.splitlines()
+    lines = _remove_provider_blocks(lines)
+    lines = _remove_list_items(lines)
+    lines = _remove_model_provider(lines)
+    lines = _prune_empty(lines)
+except Exception as exc:
+    # Restore the pristine config on any unexpected failure — never leave a
+    # half-removed or truncated file behind.
+    Path(cfg_path).write_text(raw)
+    print(f"✗ uninstall failed, config restored: {exc}", file=sys.stderr)
+    sys.exit(2)
+
+if not removed:
+    print("✓ no builder entries found to remove")
+    sys.exit(0)
+
+# Atomic write (temp + replace) so a failure never leaves a truncated config.
+tmp = Path(cfg_path).with_name(Path(cfg_path).name + ".tmp")
+tmp.write_text("\n".join(lines) + "\n")
+os.replace(tmp, cfg_path)
+print("✓ removed builder entries:", ", ".join(removed))
+
 PY
 
 echo
