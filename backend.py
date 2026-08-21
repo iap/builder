@@ -47,6 +47,8 @@ from __future__ import annotations
 
 import json
 import re
+import struct
+import zlib
 from pathlib import Path
 
 import requests
@@ -393,6 +395,142 @@ def _extract_tool_use_id(text: str) -> str | None:
     return None
 
 
+# --- AWS event-stream framing (application/vnd.amazon.eventstream) ---
+# Q's chat response is a binary event stream, not SSE text. Each frame is
+# [total_len:u32][headers_len:u32][prelude_crc:u32][headers][payload][message_crc:u32]
+# (all big-endian; CRC32 of the 8-byte prelude and of the whole message body).
+# We parse frames and validate both CRCs so assistant text comes from the real
+# assistantResponseEvent payloads instead of regex-scanning a lossy UTF-8 decode
+# of the binary framing (which could silently mis-read or drop responses).
+
+_HEADER_VALUE_FIXED_SIZE = {2: 1, 3: 2, 4: 4, 5: 8, 8: 8, 9: 16}
+
+
+def _parse_eventstream_headers(buf: bytes) -> dict:
+    """Decode an event-stream headers section into {name: string-value}.
+
+    Header = [name_len:u8][name][value_type:u8][value]. Strings (type 7) carry a
+    2-byte BE length prefix; bools (0/1) carry no value; fixed-size numerics carry
+    their bytes directly. Non-string values are best-effort UTF-8 decoded.
+    """
+    headers: dict = {}
+    i = 0
+    n = len(buf)
+    while i < n:
+        name_len = buf[i]
+        i += 1
+        name = buf[i : i + name_len].decode("utf-8", "replace")
+        i += name_len
+        value_type = buf[i]
+        i += 1
+        if value_type == 0:
+            value = "true"
+        elif value_type == 1:
+            value = "false"
+        elif value_type in (6, 7):
+            value_len = struct.unpack(">H", buf[i : i + 2])[0]
+            i += 2
+            value = buf[i : i + value_len].decode("utf-8", "replace")
+            i += value_len
+        elif value_type in _HEADER_VALUE_FIXED_SIZE:
+            sz = _HEADER_VALUE_FIXED_SIZE[value_type]
+            value = buf[i : i + sz].decode("utf-8", "replace")
+            i += sz
+        else:
+            value_len = struct.unpack(">H", buf[i : i + 2])[0]
+            i += 2
+            value = buf[i : i + value_len].decode("utf-8", "replace")
+            i += value_len
+        headers[name] = value
+    return headers
+
+
+def _parse_eventstream_frames(data: bytes) -> list:
+    """Parse a full AWS event-stream body into a list of frame dicts.
+
+    Raises ValueError on any structural or CRC violation so callers fall back to
+    the lenient text path (the offline tests feed bare JSON, which is not framed).
+    """
+    frames: list = []
+    i = 0
+    n = len(data)
+    while i < n:
+        if i + 12 > n:
+            raise ValueError("truncated prelude")
+        total_len = struct.unpack(">I", data[i : i + 4])[0]
+        headers_len = struct.unpack(">I", data[i + 4 : i + 8])[0]
+        prelude_crc = struct.unpack(">I", data[i + 8 : i + 12])[0]
+        if total_len < 16 or i + total_len > n:
+            raise ValueError("bad total length")
+        if (zlib.crc32(data[i : i + 8]) & 0xFFFFFFFF) != prelude_crc:
+            raise ValueError("prelude CRC mismatch")
+        hdr_start = i + 12
+        hdr_end = hdr_start + headers_len
+        payload_end = i + total_len - 4
+        if hdr_end > payload_end:
+            raise ValueError("headers overflow")
+        headers = _parse_eventstream_headers(data[hdr_start:hdr_end])
+        payload = data[hdr_end:payload_end]
+        message_crc = struct.unpack(">I", data[payload_end : i + total_len])[0]
+        if (zlib.crc32(data[i:payload_end]) & 0xFFFFFFFF) != message_crc:
+            raise ValueError("message CRC mismatch")
+        frames.append(
+            {
+                "event_type": headers.get(":event-type"),
+                "message_type": headers.get(":message-type"),
+                "content_type": headers.get(":content-type"),
+                "payload": payload,
+            }
+        )
+        i += total_len
+    if i != n:
+        raise ValueError("trailing bytes")
+    return frames
+
+
+def _extract_from_frames(frames: list) -> tuple[str, str | None, str | None]:
+    """Extract (answer, conversation_id, tool_use_id) from parsed event frames.
+
+    Assistant text is the concatenation of every frame payload carrying both
+    `content` and `modelId` (the same heuristic as the text path). `conversationId`
+    and `toolUseId` come from the first frame that carries them; a payload
+    `__type` (error event) surfaces as "(Q error: …)" when no content arrives.
+    """
+    parts: list = []
+    conversation_id = None
+    tool_use_id = None
+    error_type = None
+    for frame in frames:
+        payload = frame.get("payload") or b""
+        if not payload:
+            continue
+        try:
+            obj = json.loads(payload.decode("utf-8"))
+        except Exception:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        content = obj.get("content")
+        if isinstance(content, str) and obj.get("modelId") is not None:
+            parts.append(content)
+        if conversation_id is None:
+            cid = obj.get("conversationId")
+            if isinstance(cid, str):
+                conversation_id = cid
+        if tool_use_id is None:
+            tid = obj.get("toolUseId")
+            if isinstance(tid, str):
+                tool_use_id = tid
+        if error_type is None:
+            et = obj.get("__type")
+            if isinstance(et, str):
+                error_type = et
+    answer = "".join(parts).strip()
+    if not answer:
+        answer = f"(Q error: {error_type})" if error_type else "(no response)"
+    return answer, conversation_id, tool_use_id
+
+
 def _extract_answer_with_conversation_id(
     response: requests.Response,
 ) -> tuple[str, str | None, str | None]:
@@ -400,6 +538,15 @@ def _extract_answer_with_conversation_id(
     raw = b""
     for chunk in response.iter_content(chunk_size=4096):
         raw += chunk
+    # Prefer proper event-stream framing (real Q responses). Fall back to the
+    # lenient text path for bare JSON (offline tests / non-framed bodies).
+    try:
+        frames = _parse_eventstream_frames(raw)
+    except Exception:
+        frames = None
+    if frames is not None:
+        return _extract_from_frames(frames)
+
     text = raw.decode("utf-8", "replace")
     parts: list[str] = []
     for m in _CONTENT_RE.finditer(text):

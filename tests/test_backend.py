@@ -9,7 +9,9 @@ Builder ID session:
 
 import importlib.util
 import json
+import struct
 import sys
+import zlib
 from pathlib import Path
 
 import pytest
@@ -32,6 +34,25 @@ class _FakeResp:
 
     def iter_content(self, chunk_size=1024):
         yield from self._chunks
+
+
+def _make_eventstream_frame(event_type, payload_bytes, content_type="application/json"):
+    """Build one valid AWS event-stream frame with correct prelude + message CRCs."""
+    headers = [
+        (":event-type", event_type),
+        (":content-type", content_type),
+        (":message-type", "event"),
+    ]
+    hdr = b""
+    for name, value in headers:
+        nb = name.encode()
+        vb = value.encode()
+        hdr += bytes([len(nb)]) + nb + b"\x07" + struct.pack(">H", len(vb)) + vb
+    prelude = struct.pack(">II", 4 + 4 + 4 + len(hdr) + len(payload_bytes) + 4, len(hdr))
+    prelude_crc = struct.pack(">I", zlib.crc32(prelude) & 0xFFFFFFFF)
+    body = prelude + prelude_crc + hdr + payload_bytes
+    message_crc = struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+    return body + message_crc
 
 
 def test_extract_answer_single_event():
@@ -59,6 +80,73 @@ def test_extract_answer_event_stream_framed():
         b'{"content":"CHATDIRECT_OK","modelId":"auto"}'
     )
     assert backend._extract_answer(_FakeResp([framed])) == "CHATDIRECT_OK"
+
+
+def test_extract_answer_valid_eventstream_frames():
+    # A real, CRC-valid event-stream is parsed via the frame reader (M4).
+    f1 = _make_eventstream_frame(
+        "initial-response", b"{}", content_type="application/x-amz-json-1.0"
+    )
+    f2 = _make_eventstream_frame(
+        "assistantResponseEvent", b'{"content":"CHATDIRECT_OK","modelId":"auto"}'
+    )
+    assert backend._extract_answer(_FakeResp([f1 + f2])) == "CHATDIRECT_OK"
+
+
+def test_extract_answer_eventstream_multi_content():
+    # Multiple assistantResponseEvent frames concatenate their content.
+    f1 = _make_eventstream_frame(
+        "assistantResponseEvent", b'{"content":"foo ","modelId":"auto"}'
+    )
+    f2 = _make_eventstream_frame(
+        "assistantResponseEvent", b'{"content":"bar","modelId":"auto"}'
+    )
+    assert backend._extract_answer(_FakeResp([f1 + f2])) == "foo bar"
+
+
+def test_extract_answer_eventstream_split_across_chunks():
+    # A valid frame split across iter_content chunks is still parsed.
+    frame = _make_eventstream_frame(
+        "assistantResponseEvent", b'{"content":"split","modelId":"auto"}'
+    )
+    mid = len(frame) // 2
+    assert backend._extract_answer(_FakeResp([frame[:mid], frame[mid:]])) == "split"
+
+
+def test_extract_answer_eventstream_error_event():
+    # A framed errorEvent surfaces as (Q error: ...), not (no response).
+    frame = _make_eventstream_frame(
+        "errorEvent", b'{"__type":"ThrottlingException","message":"x"}'
+    )
+    assert backend._extract_answer(_FakeResp([frame])) == "(Q error: ThrottlingException)"
+
+
+def test_extract_answer_eventstream_conversation_and_tool_ids():
+    # conversationId and toolUseId are extracted from framed events.
+    f_assist = _make_eventstream_frame(
+        "assistantResponseEvent",
+        b'{"content":"hi","modelId":"auto","conversationId":"conv-1"}',
+    )
+    f_tool = _make_eventstream_frame(
+        "toolUseEvent", b'{"toolUseId":"tu-1","name":"fs_write","input":{}}'
+    )
+    answer, cid, tool_use_id = backend._extract_answer_with_conversation_id(
+        _FakeResp([f_assist + f_tool])
+    )
+    assert answer == "hi"
+    assert cid == "conv-1"
+    assert tool_use_id == "tu-1"
+
+
+def test_extract_answer_eventstream_bad_crc_falls_back():
+    # A frame with a corrupt message CRC falls back to the lenient text path.
+    frame = bytearray(
+        _make_eventstream_frame(
+            "assistantResponseEvent", b'{"content":"still-works","modelId":"auto"}'
+        )
+    )
+    frame[-1] ^= 0xFF  # corrupt the trailing message CRC
+    assert backend._extract_answer(_FakeResp([bytes(frame)])) == "still-works"
 
 
 def test_extract_answer_split_across_chunks():
