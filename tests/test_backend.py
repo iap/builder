@@ -415,6 +415,34 @@ def test_chat_bounded_refresh_retry(monkeypatch):
         backend.chat("hi", model="claude-sonnet-4")
 
 
+def test_chat_refreshes_on_any_401(monkeypatch):
+    """A 401 WITHOUT the literal 'invalid' substring still triggers one silent
+    refresh (M3: the old gate missed other auth-failure wording)."""
+    calls = {"refresh": 0}
+
+    class _FailResp:
+        status_code = 401
+
+        @property
+        def text(self):
+            return '{"__type":"UnauthorizedException","message":"token expired"}'
+
+        def iter_content(self, chunk_size=1024):
+            return iter([])
+
+    def _refresh():
+        calls["refresh"] += 1
+        return True
+
+    monkeypatch.setattr(backend, "get_token", lambda: {"access_token": "***"})
+    monkeypatch.setattr(backend.requests, "post", lambda *a, **k: _FailResp())
+    monkeypatch.setattr(sso_oidc, "refresh_token", _refresh)
+    with pytest.raises(RuntimeError, match="even after a silent refresh"):
+        backend.chat("hi", model="claude-sonnet-4")
+    # The refresh was attempted (not skipped by the old 'invalid' substring gate).
+    assert calls["refresh"] == 1
+
+
 def test_chat_sends_model_id(monkeypatch):
     """chat() must forward `model` to Q as `modelId` (verified live: Q accepts
     and echoes it)."""
@@ -750,3 +778,56 @@ def test_parse_tool_calls_xml_takes_precedence_over_json():
     calls = _parse_tool_calls(answer)
     assert len(calls) == 1
     assert calls[0]["name"] == "tool_xml"
+
+
+def test_parse_tool_calls_xml_cap_at_20():
+    """The XML loop is capped at 20 too (M7), not just the JSON fallback."""
+    from adapter import _parse_tool_calls
+
+    open_tag = chr(0x3C) + "tool_call" + chr(0x3E)
+    close_tag = chr(0x3C) + "/tool_call" + chr(0x3E)
+    many = " ".join(
+        f'{open_tag}{{"name": "tool_{i}", "arguments": {{}}}}{close_tag}'
+        for i in range(50)
+    )
+    calls = _parse_tool_calls(many)
+    assert len(calls) == 20
+
+
+def test_strip_tool_calls_strips_json_and_xml():
+    """_strip_tool_calls removes both XML and bare-JSON tool calls (M7 leak)."""
+    from adapter import _strip_tool_calls
+
+    bare = 'before {"name": "fs_write", "arguments": {"path": "a.txt"}} after'
+    stripped = _strip_tool_calls(bare)
+    assert "fs_write" not in stripped
+    assert "before" in stripped
+    assert "after" in stripped
+
+    open_tag = chr(0x3C) + "tool_call" + chr(0x3E)
+    close_tag = chr(0x3C) + "/tool_call" + chr(0x3E)
+    xml = f'hi {open_tag}{{"name": "fs_read", "arguments": {{}}}}{close_tag} bye'
+    stripped = _strip_tool_calls(xml)
+    assert open_tag not in stripped
+    assert "fs_read" not in stripped
+    assert "bye" in stripped
+
+
+def test_adapter_loopback_guards():
+    """Host/Origin guard helpers classify loopback vs public correctly (M6)."""
+    from adapter import _host_from_header, _is_loopback_host, _origin_is_loopback
+
+    assert _is_loopback_host("127.0.0.1")
+    assert _is_loopback_host("localhost")
+    assert _is_loopback_host("::1")
+    assert not _is_loopback_host("evil.com")
+    assert not _is_loopback_host("192.168.1.1")
+
+    assert _host_from_header("127.0.0.1:8088") == "127.0.0.1"
+    assert _host_from_header("localhost:8088") == "localhost"
+    assert _host_from_header("[::1]:8088") == "::1"
+
+    assert _origin_is_loopback("http://127.0.0.1:8088")
+    assert _origin_is_loopback("null")
+    assert not _origin_is_loopback("http://evil.com")
+    assert not _origin_is_loopback("http://192.168.1.1:8080")

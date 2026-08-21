@@ -1181,16 +1181,23 @@ def test_adapter_healthz():
 
 
 def test_adapter_non_localhost_requires_allow_public(monkeypatch):
-    """Deny binding public/host interfaces by default; only allow opt-in via
-    `AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1` so the token bridge stays local-only."""
+    """Deny binding public/host interfaces by default; wildcard binds are always
+    refused (even under opt-in) so the token bridge stays local-only."""
     import adapter
 
-    with pytest.raises(RuntimeError, match="refused to bind to non-loopback host"):
+    with pytest.raises(RuntimeError, match="refuses to bind wildcard host"):
         adapter.start(host="0.0.0.0", port=0)
 
     with pytest.raises(RuntimeError, match="refused to bind to non-loopback host"):
         adapter.start(host="192.168.1.1", port=0)
 
+    # Wildcard stays refused even under explicit opt-in.
+    with monkeypatch.context() as m:
+        m.setenv("AWS_BUILD_ADAPTER_ALLOW_PUBLIC", "1")
+        with pytest.raises(RuntimeError, match="refuses to bind wildcard host"):
+            adapter.start(host="0.0.0.0", port=0)
+
+    # Loopback works regardless.
     with monkeypatch.context() as m:
         m.setenv("AWS_BUILD_ADAPTER_ALLOW_PUBLIC", "1")
         _srv, port = adapter.start(host="127.0.0.1", port=0)

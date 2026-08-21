@@ -84,6 +84,10 @@ CHAT_HOST = "q.us-east-1.amazonaws.com"
 CHAT_URL = f"https://{CHAT_HOST}"
 X_AMZ_TARGET = "AmazonCodeWhispererStreamingService.GenerateAssistantResponse"
 
+# Cap the buffered response size so a hung/malicious stream can't exhaust memory
+# (Q answers are typically a few KB; 50 MB is a generous ceiling).
+_MAX_STREAM_BYTES = 50 * 1024 * 1024
+
 
 def get_token() -> dict:
     """Return a valid Builder ID token (delegated to the BID login store).
@@ -233,13 +237,16 @@ def chat(
 
     payload = json.dumps(body)
     headers = _sign_request(access)
-    r = requests.post(
-        CHAT_URL,
-        data=payload,
-        headers=headers,
-        timeout=120,
-        stream=True,
-    )
+    try:
+        r = requests.post(
+            CHAT_URL,
+            data=payload,
+            headers=headers,
+            timeout=120,
+            stream=True,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Amazon Q request failed: {exc}") from exc
     if r.status_code != 200:
         err = r.text[:600]
         err_low = err.lower()
@@ -263,7 +270,7 @@ def chat(
         # Auth failure (expired/revoked bearer). Attempt a silent refresh and
         # ONE retry before giving up — don't nuke a possibly-valid token on a
         # generic 400, and don't require user interaction. (m1/m3)
-        if r.status_code in (400, 401) and "invalid" in err.lower():
+        if r.status_code in (400, 401):
             # Bound the refresh-then-retry to a single attempt. After a
             # refresh (which now stamps a fresh expires_at), get_token() will
             # return the valid token; a second 400/401 means the credentials
@@ -538,6 +545,10 @@ def _extract_answer_with_conversation_id(
     raw = b""
     for chunk in response.iter_content(chunk_size=4096):
         raw += chunk
+        if len(raw) > _MAX_STREAM_BYTES:
+            # Truncate a hung/malicious stream rather than buffer unboundedly;
+            # the parser degrades to "(no response)" or partial content.
+            break
     # Prefer proper event-stream framing (real Q responses). Fall back to the
     # lenient text path for bare JSON (offline tests / non-framed bodies).
     try:
