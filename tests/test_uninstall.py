@@ -240,3 +240,30 @@ def test_uninstall_preserves_unrelated_empty_containers():
     _assert(out, removed, absent=["enabled:", "cli:", "- builder"])
     # ...but unrelated empty containers are preserved.
     _assert(out, removed, present=["user_groups: []", "extra: {}"])
+
+
+def test_uninstall_preserves_custom_toolset_lists():
+    # Greptile round 4: only the installer-owned platform_toolsets.cli and
+    # known_plugin_toolsets.cli lists are Builder-owned. A custom toolset
+    # sub-key (e.g. platform_toolsets.extra) that happens to contain
+    # "- builder" is user-owned and must be preserved.
+    cfg = textwrap.dedent(
+        """\
+        platform_toolsets:
+          cli:
+            - builder
+          extra:
+            - builder
+        known_plugin_toolsets:
+          cli:
+            - builder
+          custom:
+            - builder
+        """
+    )
+    out, removed = _run(cfg)
+    # The installer-owned cli lists are removed and pruned...
+    _assert(out, removed, absent=["cli:"])
+    # ...but custom toolset sub-lists (and their builder items) are preserved.
+    _assert(out, removed, present=["extra:", "custom:", "- builder"])
+    assert removed.count("list:builder") == 2

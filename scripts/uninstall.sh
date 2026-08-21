@@ -112,16 +112,17 @@ def _cleanup(lines):
 
         # 2) `- builder` list items: only at the exact plugin-managed list
         #    paths. `plugins.enabled` is the enabled-plugin list; the toolset
-        #    lists live directly under a toolset sub-key (the installer writes
-        #    platform_toolsets.cli / known_plugin_toolsets.cli). A list nested
-        #    deeper (e.g. plugins.enabled.user_groups) is user-owned — leave it.
+        #    lists are the installer-owned `platform_toolsets.cli` and
+        #    `known_plugin_toolsets.cli`. Any other toolset sub-key (or a list
+        #    nested deeper, e.g. plugins.enabled.user_groups) is user-owned —
+        #    leave it.
         if _is_builder_item(s):
             if path == ["plugins", "enabled"]:
                 removed.append("list:builder")
                 emptied.add(tuple(path))
                 i += 1
                 continue
-            if len(path) == 2 and path[0] in ("platform_toolsets", "known_plugin_toolsets"):
+            if path in (["platform_toolsets", "cli"], ["known_plugin_toolsets", "cli"]):
                 removed.append("list:builder")
                 emptied.add(tuple(path))
                 i += 1
