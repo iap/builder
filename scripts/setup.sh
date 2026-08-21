@@ -16,6 +16,10 @@
 
 set -euo pipefail
 
+# The Python heredocs print Unicode (✓/→/✗); force UTF-8 so they don't crash
+# when stdout is a non-UTF-8 pipe (e.g. Windows cp1252 under redirect).
+export PYTHONUTF8=1
+
 CONFIG="${HERMES_HOME:-$HOME/.hermes}/config.yaml"
 BACKUP="${CONFIG}.bak.$(date +%Y%m%d_%H%M%S)"
 PORT="${AWS_BUILD_ADAPTER_PORT:-8088}"
