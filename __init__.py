@@ -436,13 +436,18 @@ def register(ctx) -> None:
             emoji=emoji,
         )
 
+    _registered = True
+
     # Best-effort: start the local OpenAI-compatible adapter so Hermes can
     # route chat turns to builder as a model. No-op if already running.
     try:
         from . import adapter  # package import
     except ImportError:  # __main__ / direct
         import adapter  # type: ignore
-    port = int(__import__("os").environ.get("AWS_BUILD_ADAPTER_PORT", "8088"))
+    try:
+        port = int(os.environ.get("AWS_BUILD_ADAPTER_PORT", "8088"))
+    except (TypeError, ValueError):
+        port = 8088
     actual = None
     try:
         _srv, actual = adapter.start(port=port)
@@ -471,9 +476,12 @@ def register(ctx) -> None:
             from . import _provider  # package import
         except ImportError:  # __main__ / direct
             import _provider  # type: ignore
-        _provider.register_provider(actual)
-
-    _registered = True
+        try:
+            _provider.register_provider(actual)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "builder provider registration failed (tool-only mode OK): %s", exc
+            )
 
 
 def unregister(ctx) -> None:

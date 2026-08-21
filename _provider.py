@@ -67,17 +67,32 @@ def _adapter_base_url_marker() -> str:
     'No API key' notification) would survive. Returns the port so callers can
     match on the loopback host + port, host-agnostic.
     """
-    port = int(os.environ.get("AWS_BUILD_ADAPTER_PORT", "8088"))
+    try:
+        port = int(os.environ.get("AWS_BUILD_ADAPTER_PORT", "8088"))
+    except (TypeError, ValueError):
+        port = 8088
     return f":{port}"
 
 
 def _is_our_base_url(base: str) -> bool:
     """True if ``base`` points at our loopback adapter (127.0.0.1 or localhost
-    on the adapter port), regardless of which loopback host string was used."""
+    on the adapter port), regardless of which loopback host string was used.
+
+    Parses the URL instead of substring matching so a foreign entry like
+    ``http://localhost:80880/v1`` (port prefix) or a host that merely embeds
+    ``localhost:8088`` is not misclassified as ours."""
     if not isinstance(base, str):
         return False
-    marker = _adapter_base_url_marker()  # e.g. ":8088"
-    return (f"127.0.0.1{marker}" in base) or (f"localhost{marker}" in base)
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(base)
+        host = (parts.hostname or "").lower()
+        port = parts.port or 8088  # default when the URL has no explicit port
+    except ValueError:
+        return False
+    expected_port = int(_adapter_base_url_marker().lstrip(":"))
+    return host in ("127.0.0.1", "localhost") and port == expected_port
 
 
 def _is_our_entry(entry: Any) -> bool:

@@ -38,6 +38,10 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+        with:
+          repository: iap/hermes-agent
+          path: hermes-agent
       - uses: astral-sh/setup-uv@094aa226ed0e8f079adf9b0803105ffdac7bb465
         with:
           version: "0.5.x"
@@ -45,6 +49,9 @@ jobs:
       - name: Install deps
         run: uv sync --extra dev
       - name: Verify
+        env:
+          HERMES_HOME: ${{ github.workspace }}
+          PYTHONPATH: ${{ github.workspace }}/hermes-agent
         run: uv run python verify.py
 
   integration-test:

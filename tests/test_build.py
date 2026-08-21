@@ -58,8 +58,9 @@ def test_adapter_translates_openai_request_to_q(monkeypatch):
 
 
 def test_adapter_sse_shape(monkeypatch):
-    """Output frames must be OpenAI SSE: a role frame, a content frame,
-    then [DONE] — so Hermes's openai_chat transport can parse it."""
+    """Output frames must be OpenAI SSE: a role frame, a content frame, a
+    finish_reason frame, then [DONE] — so Hermes's openai_chat transport can
+    parse it and distinguish a normal end from a tool-call turn."""
     from importlib import import_module
 
     import adapter
@@ -70,10 +71,11 @@ def test_adapter_sse_shape(monkeypatch):
 
     out = adapter._handle_chat({"messages": [{"role": "user", "content": "hi"}]})
     frames = [l for l in out.decode().splitlines() if l.startswith("data:")]
-    assert len(frames) == 3
+    assert len(frames) == 4
     assert "assistant" in frames[0]
     assert '"content": "x"' in frames[1]
-    assert frames[2] == "data: [DONE]"
+    assert '"finish_reason": "stop"' in frames[2]
+    assert frames[3] == "data: [DONE]"
 
 
 def test_adapter_sse_frames_end_with_blank_line(monkeypatch):

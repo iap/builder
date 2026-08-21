@@ -148,13 +148,27 @@ def _flow_path() -> Path:
 
 def _write_secret(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
     # This local auth store is intentionally left as cleartext JSON. The plugin
     # relies on OS-level access control instead: Hermes home is private to the
     # user, and the file is created with 0o600 so only the owner can read it.
-    tmp.write_text(json.dumps(data))
-    os.chmod(tmp, 0o600)
-    tmp.replace(path)
+    # Use a unique mkstemp name (already 0o600 on POSIX) so concurrent writers
+    # (poll thread + get_status, or two processes) cannot race on a shared ".tmp".
+    import tempfile
+
+    fd, tmpname = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmpname, 0o600)
+        os.replace(tmpname, path)
+    finally:
+        if os.path.exists(tmpname):
+            try:
+                os.unlink(tmpname)
+            except OSError:
+                pass
 
 
 def _read_secret(path: Path) -> dict | None:
@@ -233,7 +247,10 @@ def _load_registration() -> dict | None:
     if not data:
         return None
     exp = data.get("client_secret_expires_at")
-    if exp is not None and time.time() >= exp:
+    # AWS SSO-OIDC returns 0 for public clients to mean "never expires".
+    # Treat 0 (and None) as no-expiry; otherwise every call re-registers a new
+    # client and silent token refresh (which needs this registration) dies.
+    if exp not in (None, 0) and time.time() >= exp:
         return None
     return data
 
@@ -261,9 +278,12 @@ def _register() -> dict:
 
 def _save_token(out: dict, reg: dict) -> None:
     expires_at = time.time() + out.get("expiresIn", 0)
+    prev = _load_token() or {}
     data = {
         "access_token": out["accessToken"],
-        "refresh_token": out.get("refreshToken"),
+        # Preserve the prior refresh token when the response doesn't rotate it
+        # (a missing refreshToken must not clobber the only long-lived credential).
+        "refresh_token": out.get("refreshToken") or prev.get("refresh_token"),
         "expires_at": expires_at,
         "token_type": out.get("tokenType"),
         "scopes": reg.get("scopes"),
@@ -305,6 +325,8 @@ def _poll_once(reg: dict, flow: dict) -> str:
             clientSecret=reg["client_secret"],
             deviceCode=flow["device_code"],
         )
+        if _stop.is_set():
+            return "cancelled"
         _save_token(out, reg)
         try:
             _flow_path().unlink()
