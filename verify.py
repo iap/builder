@@ -193,10 +193,14 @@ def main() -> int:
             continue
         res = json.loads(spec["handler"]({}))
         leaked = _secret_keys_in(res)
+        # Report the count, not the field names: the names are metadata, not
+        # secret values, but keep them out of the log sink so CodeQL's
+        # py/clear-text-logging-sensitive-data doesn't flag field-name
+        # reporting as a secret leak.
         check(
             not leaked,
             f"{name}: no secret fields in output"
-            + (f" (leaked: {sorted(leaked)})" if leaked else ""),
+            + (f" (leaked {len(leaked)} field name(s))" if leaked else ""),
         )
 
     # Provider registration (issue #20): the adapter must surface as a
