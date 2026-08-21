@@ -415,7 +415,11 @@ def start_login() -> dict:
     ``InvalidGrantException`` (surfaced as a login error in the dashboard).
     Return an already-authenticated marker instead.
     """
-    if _load_token():
+    # A token may exist but be expired (and non-refreshable); only short-circuit
+    # when it is still valid (or was just refreshed) — otherwise fall through and
+    # start a fresh device flow instead of falsely claiming "already_authenticated"
+    # with a dead token (L8).
+    if ensure_valid():
         return {"already_authenticated": True, "phase": "authenticated"}
     reg = _register()
     c = _client()
@@ -451,6 +455,12 @@ def refresh_token() -> bool:
     reg = _load_registration()
     if not tok or not reg or not tok.get("refresh_token"):
         return False
+    from botocore.exceptions import (
+        ClientError,
+        ConnectionError,
+        EndpointConnectionError,
+    )
+
     c = _client()
     for attempt in range(3):
         try:
@@ -462,10 +472,24 @@ def refresh_token() -> bool:
             )
             _save_token(out, reg)
             return True
-        except Exception:
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code == "InvalidGrantException":
+                # Terminal: the refresh token is dead; retrying can't help (L8).
+                logger.warning("refresh token rejected (invalid grant); not retrying")
+                return False
             if attempt < 2:
                 time.sleep(2**attempt)
                 continue
+            logger.exception("token refresh failed: %s", code)
+            return False
+        except (EndpointConnectionError, ConnectionError):
+            if attempt < 2:
+                time.sleep(2**attempt)
+                continue
+            logger.exception("token refresh network failure")
+            return False
+        except Exception:
             logger.exception("token refresh failed")
             return False
     return False

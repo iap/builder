@@ -153,6 +153,13 @@ def _resolve_model_id(model: str | None) -> str:
     allowed = set(list_models()) | {"auto"}
     if requested in allowed:
         return requested
+    # Case-insensitive fallback (L10): the catalog is lowercase; accept a
+    # case-variant and return the canonical form instead of silently downgrading
+    # to "auto" (Q modelIds are case-sensitive on the wire).
+    lowered = {m.lower(): m for m in allowed}
+    canonical = lowered.get(requested.lower())
+    if canonical is not None:
+        return canonical
     import logging
 
     logging.getLogger(__name__).warning(
@@ -595,6 +602,15 @@ STATIC_MODELS = [
 
 _PLUGIN_YAML = Path(__file__).resolve().parent / "plugin.yaml"
 _MODEL_OVERRIDE: list[str] | None = None  # None = not yet loaded
+_MODEL_OVERRIDE_MTIME: float | None = None  # plugin.yaml mtime at last load
+
+
+def _plugin_yaml_mtime() -> float | None:
+    """Return plugin.yaml's mtime, or None if it can't be stat'd."""
+    try:
+        return _PLUGIN_YAML.stat().st_mtime
+    except OSError:
+        return None
 
 
 def _load_model_override() -> list[str] | None:
@@ -632,9 +648,11 @@ def list_models() -> list[str]:
     X-Amz-Target prefix lives in the aws-smithy runtime and is not derivable
     without the service model (live probes 404).
     """
-    global _MODEL_OVERRIDE
-    if _MODEL_OVERRIDE is None:
+    global _MODEL_OVERRIDE, _MODEL_OVERRIDE_MTIME
+    mtime = _plugin_yaml_mtime()
+    if _MODEL_OVERRIDE is None or _MODEL_OVERRIDE_MTIME != mtime:
         _MODEL_OVERRIDE = _load_model_override()
+        _MODEL_OVERRIDE_MTIME = mtime
     return list(_MODEL_OVERRIDE if _MODEL_OVERRIDE else STATIC_MODELS)
 
 
@@ -648,6 +666,7 @@ STATIC_TAGS = [
 ]
 
 _TAG_OVERRIDE: list[str] | None = None  # None = not yet loaded
+_TAG_OVERRIDE_MTIME: float | None = None  # plugin.yaml mtime at last load
 
 
 def _load_tag_override() -> list[str] | None:
@@ -682,9 +701,11 @@ def load_tags() -> list[str]:
     The override is loaded lazily and cached on first call, so editing
     plugin.yaml is picked up on the next call without restarting Hermes.
     """
-    global _TAG_OVERRIDE
-    if _TAG_OVERRIDE is None:
+    global _TAG_OVERRIDE, _TAG_OVERRIDE_MTIME
+    mtime = _plugin_yaml_mtime()
+    if _TAG_OVERRIDE is None or _TAG_OVERRIDE_MTIME != mtime:
         _TAG_OVERRIDE = _load_tag_override()
+        _TAG_OVERRIDE_MTIME = mtime
     return list(_TAG_OVERRIDE if _TAG_OVERRIDE else STATIC_TAGS)
 
 

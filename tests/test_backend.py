@@ -389,6 +389,63 @@ def test_load_tags_empty_override_falls_back_to_static(monkeypatch):
     assert backend.load_tags() == backend.STATIC_TAGS
 
 
+# --- L10: _resolve_model_id is case-insensitive ---
+
+
+def test_resolve_model_id_case_insensitive(monkeypatch):
+    monkeypatch.setattr(
+        backend, "list_models", lambda: ["claude-sonnet-4.5", "amazon-q"]
+    )
+    assert backend._resolve_model_id("Claude-Sonnet-4.5") == "claude-sonnet-4.5"
+    assert backend._resolve_model_id("AMAZON-Q") == "amazon-q"
+    assert backend._resolve_model_id("AUTO") == "auto"
+    # exact matches still pass through unchanged
+    assert backend._resolve_model_id("claude-sonnet-4.5") == "claude-sonnet-4.5"
+    # unknown names still coerce to "auto"
+    assert backend._resolve_model_id("gpt-4-turbo") == "auto"
+
+
+# --- L2: catalog reloads when plugin.yaml mtime changes ---
+
+
+def test_list_models_reloads_on_mtime_change(monkeypatch):
+    calls = {"n": 0}
+
+    def _fake_override():
+        calls["n"] += 1
+        return ["v%d" % calls["n"]]
+
+    monkeypatch.setattr(backend, "_MODEL_OVERRIDE", None)
+    monkeypatch.setattr(backend, "_MODEL_OVERRIDE_MTIME", None)
+    monkeypatch.setattr(backend, "_load_model_override", _fake_override)
+
+    mtimes = iter([1.0, 2.0])
+    monkeypatch.setattr(backend, "_plugin_yaml_mtime", lambda: next(mtimes))
+
+    assert backend.list_models() == ["v1"]
+    assert backend.list_models() == ["v2"]  # mtime changed -> reloaded
+    assert calls["n"] == 2
+
+
+def test_load_tags_reloads_on_mtime_change(monkeypatch):
+    calls = {"n": 0}
+
+    def _fake_override():
+        calls["n"] += 1
+        return ["tag%d" % calls["n"]]
+
+    monkeypatch.setattr(backend, "_TAG_OVERRIDE", None)
+    monkeypatch.setattr(backend, "_TAG_OVERRIDE_MTIME", None)
+    monkeypatch.setattr(backend, "_load_tag_override", _fake_override)
+
+    mtimes = iter([1.0, 2.0])
+    monkeypatch.setattr(backend, "_plugin_yaml_mtime", lambda: next(mtimes))
+
+    assert backend.load_tags() == ["tag1"]
+    assert backend.load_tags() == ["tag2"]
+    assert calls["n"] == 2
+
+
 # --- chat(): refresh-then-retry is bounded (no infinite recursion) ---
 
 

@@ -318,3 +318,64 @@ def test_get_status_skips_poll_when_thread_alive(tmp_path, monkeypatch):
 
     assert poll_calls == []  # no manual double-poll
     assert st["phase"] == "awaiting_approval"
+
+
+def test_start_login_starts_flow_when_token_expired(tmp_path, monkeypatch):
+    """L8: an expired, non-refreshable token must not short-circuit start_login."""
+    import time as _time
+
+    s, _ = _setup(tmp_path, monkeypatch)
+    s._write_secret(
+        s._token_path(),
+        {
+            "access_token": "expired-tok",
+            "expires_at": _time.time() - 60,  # expired; no refresh_token
+            "token_type": "Bearer",
+            "scopes": [],
+        },
+    )
+    monkeypatch.setattr(s, "_start_poll_thread", lambda reg, flow: None)
+
+    result = s.start_login()
+
+    assert "already_authenticated" not in result
+    assert result.get("user_code") == "UC-1234"
+    assert result.get("verification_uri") == "https://example.com"
+
+
+def test_refresh_token_does_not_retry_invalid_grant(tmp_path, monkeypatch):
+    """L8: a terminal InvalidGrantException returns False immediately (no 3x retry)."""
+    s, be = _setup(tmp_path, monkeypatch)
+    s._write_secret(
+        s._token_path(),
+        {
+            "access_token": "expired-tok",
+            "refresh_token": "dead-rtok",
+            "expires_at": 1.0,
+            "token_type": "Bearer",
+            "scopes": [],
+        },
+    )
+    s._write_secret(
+        s._reg_path(),
+        {
+            "client_id": "cid",
+            "client_secret": "csecret",
+            "client_secret_expires_at": 9_999_999_999,
+            "scopes": [],
+        },
+    )
+
+    calls = {"n": 0}
+
+    class _InvalidGrantClient:
+        def create_token(self, **kw):
+            calls["n"] += 1
+            raise be.ClientError("InvalidGrantException")
+
+    s._cached_client = _InvalidGrantClient()
+
+    result = s.refresh_token()
+
+    assert result is False
+    assert calls["n"] == 1  # terminal error: no retry
