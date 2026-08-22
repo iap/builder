@@ -148,12 +148,16 @@ def register_provider(port: int) -> bool:
         logger.warning("builder: cannot import hermes_cli.config (%s)", exc)
         return False
 
-    models = _declared_models() or [
-        "auto",
-        "claude-sonnet-4.5",
-        "claude-sonnet-4",
-        "claude-haiku-4.5",
-    ]
+    models = _declared_models()
+    if not models:
+        # _declared_models() already falls back to backend.STATIC_MODELS via
+        # backend.list_models(); an empty result means backend is unavailable,
+        # so there is nothing to advertise. Avoid a third hardcoded copy of the
+        # catalog here — the single fallback source is STATIC_MODELS.
+        logger.warning(
+            "builder: no models available (backend unavailable); skipping provider registration"
+        )
+        return False
     default_model = models[0]
 
     # Best-effort: never let a malformed/unreadable config abort plugin

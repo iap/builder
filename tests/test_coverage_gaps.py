@@ -261,6 +261,22 @@ def test_provider_register_noop_when_already_current(monkeypatch):
     assert saved[0] == cfg
 
 
+def test_provider_register_skips_when_no_models(monkeypatch):
+    """register_provider must skip (no write) when the model catalog is empty
+    — there is no hardcoded fallback list duplicated here."""
+    import sys
+
+    import _provider
+
+    monkeypatch.setattr(_provider, "_declared_models", list)
+    fake_hermes, fake_cfg, saved = _make_hermes_cli_mock({})
+    monkeypatch.setitem(sys.modules, "hermes_cli", fake_hermes)
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", fake_cfg)
+    result = _provider.register_provider(8088)
+    assert result is False
+    assert saved[0] == {}
+
+
 def test_provider_unregister_removes_our_entry(monkeypatch):
     import sys
 
