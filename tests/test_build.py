@@ -58,8 +58,9 @@ def test_adapter_translates_openai_request_to_q(monkeypatch):
 
 
 def test_adapter_sse_shape(monkeypatch):
-    """Output frames must be OpenAI SSE: a role frame, a content frame,
-    then [DONE] — so Hermes's openai_chat transport can parse it."""
+    """Output frames must be OpenAI SSE: a role frame, a content frame, a
+    finish_reason frame, then [DONE] — so Hermes's openai_chat transport can
+    parse it and distinguish a normal end from a tool-call turn."""
     from importlib import import_module
 
     import adapter
@@ -70,10 +71,11 @@ def test_adapter_sse_shape(monkeypatch):
 
     out = adapter._handle_chat({"messages": [{"role": "user", "content": "hi"}]})
     frames = [l for l in out.decode().splitlines() if l.startswith("data:")]
-    assert len(frames) == 3
+    assert len(frames) == 4
     assert "assistant" in frames[0]
     assert '"content": "x"' in frames[1]
-    assert frames[2] == "data: [DONE]"
+    assert '"finish_reason": "stop"' in frames[2]
+    assert frames[3] == "data: [DONE]"
 
 
 def test_adapter_sse_frames_end_with_blank_line(monkeypatch):
@@ -1179,16 +1181,23 @@ def test_adapter_healthz():
 
 
 def test_adapter_non_localhost_requires_allow_public(monkeypatch):
-    """Deny binding public/host interfaces by default; only allow opt-in via
-    `AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1` so the token bridge stays local-only."""
+    """Deny binding public/host interfaces by default; wildcard binds are always
+    refused (even under opt-in) so the token bridge stays local-only."""
     import adapter
 
-    with pytest.raises(RuntimeError, match="refused to bind to non-loopback host"):
+    with pytest.raises(RuntimeError, match="refuses to bind wildcard host"):
         adapter.start(host="0.0.0.0", port=0)
 
     with pytest.raises(RuntimeError, match="refused to bind to non-loopback host"):
         adapter.start(host="192.168.1.1", port=0)
 
+    # Wildcard stays refused even under explicit opt-in.
+    with monkeypatch.context() as m:
+        m.setenv("AWS_BUILD_ADAPTER_ALLOW_PUBLIC", "1")
+        with pytest.raises(RuntimeError, match="refuses to bind wildcard host"):
+            adapter.start(host="0.0.0.0", port=0)
+
+    # Loopback works regardless.
     with monkeypatch.context() as m:
         m.setenv("AWS_BUILD_ADAPTER_ALLOW_PUBLIC", "1")
         _srv, port = adapter.start(host="127.0.0.1", port=0)

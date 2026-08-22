@@ -53,6 +53,7 @@ Hermes's own loop.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import socket
@@ -93,12 +94,58 @@ HOST = os.environ.get("AWS_BUILD_ADAPTER_HOST", "localhost")
 # Bind loopback by default; refuse to publish on a non-loopback host unless the
 # operator opts in explicitly via AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1.
 _LOOPBACK = ("127.0.0.1", "::1", "localhost")
+# Wildcard binds expose the token proxy on every interface; refuse them even
+# under AWS_BUILD_ADAPTER_ALLOW_PUBLIC (there is no safe wildcard exposure).
+_WILDCARD = ("0.0.0.0", "::", "", "*")
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True if a host string (no port) is a loopback address."""
+    h = host.strip().lower()
+    if h.startswith("[") and h.endswith("]"):
+        h = h[1:-1]
+    return h in _LOOPBACK or h == "0:0:0:0:0:0:0:1"
+
+
+def _host_from_header(host_header: str) -> str:
+    """Return the host portion of a Host header value (strip :port / brackets)."""
+    h = host_header.strip()
+    if h.startswith("["):
+        end = h.find("]")
+        return h[1:end] if end != -1 else h
+    if h.count(":") == 1:  # host:port (IPv4 or hostname)
+        return h.rsplit(":", 1)[0]
+    return h
+
+
+def _origin_is_loopback(origin: str) -> bool:
+    """True if an Origin header value is a loopback (or 'null') origin."""
+    if origin.strip().lower() == "null":
+        return True
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(origin)
+    except ValueError:
+        return False
+    return parts.scheme in ("http", "https") and _is_loopback_host(parts.hostname or "")
 
 
 def _resolve_bind_host(requested: str) -> str:
     if requested in _LOOPBACK:
         return requested
+    if requested in _WILDCARD:
+        raise RuntimeError(
+            f"builder adapter refuses to bind wildcard host {requested!r}. "
+            "The adapter is a local-only token server and must never be "
+            "network-exposed. Bind 127.0.0.1 (default)."
+        )
     if os.environ.get("AWS_BUILD_ADAPTER_ALLOW_PUBLIC") == "1":
+        logging.getLogger(__name__).warning(
+            "builder adapter binding to non-loopback host %r "
+            "(AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1) — network-exposed token proxy",
+            requested,
+        )
         return requested
     raise RuntimeError(
         f"builder adapter refused to bind to non-loopback host {requested!r}. "
@@ -210,6 +257,10 @@ def _parse_tool_calls(answer: str) -> list[dict[str, Any]]:
         if not isinstance(args, dict):
             args = {}
         calls.append({"name": name, "arguments": json.dumps(args, ensure_ascii=False)})
+        if len(calls) >= 20:
+            # Cap XML blocks too (not just the JSON fallback) so a pathological
+            # answer can't emit unbounded tool calls.
+            break
 
     # 2) Any JSON object shaped like {"name": ..., "arguments": ...}
     #    This covers ```json fences, inline backticks, or bare JSON in Q's
@@ -289,6 +340,45 @@ def _strip_tool_call_xml(answer: str) -> str:
     return out.strip()
 
 
+def _strip_tool_calls(answer: str) -> str:
+    """Remove both <tool_call> XML blocks AND bare/fenced JSON tool-call objects
+    from an answer, so the raw tool-call text is never shown to the user when
+    tool_calls are emitted. Mirrors _parse_tool_calls' detection (XML first, JSON
+    fallback only when no XML). Strips right-to-left so earlier spans stay valid."""
+    spans: list[tuple[int, int]] = []
+
+    # XML <tool_call> ... </tool_call> blocks
+    for m in re.finditer(r"<tool_call>\s*", answer):
+        obj, end = _extract_balanced_brace(answer, m.end())
+        close = answer.find("</tool_call>", end if obj else m.end())
+        if close == -1:
+            continue
+        spans.append((m.start(), close + len("</tool_call>")))
+
+    # bare/fenced JSON tool-call objects (only if no XML, matching _parse_tool_calls)
+    if not spans:
+        for m in re.finditer(r"\{", answer):
+            obj, end = _extract_balanced_brace(answer, m.start())
+            if obj is None or end <= m.start():
+                continue
+            try:
+                parsed = json.loads(obj)
+            except Exception:
+                continue
+            name = parsed.get("name") if isinstance(parsed, dict) else None
+            if not isinstance(name, str) or not name:
+                continue
+            spans.append((m.start(), end))
+
+    if not spans:
+        return answer.strip()
+
+    out = answer
+    for start, end in sorted(spans, reverse=True):
+        out = out[:start] + out[end:]
+    return out.strip()
+
+
 def _sse(choices: list, model: str = "builder") -> bytes:
     # SSE / OpenAI streaming requires each event to be terminated by a BLANK
     # line, i.e. "\n\n" — not a single "\n". With only one newline, Hermes's
@@ -348,12 +438,14 @@ def _handle_chat(body: dict[str, Any]) -> bytes:
     calls = _parse_tool_calls(answer) if tools else []
     if calls:
         return _tool_calls_frames(
-            calls, text=_strip_tool_call_xml(answer), model=str(model)
+            calls, text=_strip_tool_calls(answer), model=str(model)
         )
 
     frames = [
         b"data: " + _sse([{"index": 0, "delta": {"role": "assistant"}}], model=model),
         b"data: " + _sse([{"index": 0, "delta": {"content": answer}}], model=model),
+        b"data: "
+        + _sse([{"index": 0, "delta": {}, "finish_reason": "stop"}], model=model),
         b"data: [DONE]\n\n",
     ]
     return b"".join(frames)
@@ -444,6 +536,22 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(404, b'{"error":"not found"}')
 
     def do_POST(self) -> None:
+        # Local-only guard (M6): reject cross-origin / non-loopback requests so a
+        # browser page can't drive the token proxy (quota burn / prompt injection).
+        host = _host_from_header(self.headers.get("Host", ""))
+        # Reject a non-loopback Host only when the operator has NOT explicitly
+        # opted into public binding (Greptile review): otherwise
+        # AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1 lets the listener bind a non-loopback
+        # address but every real request was still 403'd, making the opt-in
+        # unusable. Origin protection stays regardless.
+        allow_public = os.environ.get("AWS_BUILD_ADAPTER_ALLOW_PUBLIC") == "1"
+        if host and not allow_public and not _is_loopback_host(host):
+            self._send(403, b'{"error":"forbidden: non-loopback Host"}')
+            return
+        origin = self.headers.get("Origin")
+        if origin and not _origin_is_loopback(origin):
+            self._send(403, b'{"error":"forbidden: non-loopback Origin"}')
+            return
         if self.path.rstrip("/") not in ("/v1/chat/completions", "/chat/completions"):
             self._send(404, b'{"error":"not found"}')
             return
@@ -568,6 +676,9 @@ if __name__ == "__main__":
     srv, p = start()
     print(f"builder adapter listening on http://{HOST}:{p}/v1/chat/completions")
     try:
-        srv.serve_forever()
+        # start() already runs serve_forever() in a daemon thread; just keep
+        # this (main) thread alive until interrupted (L9: avoid a second,
+        # redundant serve_forever loop).
+        threading.Event().wait()
     except KeyboardInterrupt:
         stop()

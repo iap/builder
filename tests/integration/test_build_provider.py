@@ -147,7 +147,9 @@ def test_aws_builder_resolves_as_cli_tui_model(monkeypatch):
     matches = [c for c in cps if c.get("provider_key") == "aws-builder"]
     assert matches, "aws-builder must appear in resolved providers"
     e = matches[0]
-    assert e["api_mode"] == "openai_chat"
+    assert e["api_mode"] == "chat_completions", (
+        "transport openai_chat resolves to api_mode chat_completions in current core"
+    )
     assert e["base_url"].rstrip("/") == "http://127.0.0.1:8088/v1"
     assert e.get("api_key") == "no-key-required", "keyless-by-design signal required"
     assert "key_env" not in e, "no dummy key_env; use no-key-required"

@@ -120,11 +120,11 @@ def cmd_status(args: argparse.Namespace) -> int:
             print(f"  {st['verification_uri_complete']}")
         if st.get("user_code"):
             print(f"  user_code: {st['user_code']}")
-        return 0
+        return 1
     print(f"authenticated: no (phase={st.get('phase')})")
     if st.get("error"):
         print(f"  error: {st['error']}")
-    return 0
+    return 1
 
 
 def cmd_whoami(args: argparse.Namespace) -> int:
@@ -168,7 +168,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "login", help="start device login; print a copyable verification link"
     )
-    sub.add_parser("status", help="show current auth / device-flow state")
+    sub.add_parser("status", help="show auth state (exit 1 when not authenticated)")
     sub.add_parser("whoami", help="show token identity (no raw token)")
     sub.add_parser("logout", help="clear stored secrets")
     sub.add_parser("models", help="list advertised models and tags")

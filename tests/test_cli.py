@@ -77,7 +77,7 @@ def test_cmd_status_awaiting(capsys):
     }
     with patch("build_cli._load_modules", return_value=(sso, None, None)):
         rc = cmd_status(argparse.Namespace())
-    assert rc == 0
+    assert rc == 1
     out = capsys.readouterr().out
     assert "awaiting" in out
     assert "ABCD-1234" in out
@@ -94,7 +94,7 @@ def test_cmd_status_not_authenticated(capsys):
     }
     with patch("build_cli._load_modules", return_value=(sso, None, None)):
         rc = cmd_status(argparse.Namespace())
-    assert rc == 0
+    assert rc == 1
     assert "authenticated: no" in capsys.readouterr().out
 
 

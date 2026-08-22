@@ -16,6 +16,10 @@
 
 set -euo pipefail
 
+# The Python heredocs print Unicode (✓/→/✗); force UTF-8 so they don't crash
+# when stdout is a non-UTF-8 pipe (e.g. Windows cp1252 under redirect).
+export PYTHONUTF8=1
+
 CONFIG="${HERMES_HOME:-$HOME/.hermes}/config.yaml"
 BACKUP="${CONFIG}.bak.$(date +%Y%m%d_%H%M%S)"
 PORT="${AWS_BUILD_ADAPTER_PORT:-8088}"
@@ -153,108 +157,72 @@ try:
     c = yaml.safe_load(raw) or {}
 except Exception:
     c = {}
-providers = c.setdefault("providers", {})
-has_existing = "aws-builder" in providers
+providers = c.get("providers")
+has_existing = isinstance(providers, dict) and "aws-builder" in providers
 
 if has_existing:
-
-    new_models = {}
-    current_model = None
-    # Parse the generated block YAML directly rather than manual string
-    # extraction — this preserves exact model identifiers with proper
-    # unquoting and handles edge cases (quotes, newlines, special chars).
-    try:
-        block_parsed = yaml.safe_load(block) or {}
-    except Exception:
-        block_parsed = {}
-    provider_block = block_parsed.get("aws-builder", {})
-    if isinstance(provider_block, dict):
-        current_model = provider_block.get("model")
-        models_field = provider_block.get("models") or []
-        # models can be a list (from yaml.dump of a list) or a mapping
-        # (from yaml.dump of {m: {}}). Handle both.
-        if isinstance(models_field, list):
-            for m in models_field:
-                new_models[str(m)] = {}
-        elif isinstance(models_field, dict):
-            for m in models_field:
-                new_models[str(m)] = {}
-
-    existing = providers.get("aws-builder", {})
-    if isinstance(existing, dict):
-        existing["models"] = new_models
-        if current_model:
-            existing["model"] = current_model
-        existing.setdefault("base_url", f"http://localhost:{port}/v1")
-        existing.setdefault("transport", "openai_chat")
-        existing.setdefault("api_key", "no-key-required")
-        providers["aws-builder"] = existing
+    # Line-based replacement of the existing aws-builder block. Preserves the
+    # rest of config.yaml (comments, formatting, other providers) verbatim; a
+    # full yaml.safe_load + safe_dump round-trip would strip every comment.
+    # The freshly generated `block` (above) carries the canonical model catalog.
+    raw_lines = raw.splitlines()
+    ab_idx = None
+    for i, ln in enumerate(raw_lines):
+        if ln.strip() == "aws-builder:":
+            ab_idx = i
+            break
+    if ab_idx is None:
+        raw_lines.extend(block.splitlines())
     else:
-        providers["aws-builder"] = {
-            "name": "AWS Builder",
-            "base_url": f"http://localhost:{port}/v1",
-            "transport": "openai_chat",
-            "api_key": "no-key-required",
-            "model": current_model or "auto",
-            "models": new_models,
-        }
-
-    try:
-        import yaml
-
-        # yaml.safe_dump strips quotes from string keys that look like
-        # numbers (e.g. "4o", "4.0"), causing them to be re-parsed as
-        # float/int by Hermes core. Use a SafeDumper variant that
-        # double-quotes any string scalar whose YAML-1.1 interpretation
-        # would be non-string.
-        import re as _re
-        _num_like = _re.compile(r"^(?:[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?|true|True|TRUE|false|False|FALSE|null|Null|NULL|~)$")
-
-        class _QuotedDumper(yaml.SafeDumper):
-            pass
-
-        def _str_representer(dumper, data):
-            if _num_like.match(data):
-                return dumper.represent_scalar(
-                    "tag:yaml.org,2002:str", data, style='"'
-                )
-            return dumper.represent_scalar(
-                "tag:yaml.org,2002:str", data
-            )
-
-        _QuotedDumper.add_representer(str, _str_representer)
-        Path(cfg_path).write_text(
-            yaml.dump(c, Dumper=_QuotedDumper, default_flow_style=False, sort_keys=False) + "\n"
-        )
-    except Exception as exc:
-        print(f"✗ failed to update config: {exc}", file=sys.stderr)
-        sys.exit(2)
+        ab_indent = len(raw_lines[ab_idx]) - len(raw_lines[ab_idx].lstrip())
+        end = ab_idx + 1
+        while end < len(raw_lines):
+            ln = raw_lines[end]
+            if ln.strip() == "":
+                end += 1
+                continue
+            if (len(ln) - len(ln.lstrip())) <= ab_indent:
+                break
+            end += 1
+        block_lines = block.splitlines()
+        base = None
+        for ln in block_lines:
+            if ln.strip():
+                base = len(ln) - len(ln.lstrip())
+                break
+        reindented = []
+        for ln in block_lines:
+            if not ln.strip():
+                reindented.append("")
+            else:
+                rel = (len(ln) - len(ln.lstrip())) - base
+                reindented.append(" " * max(0, ab_indent + rel) + ln.lstrip())
+        raw_lines[ab_idx:end] = reindented
+    Path(cfg_path).write_text("\n".join(raw_lines) + "\n")
     print("✓ updated providers: aws-builder in config.yaml (model catalog refreshed)")
     sys.exit(0)
 
-# No aws-builder entry yet — insert under existing providers: block or append new one.
-lines = raw.splitlines()
-if any(line.strip() == "providers:" for line in lines):
-    out, i, n, in_prov, done = [], 0, len(lines), False, False
-    while i < n:
-        out.append(lines[i])
-        if (
-            not done
-            and in_prov
-            and (i + 1 == n or (lines[i + 1] and not lines[i + 1].startswith(prefix)))
-        ):
-            out.extend(block.splitlines())
-            done = True
-        if lines[i].strip() == "providers:":
-            in_prov = True
-        elif lines[i] and not lines[i].startswith(prefix) and lines[i].strip() != "providers:":
-            in_prov = False
-        i += 1
-    Path(cfg_path).write_text("\n".join(out) + "\n")
+# No aws-builder entry yet — insert under the existing providers: block, or
+# create one. Handles every provider form (M14): `providers:` with children, an
+# empty `providers:` stub, `providers: {}` / `providers: []` inline, or no
+# providers key at all. The `block` is already re-indented to `indent` above.
+raw_lines = raw.splitlines()
+prov_idx = None
+for i, ln in enumerate(raw_lines):
+    s = ln.strip()
+    if s == "providers:" or s in ("providers: {}", "providers: []"):
+        prov_idx = i
+        break
+
+if prov_idx is None:
+    raw_lines.extend(["", "providers:"])
+    raw_lines.extend(block.splitlines())
 else:
-    # No providers: block yet — append one with the aws-builder entry.
-    with open(cfg_path, "a") as fh:
-        fh.write("\nproviders:\n" + "\n".join(prefix + ln for ln in block.splitlines()) + "\n")
+    s = raw_lines[prov_idx].strip()
+    if s in ("providers: {}", "providers: []"):
+        raw_lines[prov_idx] = " " * (len(raw_lines[prov_idx]) - len(raw_lines[prov_idx].lstrip())) + "providers:"
+    raw_lines[prov_idx + 1:prov_idx + 1] = block.splitlines()
+Path(cfg_path).write_text("\n".join(raw_lines) + "\n")
 PY
 
 if ! grep -qE '^[[:space:]]*aws-builder:' "$CONFIG"; then
@@ -268,22 +236,81 @@ fi
 # is opt-in via plugins.enabled; without this entry it is silently gated out
 # of both the dashboard sidebar and the agent plugin loader.
 python3 - "$CONFIG" <<'PY'
-import sys, yaml
+import sys
 from pathlib import Path
 
-p = sys.argv[1]
-c = yaml.safe_load(Path(p).read_text()) or {}
-if not isinstance(c.get("plugins"), dict):
-    c["plugins"] = {}
-c["plugins"].setdefault("enabled", [])
-if "builder" not in c["plugins"]["enabled"]:
-    c["plugins"]["enabled"].append("builder")
-    Path(p).write_text(
-        yaml.safe_dump(c, default_flow_style=False, sort_keys=False) + "\n"
-    )
+# Line-based insertion into plugins.enabled so the rest of config.yaml
+# (comments, formatting, unrelated keys) is preserved verbatim. A full
+# yaml.safe_load + safe_dump round-trip would strip every comment in the file.
+p = Path(sys.argv[1])
+text = p.read_text()
+lines = text.splitlines()
+
+
+def _indent(ln):
+    return len(ln) - len(ln.lstrip())
+
+
+def _is_builder_item(s):
+    return s == "builder" or s == "- builder" or (s.startswith("-") and s[1:].strip() == "builder")
+
+
+plugins_idx = None
+for i, ln in enumerate(lines):
+    if ln.strip() == "plugins:" and _indent(ln) == 0:
+        plugins_idx = i
+        break
+
+if plugins_idx is None:
+    lines.append("")
+    lines.append("plugins:")
+    lines.append("  enabled:")
+    lines.append("    - builder")
+    p.write_text("\n".join(lines) + "\n")
     print("✓ added builder to plugins.enabled")
-else:
+    sys.exit(0)
+
+enabled_idx = None
+for i in range(plugins_idx + 1, len(lines)):
+    ln = lines[i]
+    if ln.strip() == "":
+        continue
+    if _indent(ln) == 0:
+        break
+    if ln.strip() == "enabled:" and _indent(ln) > 0:
+        enabled_idx = i
+        break
+
+if enabled_idx is None:
+    lines.insert(plugins_idx + 1, "  enabled:")
+    lines.insert(plugins_idx + 2, "    - builder")
+    p.write_text("\n".join(lines) + "\n")
+    print("✓ added builder to plugins.enabled")
+    sys.exit(0)
+
+enabled_indent = _indent(lines[enabled_idx])
+item_indent = " " * (enabled_indent + 2)
+already = False
+insert_after = enabled_idx
+for i in range(enabled_idx + 1, len(lines)):
+    ln = lines[i]
+    if ln.strip() == "":
+        continue
+    if _indent(ln) <= enabled_indent:
+        break
+    if _is_builder_item(ln.strip()):
+        already = True
+        break
+    insert_after = i
+
+if already:
     print("✓ builder already in plugins.enabled")
+    sys.exit(0)
+
+lines.insert(insert_after + 1, f"{item_indent}- builder")
+p.write_text("\n".join(lines) + "\n")
+print("✓ added builder to plugins.enabled")
+
 PY
 
 echo

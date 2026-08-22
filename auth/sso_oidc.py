@@ -148,13 +148,27 @@ def _flow_path() -> Path:
 
 def _write_secret(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
     # This local auth store is intentionally left as cleartext JSON. The plugin
     # relies on OS-level access control instead: Hermes home is private to the
     # user, and the file is created with 0o600 so only the owner can read it.
-    tmp.write_text(json.dumps(data))
-    os.chmod(tmp, 0o600)
-    tmp.replace(path)
+    # Use a unique mkstemp name (already 0o600 on POSIX) so concurrent writers
+    # (poll thread + get_status, or two processes) cannot race on a shared ".tmp".
+    import tempfile
+
+    fd, tmpname = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmpname, 0o600)
+        os.replace(tmpname, path)
+    finally:
+        if os.path.exists(tmpname):
+            try:
+                os.unlink(tmpname)
+            except OSError:
+                pass
 
 
 def _read_secret(path: Path) -> dict | None:
@@ -233,7 +247,10 @@ def _load_registration() -> dict | None:
     if not data:
         return None
     exp = data.get("client_secret_expires_at")
-    if exp is not None and time.time() >= exp:
+    # AWS SSO-OIDC returns 0 for public clients to mean "never expires".
+    # Treat 0 (and None) as no-expiry; otherwise every call re-registers a new
+    # client and silent token refresh (which needs this registration) dies.
+    if exp not in (None, 0) and time.time() >= exp:
         return None
     return data
 
@@ -261,9 +278,12 @@ def _register() -> dict:
 
 def _save_token(out: dict, reg: dict) -> None:
     expires_at = time.time() + out.get("expiresIn", 0)
+    prev = _load_token() or {}
     data = {
         "access_token": out["accessToken"],
-        "refresh_token": out.get("refreshToken"),
+        # Preserve the prior refresh token when the response doesn't rotate it
+        # (a missing refreshToken must not clobber the only long-lived credential).
+        "refresh_token": out.get("refreshToken") or prev.get("refresh_token"),
         "expires_at": expires_at,
         "token_type": out.get("tokenType"),
         "scopes": reg.get("scopes"),
@@ -305,6 +325,8 @@ def _poll_once(reg: dict, flow: dict) -> str:
             clientSecret=reg["client_secret"],
             deviceCode=flow["device_code"],
         )
+        if _stop.is_set():
+            return "cancelled"
         _save_token(out, reg)
         try:
             _flow_path().unlink()
@@ -347,6 +369,13 @@ def _poll_loop(reg: dict, flow: dict) -> None:
     while time.time() < expires_at:
         if _stop.is_set():
             return
+        # Re-read the persisted interval each pass (M13): get_status() — this
+        # process or another — may have bumped it after a SlowDownException, and
+        # we must not keep polling at the old, too-fast rate. max() keeps it
+        # monotonic (RFC 8628 §3.5: interval only ever increases).
+        persisted = _load_flow()
+        if persisted is not None:
+            interval = max(interval, persisted.get("interval", interval))
         phase = _poll_once(reg, flow)
         if phase == "authenticated":
             return
@@ -386,7 +415,11 @@ def start_login() -> dict:
     ``InvalidGrantException`` (surfaced as a login error in the dashboard).
     Return an already-authenticated marker instead.
     """
-    if _load_token():
+    # A token may exist but be expired (and non-refreshable); only short-circuit
+    # when it is still valid (or was just refreshed) — otherwise fall through and
+    # start a fresh device flow instead of falsely claiming "already_authenticated"
+    # with a dead token (L8).
+    if ensure_valid():
         return {"already_authenticated": True, "phase": "authenticated"}
     reg = _register()
     c = _client()
@@ -422,6 +455,12 @@ def refresh_token() -> bool:
     reg = _load_registration()
     if not tok or not reg or not tok.get("refresh_token"):
         return False
+    from botocore.exceptions import (
+        ClientError,
+        ConnectionError,
+        EndpointConnectionError,
+    )
+
     c = _client()
     for attempt in range(3):
         try:
@@ -433,10 +472,24 @@ def refresh_token() -> bool:
             )
             _save_token(out, reg)
             return True
-        except Exception:
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code == "InvalidGrantException":
+                # Terminal: the refresh token is dead; retrying can't help (L8).
+                logger.warning("refresh token rejected (invalid grant); not retrying")
+                return False
             if attempt < 2:
                 time.sleep(2**attempt)
                 continue
+            logger.exception("token refresh failed: %s", code)
+            return False
+        except (EndpointConnectionError, ConnectionError):
+            if attempt < 2:
+                time.sleep(2**attempt)
+                continue
+            logger.exception("token refresh network failure")
+            return False
+        except Exception:
             logger.exception("token refresh failed")
             return False
     return False
@@ -504,21 +557,27 @@ def get_status() -> dict:
     if flow:
         reg = _load_registration()
         if reg:
-            result = _poll_once(reg, flow)
-            if result == "authenticated":
-                return get_status()  # token now saved; recurse for clean shape
-            if result == "slow_down":
-                # RFC 8628 §3.5: bump interval by >=5s and persist for the
-                # next poll attempt (this process or another).
-                flow["interval"] = flow.get("interval", 1) + 5
-                _save_flow(flow)
-            if result.startswith("error:"):
-                error = result.split(":", 1)[1]
-            phase = (
-                "awaiting_approval"
-                if (result == "pending" or result == "slow_down")
-                else "error"
-            )
+            # If a background poll thread is already driving this flow, don't
+            # double-poll (M13): it would race the thread and cause repeated
+            # SlowDownException. Report the pending phase and let the thread win.
+            if _poll_thread is not None and _poll_thread.is_alive():
+                phase = "awaiting_approval"
+            else:
+                result = _poll_once(reg, flow)
+                if result == "authenticated":
+                    return get_status()  # token now saved; recurse for clean shape
+                if result == "slow_down":
+                    # RFC 8628 §3.5: bump interval by >=5s and persist for the
+                    # next poll attempt (this process or another).
+                    flow["interval"] = flow.get("interval", 1) + 5
+                    _save_flow(flow)
+                if result.startswith("error:"):
+                    error = result.split(":", 1)[1]
+                phase = (
+                    "awaiting_approval"
+                    if (result == "pending" or result == "slow_down")
+                    else "error"
+                )
         else:
             phase = "error"
             error = "no_registration"

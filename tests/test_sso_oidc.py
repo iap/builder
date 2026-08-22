@@ -240,3 +240,142 @@ def test_start_login_already_authenticated(tmp_path, monkeypatch):
     )
     result = s.start_login()
     assert result.get("already_authenticated") is True
+
+
+def test_poll_loop_rereads_persisted_interval(tmp_path, monkeypatch):
+    """M13: _poll_loop must re-read the persisted interval each pass, so a
+    slow_down bump from get_status() (same or another process) is honoured."""
+    import time as _time
+
+    s, _ = _setup(tmp_path, monkeypatch)
+    flow = {
+        "device_code": "dc",
+        "interval": 1,
+        "started_at": _time.time(),
+        "expires_in": 600,
+    }
+    reg = {"client_id": "cid", "client_secret": "csecret", "scopes": []}
+    s._save_flow(flow)
+
+    # Simulate a slow_down bump made by another path: raise the persisted interval.
+    flow["interval"] = 42
+    s._save_flow(flow)
+
+    sleeps = []
+
+    def fake_sleep(sec):
+        sleeps.append(sec)
+        s._stop.set()  # break the loop after one iteration
+
+    monkeypatch.setattr(s.time, "sleep", fake_sleep)
+    monkeypatch.setattr(s, "_poll_once", lambda r, f: "pending")
+
+    s._poll_loop(reg, flow)
+
+    # Honoured the re-read interval (42), not the stale local 1.
+    assert sleeps == [42]
+
+
+def test_get_status_skips_poll_when_thread_alive(tmp_path, monkeypatch):
+    """M13: get_status() must not double-poll when a background thread is already
+    driving the flow."""
+    import time as _time
+
+    s, _ = _setup(tmp_path, monkeypatch)
+    s._write_secret(
+        s._reg_path(),
+        {
+            "client_id": "cid",
+            "client_secret": "csecret",
+            "client_secret_expires_at": 9_999_999_999,
+            "scopes": [],
+        },
+    )
+    s._save_flow(
+        {
+            "device_code": "dc",
+            "user_code": "UC",
+            "verification_uri_complete": "https://x",
+            "expires_in": 600,
+            "interval": 1,
+            "started_at": _time.time(),
+            "phase": "awaiting_approval",
+        }
+    )
+
+    # A "live" poll thread exists.
+    s._poll_thread = types.SimpleNamespace(is_alive=lambda: True)
+
+    poll_calls = []
+
+    def fake_poll_once(reg, flow):
+        poll_calls.append(1)
+        return "pending"
+
+    monkeypatch.setattr(s, "_poll_once", fake_poll_once)
+
+    st = s.get_status()
+
+    assert poll_calls == []  # no manual double-poll
+    assert st["phase"] == "awaiting_approval"
+
+
+def test_start_login_starts_flow_when_token_expired(tmp_path, monkeypatch):
+    """L8: an expired, non-refreshable token must not short-circuit start_login."""
+    import time as _time
+
+    s, _ = _setup(tmp_path, monkeypatch)
+    s._write_secret(
+        s._token_path(),
+        {
+            "access_token": "expired-tok",
+            "expires_at": _time.time() - 60,  # expired; no refresh_token
+            "token_type": "Bearer",
+            "scopes": [],
+        },
+    )
+    monkeypatch.setattr(s, "_start_poll_thread", lambda reg, flow: None)
+
+    result = s.start_login()
+
+    assert "already_authenticated" not in result
+    assert result.get("user_code") == "UC-1234"
+    assert result.get("verification_uri") == "https://example.com"
+
+
+def test_refresh_token_does_not_retry_invalid_grant(tmp_path, monkeypatch):
+    """L8: a terminal InvalidGrantException returns False immediately (no 3x retry)."""
+    s, be = _setup(tmp_path, monkeypatch)
+    s._write_secret(
+        s._token_path(),
+        {
+            "access_token": "expired-tok",
+            "refresh_token": "dead-rtok",
+            "expires_at": 1.0,
+            "token_type": "Bearer",
+            "scopes": [],
+        },
+    )
+    s._write_secret(
+        s._reg_path(),
+        {
+            "client_id": "cid",
+            "client_secret": "csecret",
+            "client_secret_expires_at": 9_999_999_999,
+            "scopes": [],
+        },
+    )
+
+    calls = {"n": 0}
+
+    class _InvalidGrantClient:
+        def create_token(self, **kw):
+            calls["n"] += 1
+            raise be.ClientError("InvalidGrantException")
+
+    s._cached_client = _InvalidGrantClient()
+
+    result = s.refresh_token()
+
+    assert result is False
+    assert calls["n"] == 1  # terminal error: no retry

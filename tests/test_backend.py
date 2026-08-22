@@ -9,7 +9,9 @@ Builder ID session:
 
 import importlib.util
 import json
+import struct
 import sys
+import zlib
 from pathlib import Path
 
 import pytest
@@ -32,6 +34,27 @@ class _FakeResp:
 
     def iter_content(self, chunk_size=1024):
         yield from self._chunks
+
+
+def _make_eventstream_frame(event_type, payload_bytes, content_type="application/json"):
+    """Build one valid AWS event-stream frame with correct prelude + message CRCs."""
+    headers = [
+        (":event-type", event_type),
+        (":content-type", content_type),
+        (":message-type", "event"),
+    ]
+    hdr = b""
+    for name, value in headers:
+        nb = name.encode()
+        vb = value.encode()
+        hdr += bytes([len(nb)]) + nb + b"\x07" + struct.pack(">H", len(vb)) + vb
+    prelude = struct.pack(
+        ">II", 4 + 4 + 4 + len(hdr) + len(payload_bytes) + 4, len(hdr)
+    )
+    prelude_crc = struct.pack(">I", zlib.crc32(prelude) & 0xFFFFFFFF)
+    body = prelude + prelude_crc + hdr + payload_bytes
+    message_crc = struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+    return body + message_crc
 
 
 def test_extract_answer_single_event():
@@ -59,6 +82,75 @@ def test_extract_answer_event_stream_framed():
         b'{"content":"CHATDIRECT_OK","modelId":"auto"}'
     )
     assert backend._extract_answer(_FakeResp([framed])) == "CHATDIRECT_OK"
+
+
+def test_extract_answer_valid_eventstream_frames():
+    # A real, CRC-valid event-stream is parsed via the frame reader (M4).
+    f1 = _make_eventstream_frame(
+        "initial-response", b"{}", content_type="application/x-amz-json-1.0"
+    )
+    f2 = _make_eventstream_frame(
+        "assistantResponseEvent", b'{"content":"CHATDIRECT_OK","modelId":"auto"}'
+    )
+    assert backend._extract_answer(_FakeResp([f1 + f2])) == "CHATDIRECT_OK"
+
+
+def test_extract_answer_eventstream_multi_content():
+    # Multiple assistantResponseEvent frames concatenate their content.
+    f1 = _make_eventstream_frame(
+        "assistantResponseEvent", b'{"content":"foo ","modelId":"auto"}'
+    )
+    f2 = _make_eventstream_frame(
+        "assistantResponseEvent", b'{"content":"bar","modelId":"auto"}'
+    )
+    assert backend._extract_answer(_FakeResp([f1 + f2])) == "foo bar"
+
+
+def test_extract_answer_eventstream_split_across_chunks():
+    # A valid frame split across iter_content chunks is still parsed.
+    frame = _make_eventstream_frame(
+        "assistantResponseEvent", b'{"content":"split","modelId":"auto"}'
+    )
+    mid = len(frame) // 2
+    assert backend._extract_answer(_FakeResp([frame[:mid], frame[mid:]])) == "split"
+
+
+def test_extract_answer_eventstream_error_event():
+    # A framed errorEvent surfaces as (Q error: ...), not (no response).
+    frame = _make_eventstream_frame(
+        "errorEvent", b'{"__type":"ThrottlingException","message":"x"}'
+    )
+    assert (
+        backend._extract_answer(_FakeResp([frame])) == "(Q error: ThrottlingException)"
+    )
+
+
+def test_extract_answer_eventstream_conversation_and_tool_ids():
+    # conversationId and toolUseId are extracted from framed events.
+    f_assist = _make_eventstream_frame(
+        "assistantResponseEvent",
+        b'{"content":"hi","modelId":"auto","conversationId":"conv-1"}',
+    )
+    f_tool = _make_eventstream_frame(
+        "toolUseEvent", b'{"toolUseId":"tu-1","name":"fs_write","input":{}}'
+    )
+    answer, cid, tool_use_id = backend._extract_answer_with_conversation_id(
+        _FakeResp([f_assist + f_tool])
+    )
+    assert answer == "hi"
+    assert cid == "conv-1"
+    assert tool_use_id == "tu-1"
+
+
+def test_extract_answer_eventstream_bad_crc_falls_back():
+    # A frame with a corrupt message CRC falls back to the lenient text path.
+    frame = bytearray(
+        _make_eventstream_frame(
+            "assistantResponseEvent", b'{"content":"still-works","modelId":"auto"}'
+        )
+    )
+    frame[-1] ^= 0xFF  # corrupt the trailing message CRC
+    assert backend._extract_answer(_FakeResp([bytes(frame)])) == "still-works"
 
 
 def test_extract_answer_split_across_chunks():
@@ -301,6 +393,63 @@ def test_load_tags_empty_override_falls_back_to_static(monkeypatch):
     assert backend.load_tags() == backend.STATIC_TAGS
 
 
+# --- L10: _resolve_model_id is case-insensitive ---
+
+
+def test_resolve_model_id_case_insensitive(monkeypatch):
+    monkeypatch.setattr(
+        backend, "list_models", lambda: ["claude-sonnet-4.5", "amazon-q"]
+    )
+    assert backend._resolve_model_id("Claude-Sonnet-4.5") == "claude-sonnet-4.5"
+    assert backend._resolve_model_id("AMAZON-Q") == "amazon-q"
+    assert backend._resolve_model_id("AUTO") == "auto"
+    # exact matches still pass through unchanged
+    assert backend._resolve_model_id("claude-sonnet-4.5") == "claude-sonnet-4.5"
+    # unknown names still coerce to "auto"
+    assert backend._resolve_model_id("gpt-4-turbo") == "auto"
+
+
+# --- L2: catalog reloads when plugin.yaml mtime changes ---
+
+
+def test_list_models_reloads_on_mtime_change(monkeypatch):
+    calls = {"n": 0}
+
+    def _fake_override():
+        calls["n"] += 1
+        return [f"v{calls['n']}"]
+
+    monkeypatch.setattr(backend, "_MODEL_OVERRIDE", None)
+    monkeypatch.setattr(backend, "_MODEL_OVERRIDE_MTIME", None)
+    monkeypatch.setattr(backend, "_load_model_override", _fake_override)
+
+    mtimes = iter([1.0, 2.0])
+    monkeypatch.setattr(backend, "_plugin_yaml_mtime", lambda: next(mtimes))
+
+    assert backend.list_models() == ["v1"]
+    assert backend.list_models() == ["v2"]  # mtime changed -> reloaded
+    assert calls["n"] == 2
+
+
+def test_load_tags_reloads_on_mtime_change(monkeypatch):
+    calls = {"n": 0}
+
+    def _fake_override():
+        calls["n"] += 1
+        return [f"tag{calls['n']}"]
+
+    monkeypatch.setattr(backend, "_TAG_OVERRIDE", None)
+    monkeypatch.setattr(backend, "_TAG_OVERRIDE_MTIME", None)
+    monkeypatch.setattr(backend, "_load_tag_override", _fake_override)
+
+    mtimes = iter([1.0, 2.0])
+    monkeypatch.setattr(backend, "_plugin_yaml_mtime", lambda: next(mtimes))
+
+    assert backend.load_tags() == ["tag1"]
+    assert backend.load_tags() == ["tag2"]
+    assert calls["n"] == 2
+
+
 # --- chat(): refresh-then-retry is bounded (no infinite recursion) ---
 
 
@@ -325,6 +474,34 @@ def test_chat_bounded_refresh_retry(monkeypatch):
     monkeypatch.setattr(sso_oidc, "refresh_token", lambda: True)
     with pytest.raises(RuntimeError, match="even after a silent refresh"):
         backend.chat("hi", model="claude-sonnet-4")
+
+
+def test_chat_refreshes_on_any_401(monkeypatch):
+    """A 401 WITHOUT the literal 'invalid' substring still triggers one silent
+    refresh (M3: the old gate missed other auth-failure wording)."""
+    calls = {"refresh": 0}
+
+    class _FailResp:
+        status_code = 401
+
+        @property
+        def text(self):
+            return '{"__type":"UnauthorizedException","message":"token expired"}'
+
+        def iter_content(self, chunk_size=1024):
+            return iter([])
+
+    def _refresh():
+        calls["refresh"] += 1
+        return True
+
+    monkeypatch.setattr(backend, "get_token", lambda: {"access_token": "***"})
+    monkeypatch.setattr(backend.requests, "post", lambda *a, **k: _FailResp())
+    monkeypatch.setattr(sso_oidc, "refresh_token", _refresh)
+    with pytest.raises(RuntimeError, match="even after a silent refresh"):
+        backend.chat("hi", model="claude-sonnet-4")
+    # The refresh was attempted (not skipped by the old 'invalid' substring gate).
+    assert calls["refresh"] == 1
 
 
 def test_chat_sends_model_id(monkeypatch):
@@ -662,3 +839,93 @@ def test_parse_tool_calls_xml_takes_precedence_over_json():
     calls = _parse_tool_calls(answer)
     assert len(calls) == 1
     assert calls[0]["name"] == "tool_xml"
+
+
+def test_parse_tool_calls_xml_cap_at_20():
+    """The XML loop is capped at 20 too (M7), not just the JSON fallback."""
+    from adapter import _parse_tool_calls
+
+    open_tag = chr(0x3C) + "tool_call" + chr(0x3E)
+    close_tag = chr(0x3C) + "/tool_call" + chr(0x3E)
+    many = " ".join(
+        f'{open_tag}{{"name": "tool_{i}", "arguments": {{}}}}{close_tag}'
+        for i in range(50)
+    )
+    calls = _parse_tool_calls(many)
+    assert len(calls) == 20
+
+
+def test_strip_tool_calls_strips_json_and_xml():
+    """_strip_tool_calls removes both XML and bare-JSON tool calls (M7 leak)."""
+    from adapter import _strip_tool_calls
+
+    bare = 'before {"name": "fs_write", "arguments": {"path": "a.txt"}} after'
+    stripped = _strip_tool_calls(bare)
+    assert "fs_write" not in stripped
+    assert "before" in stripped
+    assert "after" in stripped
+
+    open_tag = chr(0x3C) + "tool_call" + chr(0x3E)
+    close_tag = chr(0x3C) + "/tool_call" + chr(0x3E)
+    xml = f'hi {open_tag}{{"name": "fs_read", "arguments": {{}}}}{close_tag} bye'
+    stripped = _strip_tool_calls(xml)
+    assert open_tag not in stripped
+    assert "fs_read" not in stripped
+    assert "bye" in stripped
+
+
+def test_adapter_loopback_guards():
+    """Host/Origin guard helpers classify loopback vs public correctly (M6)."""
+    from adapter import _host_from_header, _is_loopback_host, _origin_is_loopback
+
+    assert _is_loopback_host("127.0.0.1")
+    assert _is_loopback_host("localhost")
+    assert _is_loopback_host("::1")
+    assert not _is_loopback_host("evil.com")
+    assert not _is_loopback_host("192.168.1.1")
+
+    assert _host_from_header("127.0.0.1:8088") == "127.0.0.1"
+    assert _host_from_header("localhost:8088") == "localhost"
+    assert _host_from_header("[::1]:8088") == "::1"
+
+    assert _origin_is_loopback("http://127.0.0.1:8088")
+    assert _origin_is_loopback("null")
+    assert not _origin_is_loopback("http://evil.com")
+    assert not _origin_is_loopback("http://192.168.1.1:8080")
+
+
+def test_adapter_post_host_guard_respects_public_optin(monkeypatch):
+    """The M6 Host guard must not 403 a non-loopback Host when the operator has
+    explicitly opted into public binding (Greptile review: the opt-in was
+    otherwise unusable). Origin protection stays on in both modes."""
+    import io
+
+    import adapter
+
+    sent = []
+
+    def fake_send(self, status, data, ctype="application/json"):
+        sent.append(status)
+
+    monkeypatch.setattr(adapter._Handler, "_send", fake_send)
+    monkeypatch.setattr(adapter, "_handle_chat", lambda body: b"data: ok")
+
+    def make_handler():
+        h = object.__new__(adapter._Handler)
+        h.headers = {"Host": "169.254.0.21:8088", "Content-Length": "0"}
+        h.path = "/v1/chat/completions"
+        h.rfile = io.BytesIO(b"")
+        return h
+
+    # Default: non-loopback Host is rejected.
+    monkeypatch.delenv("AWS_BUILD_ADAPTER_ALLOW_PUBLIC", raising=False)
+    h = make_handler()
+    h.do_POST()
+    assert sent == [403]
+
+    # Public opt-in: non-loopback Host is allowed through to the backend.
+    monkeypatch.setenv("AWS_BUILD_ADAPTER_ALLOW_PUBLIC", "1")
+    sent.clear()
+    h = make_handler()
+    h.do_POST()
+    assert sent == [200]
