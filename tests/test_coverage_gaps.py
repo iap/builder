@@ -232,6 +232,35 @@ def test_provider_register_skips_user_managed(monkeypatch):
     assert result is False
 
 
+def test_provider_register_noop_when_already_current(monkeypatch):
+    """register_provider must NOT rewrite config.yaml when the entry already
+    matches what it would write — a no-op load must not strip comments."""
+    import sys
+
+    import _provider
+    from _provider import _declared_models
+
+    models = [str(m) for m in _declared_models()]
+    existing = {
+        "name": "AWS Builder",
+        "transport": "openai_chat",
+        "base_url": "http://localhost:8088/v1",
+        "model": models[0],
+        "discover_models": False,
+        "api_key": "***",
+        "models": {m: {} for m in models},
+    }
+    cfg = {"providers": {_provider.PROVIDER_SLUG: existing}}
+    fake_hermes, fake_cfg, saved = _make_hermes_cli_mock(cfg)
+    monkeypatch.setitem(sys.modules, "hermes_cli", fake_hermes)
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", fake_cfg)
+    result = _provider.register_provider(8088)
+    assert result is True
+    # No write: save_config must not have been called, so the stored config
+    # is unchanged (comment-preserving idempotency).
+    assert saved[0] == cfg
+
+
 def test_provider_unregister_removes_our_entry(monkeypatch):
     import sys
 

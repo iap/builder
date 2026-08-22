@@ -119,6 +119,7 @@ lines = [
     f"    base_url: http://localhost:{port}/v1",
     "    api_key: no-key-required",
     "    model: \"auto\"",
+    "    discover_models: false",
 ]
 lines.extend(model_lines)
 
