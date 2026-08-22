@@ -112,11 +112,35 @@ def _is_our_entry(entry: Any) -> bool:
     return _is_our_base_url(base)
 
 
-def register_provider(port: int) -> bool:
-    """Write a custom provider entry for the builder adapter.
+def _entries_equivalent(a: Any, b: Any) -> bool:
+    """True if two provider entries are semantically equivalent.
 
-    Returns True if an entry was written, False if it was skipped (e.g.
-    config module unavailable). Does not change the user's current model.
+    ``register_provider`` rebuilds an entry in memory and only saves it when
+    it differs from what's already in config, so a no-op plugin load doesn't
+    rewrite config.yaml (which would strip its comments). Treats the ``"***"``
+    redaction sentinel and the canonical ``"no-key-required"`` keyless value
+    as equal (``hermes_cli`` normalises the former to the latter on save).
+    """
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return False
+    a_key = a.get("api_key")
+    b_key = b.get("api_key")
+    if a_key in ("***", "no-key-required") and b_key in ("***", "no-key-required"):
+        a = {**a, "api_key": "no-key-required"}
+        b = {**b, "api_key": "no-key-required"}
+    return a == b
+
+
+def register_provider(port: int) -> bool:
+    """Ensure the builder adapter's provider entry exists in config.yaml.
+
+    Returns True when the entry is present and correct (written now or
+    already current), False when it is skipped (config unavailable, or a
+    user-managed entry at our slug that must not be clobbered).
+
+    The write is a full ``load_config()``/``save_config()`` round-trip that
+    strips comments, so it is skipped when the entry is already equivalent —
+    ``setup.sh`` (line-based, comment-preserving) is the primary writer.
     """
     try:
         from hermes_cli.config import load_config, save_config
@@ -124,12 +148,16 @@ def register_provider(port: int) -> bool:
         logger.warning("builder: cannot import hermes_cli.config (%s)", exc)
         return False
 
-    models = _declared_models() or [
-        "auto",
-        "claude-sonnet-4.5",
-        "claude-sonnet-4",
-        "claude-haiku-4.5",
-    ]
+    models = _declared_models()
+    if not models:
+        # _declared_models() already falls back to backend.STATIC_MODELS via
+        # backend.list_models(); an empty result means backend is unavailable,
+        # so there is nothing to advertise. Avoid a third hardcoded copy of the
+        # catalog here — the single fallback source is STATIC_MODELS.
+        logger.warning(
+            "builder: no models available (backend unavailable); skipping provider registration"
+        )
+        return False
     default_model = models[0]
 
     # Best-effort: never let a malformed/unreadable config abort plugin
@@ -164,6 +192,7 @@ def register_provider(port: int) -> bool:
     # wrote under the old slug so existing config isn't orphaned and
     # unregister_provider still finds it.
     _LEGACY_SLUG = "aws-build"
+    changed = False
     legacy = providers.get(_LEGACY_SLUG)
     if isinstance(legacy, dict) and _is_our_entry(legacy):
         logger.info(
@@ -172,6 +201,7 @@ def register_provider(port: int) -> bool:
         providers.pop(_LEGACY_SLUG, None)
         if not isinstance(providers.get(PROVIDER_SLUG), dict):
             providers[PROVIDER_SLUG] = legacy
+        changed = True
 
     existing = providers.get(PROVIDER_SLUG)
 
@@ -223,8 +253,18 @@ def register_provider(port: int) -> bool:
         }
     )
     entry["models"] = {m: {} for m in models}
-    providers[PROVIDER_SLUG] = entry
 
+    # Idempotency (comment preservation): skip the save when the rebuilt
+    # entry is already equivalent to config AND no legacy migration happened.
+    # load_config()/save_config() is a full YAML round-trip that strips every
+    # comment, so rewriting on every plugin load would destroy user comments.
+    if _entries_equivalent(entry, existing) and not changed:
+        logger.info(
+            "builder: provider '%s' already current; skipping write", PROVIDER_SLUG
+        )
+        return True
+
+    providers[PROVIDER_SLUG] = entry
     try:
         save_config(config)
     except Exception as exc:  # noqa: BLE001
