@@ -94,7 +94,14 @@ blockfile, plugin_yaml, port = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(plugin_yaml) as fh:
     manifest = yaml.safe_load(fh) or {}
 
-models = manifest.get("models") or ["auto"]
+models = manifest.get("models")
+if not isinstance(models, list) or not models:
+    # Keep in sync with backend.STATIC_MODELS. setup.sh cannot import
+    # backend.py (it depends on `requests`), so the fallback catalog is
+    # duplicated here deliberately. A missing, empty, or non-list `models:`
+    # in a custom plugin.yaml is treated as "use the built-in catalog", the
+    # same way backend.list_models() falls back to STATIC_MODELS.
+    models = ["auto", "claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5"]
 # Coerce all model identifiers to str — YAML 1.1 may parse numeric-looking
 # values as int/float (e.g. "4.0" as float). The model catalog must be
 # exact strings; backend.list_models() already does this coercion for the

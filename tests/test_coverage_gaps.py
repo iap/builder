@@ -197,9 +197,16 @@ def _make_hermes_cli_mock(initial_config=None):
     import types
 
     saved = [copy.deepcopy(initial_config or {})]
+    save_calls = []
     fake_cfg = types.ModuleType("hermes_cli.config")
     fake_cfg.load_config = lambda: copy.deepcopy(saved[0])
-    fake_cfg.save_config = lambda c: saved.__setitem__(0, copy.deepcopy(c))
+
+    def _save_config(config):
+        save_calls.append(copy.deepcopy(config))
+        saved[0] = copy.deepcopy(config)
+
+    fake_cfg.save_config = _save_config
+    fake_cfg.save_calls = save_calls
     fake_hermes = types.ModuleType("hermes_cli")
     fake_hermes.config = fake_cfg
     return fake_hermes, fake_cfg, saved
@@ -256,8 +263,39 @@ def test_provider_register_noop_when_already_current(monkeypatch):
     monkeypatch.setitem(sys.modules, "hermes_cli.config", fake_cfg)
     result = _provider.register_provider(8088)
     assert result is True
-    # No write: save_config must not have been called, so the stored config
-    # is unchanged (comment-preserving idempotency).
+    # No write: save_config must not have been called at all, otherwise the
+    # rebuild would round-trip config.yaml and strip its comments. Assert the
+    # call count, not just the stored value (which would be equal either way).
+    assert fake_cfg.save_calls == []
+    assert saved[0] == cfg
+
+
+def test_provider_register_noop_cross_writer_key(monkeypatch):
+    """The redaction sentinel ("***") and the canonical keyless value
+    ("no-key-required") must compare equal, so a config written by setup.sh
+    (api_key: no-key-required) is not rewritten on first plugin load."""
+    import sys
+
+    import _provider
+    from _provider import _declared_models
+
+    models = [str(m) for m in _declared_models()]
+    existing = {
+        "name": "AWS Builder",
+        "transport": "openai_chat",
+        "base_url": "http://localhost:8088/v1",
+        "model": models[0],
+        "discover_models": False,
+        "api_key": "no-key-required",  # as setup.sh writes it
+        "models": {m: {} for m in models},
+    }
+    cfg = {"providers": {_provider.PROVIDER_SLUG: existing}}
+    fake_hermes, fake_cfg, saved = _make_hermes_cli_mock(cfg)
+    monkeypatch.setitem(sys.modules, "hermes_cli", fake_hermes)
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", fake_cfg)
+    result = _provider.register_provider(8088)
+    assert result is True
+    assert fake_cfg.save_calls == []
     assert saved[0] == cfg
 
 
