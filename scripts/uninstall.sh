@@ -198,7 +198,7 @@ def _prune_empty(lines):
                     if nxt.strip() == "":
                         j += 1
                         continue
-                    if _indent(nxt) <= ind:
+                    if _content_indent(nxt) <= ind:
                         break
                     has_child = True
                     break

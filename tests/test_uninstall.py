@@ -284,3 +284,22 @@ def test_uninstall_removes_same_indented_toolset_entries():
     out, removed = _run(cfg)
     _assert(out, removed, absent=["cli:", "- builder"])
     assert removed.count("list:builder") == 2
+
+
+def test_uninstall_keeps_compact_sibling_under_cli():
+    # Greptile round 6: when a compact toolset list holds builder plus a sibling
+    # (cli: - builder, - ask_q), removing builder must not prune cli and
+    # re-parent ask_q under platform_toolsets/known_plugin_toolsets.
+    cfg = (
+        "platform_toolsets:\n"
+        "  cli:\n"
+        "  - builder\n"
+        "  - ask_q\n"
+        "known_plugin_toolsets:\n"
+        "  cli:\n"
+        "  - builder\n"
+        "  - ask_q\n"
+    )
+    out, removed = _run(cfg)
+    _assert(out, removed, absent=["- builder"], present=["cli:", "- ask_q"])
+    assert removed.count("list:builder") == 2
