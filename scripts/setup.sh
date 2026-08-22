@@ -100,6 +100,12 @@ models = manifest.get("models") or ["auto"]
 # exact strings; backend.list_models() already does this coercion for the
 # same reason.
 models = [str(m) for m in models]
+# Derive the default model from the first declared model, matching
+# register_provider() at runtime. A custom catalog without "auto" must still
+# advertise a default that is present in its own models block — hardcoding
+# "auto" would select a model the provider does not actually offer.
+model = models[0]
+model_scalar = yaml.dump(model, default_style='"').splitlines()[0]
 # Use yaml.dump for serialized model identifiers to ensure proper scalar
 # serialization. This handles edge cases like embedded quotes, newlines,
 # and YAML-special characters that would break the config or silently alter
@@ -118,7 +124,7 @@ lines = [
     "    transport: openai_chat",
     f"    base_url: http://localhost:{port}/v1",
     "    api_key: no-key-required",
-    "    model: \"auto\"",
+    f"    model: {model_scalar}",
     "    discover_models: false",
 ]
 lines.extend(model_lines)
