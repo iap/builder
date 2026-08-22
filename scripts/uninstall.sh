@@ -90,9 +90,10 @@ def _strip_inline_comment(s):
 
 
 def _unquote(s):
+    """Strip matching quote delimiters, preserving any inner whitespace."""
     s = s.strip()
     if len(s) >= 2 and s[0] == s[-1] and s[0] in "\"'":
-        return s[1:-1].strip()
+        return s[1:-1]
     return s
 
 

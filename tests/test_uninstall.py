@@ -389,3 +389,36 @@ def test_uninstall_handles_inline_comments():
     )
     assert "list:builder" in removed
     assert "model.provider" in removed
+
+
+def test_uninstall_preserves_quoted_whitespace_scalars():
+    # A quoted scalar with intentional inner whitespace (" builder ") is a
+    # DIFFERENT YAML value from `builder` — uninstall must not remove it.
+    cfg = textwrap.dedent(
+        """\
+        providers:
+          " builder ":
+            type: foo
+        plugins:
+          enabled:
+            - " builder "
+            - other
+        model:
+          provider: " builder "
+          temperature: 0.7
+        """
+    )
+    out, removed = _run(cfg)
+    _assert(
+        out,
+        removed,
+        present=[
+            '" builder ":',
+            "type: foo",
+            '- " builder "',
+            "- other",
+            'provider: " builder "',
+            "temperature: 0.7",
+        ],
+    )
+    assert removed == []
