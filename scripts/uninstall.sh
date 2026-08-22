@@ -76,8 +76,50 @@ def _content_indent(ln):
     return ind
 
 
+def _strip_inline_comment(s):
+    """Drop a trailing YAML `#` comment (whitespace-preceded, outside quotes)."""
+    in_single = in_double = False
+    for i, ch in enumerate(s):
+        if ch == "'" and not in_double:
+            in_single = not in_single
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+        elif ch == "#" and not in_single and not in_double and i > 0 and s[i - 1] in " \t":
+            return s[:i].rstrip()
+    return s.rstrip()
+
+
+def _unquote(s):
+    """Strip matching quote delimiters, preserving any inner whitespace."""
+    s = s.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in "\"'":
+        return s[1:-1]
+    return s
+
+
+def _mapping_key(s):
+    """Unquoted key of a `key: ...` line (comment stripped), else None."""
+    s = _strip_inline_comment(s)
+    if ":" not in s:
+        return None
+    return _unquote(s.split(":", 1)[0].strip())
+
+
+def _provider_value(s):
+    """Unquoted value after `provider:` (comment stripped), else None."""
+    s = _strip_inline_comment(s)
+    if not s.startswith("provider:"):
+        return None
+    return _unquote(s.split(":", 1)[1].strip())
+
+
 def _is_builder_item(s):
-    return s == "builder" or s == "- builder" or (s.startswith("-") and s[1:].strip() == "builder")
+    s = _strip_inline_comment(s).strip()
+    if s == "builder":
+        return True
+    if s.startswith("-"):
+        return _unquote(s[1:].strip()) == "builder"
+    return False
 
 
 removed = []
@@ -109,8 +151,9 @@ def _cleanup(lines):
         path = [k for (_i, k) in stack]
 
         # 1) provider blocks: aws-builder:/builder: directly under `providers`
-        if s in ("aws-builder:", "builder:") and path == ["providers"]:
-            removed.append("providers:" + s.rstrip(":"))
+        provider_slug = _mapping_key(s) if path == ["providers"] else None
+        if provider_slug in ("aws-builder", "builder"):
+            removed.append("providers:" + provider_slug)
             emptied.add(tuple(path))
             ki = ind
             j = i + 1
@@ -142,11 +185,7 @@ def _cleanup(lines):
                 continue
 
         # 3) dangling model.provider pointing at a removed slug
-        if (
-            s in ("provider: aws-builder", "provider: builder",
-                  'provider: "aws-builder"', 'provider: "builder"')
-            and path == ["model"]
-        ):
+        if path == ["model"] and _provider_value(s) in ("aws-builder", "builder"):
             removed.append("model.provider")
             emptied.add(tuple(path))
             i += 1
