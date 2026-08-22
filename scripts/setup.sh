@@ -108,7 +108,7 @@ models = [str(m) for m in models]
 # We include the "models:" wrapper key in the dump so the indentation is
 # handled correctly by yaml itself.
 model_mapping = {m: {} for m in models}
-model_yaml = yaml.dump({"models": model_mapping}, default_flow_style=False)
+model_yaml = yaml.dump({"models": model_mapping}, default_flow_style=False, sort_keys=False)
 model_lines = model_yaml.rstrip("\n").splitlines()
 # Indent each line by 4 spaces so the block sits correctly under aws-builder
 model_lines = ["    " + ln for ln in model_lines]
