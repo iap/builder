@@ -303,3 +303,89 @@ def test_uninstall_keeps_compact_sibling_under_cli():
     out, removed = _run(cfg)
     _assert(out, removed, absent=["- builder"], present=["cli:", "- ask_q"])
     assert removed.count("list:builder") == 2
+
+
+def test_uninstall_handles_quoted_provider_keys_and_values():
+    # Quoted mapping keys (`"aws-builder":`) and single-quoted values
+    # (`provider: 'builder'`) must still be matched and removed.
+    cfg = textwrap.dedent(
+        """\
+        providers:
+          "aws-builder":
+            type: aws-bid
+          'builder':
+            type: foo
+        model:
+          provider: 'builder'
+          temperature: 0.7
+        """
+    )
+    out, removed = _run(cfg)
+    _assert(
+        out,
+        removed,
+        absent=[
+            '"aws-builder":',
+            "'builder':",
+            "type: aws-bid",
+            "type: foo",
+            "provider: 'builder'",
+        ],
+        present=["temperature: 0.7"],
+    )
+    assert removed.count("providers:aws-builder") == 1
+    assert removed.count("providers:builder") == 1
+    assert "model.provider" in removed
+
+
+def test_uninstall_handles_quoted_list_items():
+    # Quoted block-sequence items (`- "builder"`, `- 'builder'`) are still the
+    # plugin's enabled/toolset entry and must be removed, not left dangling.
+    cfg = textwrap.dedent(
+        """\
+        plugins:
+          enabled:
+            - "builder"
+            - 'builder'
+            - other
+        platform_toolsets:
+          cli:
+            - "builder"
+        """
+    )
+    out, removed = _run(cfg)
+    _assert(
+        out,
+        removed,
+        absent=['- "builder"', "- 'builder'", "- builder"],
+        present=["- other"],
+    )
+    assert removed.count("list:builder") == 3
+
+
+def test_uninstall_handles_inline_comments():
+    # Inline `#` comments on the provider key, list item and model.provider
+    # line must not defeat removal (the comment travels with its line).
+    cfg = textwrap.dedent(
+        """\
+        providers:
+          aws-builder:  # my provider
+            type: aws-bid
+        plugins:
+          enabled:
+            - builder  # enabled
+        model:
+          provider: builder  # points at builder
+          temperature: 0.7
+        """
+    )
+    out, removed = _run(cfg)
+    _assert(
+        out,
+        removed,
+        absent=["aws-builder:", "type: aws-bid", "- builder", "provider: builder"],
+        present=["temperature: 0.7"],
+        removed_has="providers:aws-builder",
+    )
+    assert "list:builder" in removed
+    assert "model.provider" in removed
