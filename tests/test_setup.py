@@ -47,3 +47,19 @@ def test_setup_default_model_keeps_auto_when_declared(tmp_path, monkeypatch):
     """When `auto` is declared first (the shipped default), model stays auto."""
     out = _generate("models:\n  - auto\n  - claude-sonnet-4.5\n", tmp_path, monkeypatch)
     assert 'model: "auto"' in out
+
+
+def test_setup_models_fallback_matches_static_models(tmp_path, monkeypatch):
+    """A manifest without `models:` must fall back to the full built-in
+    catalog (matching backend.STATIC_MODELS), not a single `auto`."""
+    out = _generate("name: AWS Builder\n", tmp_path, monkeypatch)
+    assert "claude-sonnet-4.5" in out
+    assert "claude-haiku-4.5" in out
+
+
+def test_setup_models_scalar_is_not_iterated(tmp_path, monkeypatch):
+    """A scalar `models: auto` must not be iterated character-by-character
+    (which would produce `model: "a"`); it falls back to the built-in catalog."""
+    out = _generate("models: auto\n", tmp_path, monkeypatch)
+    assert 'model: "auto"' in out
+    assert 'model: "a"' not in out
