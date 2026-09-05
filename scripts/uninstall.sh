@@ -122,24 +122,43 @@ def _is_builder_item(s):
     return False
 
 
-def _block_base_url_lines(blines):
-    """Unquoted base_url scalar from a provider block's body lines, else None."""
+def _block_scalars(blines):
+    """Top-level scalar ``key: value`` pairs of a provider block body.
+
+    The body starts one level under the slug (name:, base_url:, …) and may
+    contain nested mappings (models:); only scalar fields at the body's own
+    first-content indent with a non-empty value are returned, so nested
+    model keys never pollute the comparison."""
+    scalars = {}
+    field_ind = None
     for ln in blines:
-        if _mapping_key(ln) == "base_url":
-            s = _strip_inline_comment(ln)
-            return _unquote(s.split(":", 1)[1].strip())
-    return None
+        s = ln.strip()
+        if not s or s.startswith("#"):
+            continue
+        ind = _indent(ln)
+        if field_ind is None:
+            field_ind = ind
+        if ind != field_ind:
+            continue
+        stripped = _strip_inline_comment(s)
+        if ":" not in stripped:
+            continue
+        key = _unquote(stripped.split(":", 1)[0].strip())
+        value = _unquote(stripped.split(":", 1)[1].strip())
+        if key and value:
+            scalars[key] = value
+    return scalars
 
 
-def _provider_block_base_urls(lines):
-    """Map builder provider slug -> base_url (or None) for blocks directly
-    under the top-level ``providers:`` key.
+def _provider_block_scalars(lines):
+    """Map builder provider slug -> scalar fields, for blocks directly under
+    the top-level ``providers:`` key.
 
     Cheap pre-scan so _cleanup can classify ownership before deciding
     removals: ``model.provider`` may appear before or after the provider
     block in the file, so both decisions must use the same verdict.
     """
-    slugs = {}
+    scalars_by_slug = {}
     n = len(lines)
     prov_idx = prov_ind = None
     for idx, ln in enumerate(lines):
@@ -148,7 +167,7 @@ def _provider_block_base_urls(lines):
             prov_idx, prov_ind = idx, _indent(ln)
             break
     if prov_idx is None:
-        return slugs
+        return scalars_by_slug
     child_ind = None
     cur = None  # (slug, body lines)
     blocks = []
@@ -175,15 +194,61 @@ def _provider_block_base_urls(lines):
         blocks.append(cur)
     for slug, body in blocks:
         if slug in ("aws-builder", "builder"):
-            slugs[slug] = _block_base_url_lines(body)
-    return slugs
+            scalars_by_slug[slug] = _block_scalars(body)
+    return scalars_by_slug
+
+
+def _stamped_entry():
+    """The provider entry (dict) the plugin last wrote, from
+    <HERMES_HOME>/builder/adapter_stamp.json, else None."""
+    import json
+    import os
+    from pathlib import Path
+
+    home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+    try:
+        data = json.loads(
+            (Path(home) / "builder" / "adapter_stamp.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _matches_stamp_scalars(stamped, scalars):
+    """True if the block's scalars still carry everything the stamp recorded.
+
+    Mirrors _provider._matches_stamp: only string-valued stamp fields gate
+    ownership (models/discover_models are rewritten on every register);
+    api_key treats the "***" redaction sentinel and the canonical
+    "no-key-required" as equal. A user who repurposes the slug for their own
+    service changes at least one stamped field and no longer matches."""
+    if not isinstance(stamped, dict) or not stamped.get("base_url"):
+        return False
+    if not scalars.get("base_url"):
+        return False
+    for key, value in stamped.items():
+        if not isinstance(value, str):
+            continue
+        ours = scalars.get(key)
+        if key == "api_key":
+            if value in ("***", "no-key-required") and ours in (
+                "***",
+                "no-key-required",
+            ):
+                continue
+        if ours != value:
+            return False
+    return True
 
 
 def _owned_ports():
-    """Ports the plugin is known to have used: the AWS_BUILD_ADAPTER_PORT env
-    override (this run), the persisted stamp setup.sh/register_provider wrote
-    (<HERMES_HOME>/builder/adapter_port — survives an env var that is no
-    longer set), and the 8088 default."""
+    """Ports the adapter binds as of this run: the AWS_BUILD_ADAPTER_PORT env
+    override and the 8088 default. Custom ports from past runs are covered
+    by the entry stamp (see _is_owned_provider), never by a bare port
+    match — a port must not outlive the entry it was recorded for."""
     import os
 
     ports = {8088}
@@ -195,27 +260,14 @@ def _owned_ports():
             env_val = None
         if env_val and env_val > 0:
             ports.add(env_val)
-    from pathlib import Path
-
-    home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
-    try:
-        stamped = int(
-            (Path(home) / "builder" / "adapter_port")
-            .read_text(encoding="utf-8")
-            .strip()
-        )
-    except (OSError, ValueError):
-        stamped = None
-    if stamped and stamped > 0:
-        ports.add(stamped)
     return ports
 
 
 def _is_our_base_url(value):
-    """True if base_url points at this plugin's loopback adapter.
+    """True if base_url points at our loopback adapter as bound right now.
 
     Mirrors _provider._is_our_base_url: loopback host (127.0.0.1/localhost)
-    with an explicitly stated port we are known to have used, so a foreign
+    with the env/default adapter port stated explicitly, so a foreign
     endpoint that merely shares the slug is never treated as ours."""
     if not value:
         return False
@@ -230,18 +282,23 @@ def _is_our_base_url(value):
     return host in ("127.0.0.1", "localhost") and url_port in _owned_ports()
 
 
-def _is_owned_provider(slug, base_url):
+def _is_owned_provider(slug, base_url, scalars):
     """True if a providers.<slug> block is the plugin's own and may be removed.
 
-    A PRESENT base_url that is not our loopback adapter is a user-managed
-    endpoint — kept. A MISSING base_url is a dangling builder leftover
-    (nothing for Hermes to route to) — removed, matching this script's
-    historical contract. (Runtime unregister_provider() is stricter — it
-    requires the matching base_url — because it runs automatically rather
-    than at an operator's explicit request with a fresh backup on disk.)
+    Two-tier, mirroring _provider._is_our_entry: (1) the block still carries
+    everything recorded in the entry stamp (adapter_stamp.json, written by
+    setup.sh/register_provider only after a successful write), which keeps
+    custom-port installs uninstallable-without-env-vars while rejecting a
+    later user-repurposed entry at the same port; or (2) base_url is loopback
+    on the env/default adapter port (entries written before stamps existed).
+    A PRESENT base_url matching neither is user-managed — kept. A MISSING
+    base_url is a dangling builder leftover (nothing for Hermes to route to)
+    — removed, matching this script's historical contract.
     """
     if slug not in ("aws-builder", "builder"):
         return False
+    if _matches_stamp_scalars(_stamped_entry(), scalars):
+        return True
     return base_url is None or _is_our_base_url(base_url)
 
 
@@ -258,13 +315,14 @@ def _cleanup(lines):
     stack = []  # [(indent, key), ...] — ancestor mapping keys of the current line
     i = 0
     n = len(lines)
-    # Ownership pre-scan: provider blocks at our slug whose base_url is a
-    # foreign endpoint are user-managed and must survive both the block
-    # removal (1) and the dangling model.provider cleanup (3).
+    # Ownership pre-scan: provider blocks at our slug that no longer carry
+    # what the plugin last wrote (entry stamp) and are not on the env/default
+    # adapter port are user-managed, and must survive both the block removal
+    # (1) and the dangling model.provider cleanup (3).
     foreign_slugs = {
         slug
-        for slug, base in _provider_block_base_urls(lines).items()
-        if not _is_owned_provider(slug, base)
+        for slug, scalars in _provider_block_scalars(lines).items()
+        if not _is_owned_provider(slug, scalars.get("base_url"), scalars)
     }
     while i < n:
         ln = lines[i]
@@ -417,6 +475,19 @@ tmp = Path(cfg_path).with_name(Path(cfg_path).name + ".tmp")
 tmp.write_text("\n".join(lines) + "\n")
 os.replace(tmp, cfg_path)
 print("✓ removed builder entries:", ", ".join(removed))
+
+# The stamp described the entry that is now gone — drop it so a later
+# user-owned entry at the same endpoint can't inherit our ownership.
+try:
+    stamp = (
+        Path(os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes"))
+        / "builder"
+        / "adapter_stamp.json"
+    )
+    if stamp.exists():
+        stamp.unlink()
+except OSError:
+    pass
 
 PY
 

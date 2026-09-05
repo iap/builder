@@ -10,6 +10,7 @@ Motivated by two Greptile review rounds:
     be preserved — they are user-owned lists that merely share the name.
 """
 
+import json
 import re
 import textwrap
 from pathlib import Path
@@ -507,19 +508,30 @@ def test_uninstall_keeps_loopback_entry_on_a_different_port(monkeypatch):
 
 def test_uninstall_removes_entry_at_persisted_custom_port(monkeypatch, tmp_path):
     """Greptile P1 regression: setup ran with AWS_BUILD_ADAPTER_PORT=9999 and
-    persisted the port; uninstall WITHOUT the env var must still recognise the
-    plugin-created entry as ours and remove it."""
+    stamped the entry it wrote; uninstall WITHOUT the env var must still
+    recognise the plugin-created entry as ours and remove it."""
     monkeypatch.delenv("AWS_BUILD_ADAPTER_PORT", raising=False)
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     (tmp_path / "builder").mkdir()
-    (tmp_path / "builder" / "adapter_port").write_text("9999\n", encoding="utf-8")
+    stamp = {
+        "name": "AWS Builder",
+        "transport": "openai_chat",
+        "base_url": "http://localhost:9999/v1",
+        "api_key": "no-key-required",
+        "model": "auto",
+    }
+    (tmp_path / "builder" / "adapter_stamp.json").write_text(
+        json.dumps(stamp), encoding="utf-8"
+    )
     cfg = textwrap.dedent(
         """\
         providers:
           aws-builder:
             name: AWS Builder
+            transport: openai_chat
             base_url: http://localhost:9999/v1
             api_key: no-key-required
+            model: auto
         """
     )
     out, removed = _run(cfg)
@@ -529,6 +541,44 @@ def test_uninstall_removes_entry_at_persisted_custom_port(monkeypatch, tmp_path)
         absent=["aws-builder:", "base_url:"],
         removed_has="providers:aws-builder",
     )
+
+
+def test_uninstall_keeps_user_repurposed_entry_at_stamped_port(monkeypatch, tmp_path):
+    """Greptile P1 regression: a stamp from a past custom-port install must
+    not make a LATER user-owned entry at the same port look like ours. The
+    user rewrote name/api_key — the block no longer matches the stamp and
+    must be kept, along with the model.provider reference to it."""
+    monkeypatch.delenv("AWS_BUILD_ADAPTER_PORT", raising=False)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    (tmp_path / "builder").mkdir()
+    stamp = {
+        "name": "AWS Builder",
+        "transport": "openai_chat",
+        "base_url": "http://localhost:9999/v1",
+        "api_key": "no-key-required",
+        "model": "auto",
+    }
+    (tmp_path / "builder" / "adapter_stamp.json").write_text(
+        json.dumps(stamp), encoding="utf-8"
+    )
+    cfg = textwrap.dedent(
+        """\
+        providers:
+          aws-builder:
+            name: My Own Service
+            base_url: http://localhost:9999/v1
+            api_key: sk-user
+        model:
+          provider: aws-builder
+        """
+    )
+    out, removed = _run(cfg)
+    _assert(
+        out,
+        removed,
+        present=["My Own Service", "sk-user", "provider: aws-builder"],
+    )
+    assert removed == []
 
 
 def test_uninstall_keeps_foreign_port_without_stamp(monkeypatch, tmp_path):

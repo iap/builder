@@ -76,11 +76,14 @@ def test_provider_register_skips_when_import_fails():
     assert result is False
 
 
-def test_provider_register_stamps_adapter_port(monkeypatch, tmp_path):
-    """register_provider must persist the adapter port so a later uninstall
-    recognises the entry even when AWS_BUILD_ADAPTER_PORT is no longer set
-    (Greptile P1)."""
-    from _provider import _is_our_base_url, register_provider
+def test_provider_register_stamps_provider_entry(monkeypatch, tmp_path):
+    """register_provider must persist the entry it wrote (after the save) so
+    uninstall/registration recognise it later even when
+    AWS_BUILD_ADAPTER_PORT is no longer set (Greptile P1). The stamp is the
+    full entry: a user-repurposed entry at the same port must NOT match."""
+    import json as _json
+
+    from _provider import _is_our_entry, register_provider
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     monkeypatch.delenv("AWS_BUILD_ADAPTER_PORT", raising=False)
@@ -92,11 +95,35 @@ def test_provider_register_stamps_adapter_port(monkeypatch, tmp_path):
     ):
         assert register_provider(9999) is True
 
-    stamp = tmp_path / "builder" / "adapter_port"
-    assert stamp.read_text(encoding="utf-8").strip() == "9999"
-    # The stamped port is now ours; an unbacked loopback port stays foreign.
-    assert _is_our_base_url("http://localhost:9999/v1")
-    assert not _is_our_base_url("http://localhost:7777/v1")
+    stamp = tmp_path / "builder" / "adapter_stamp.json"
+    stamped = _json.loads(stamp.read_text(encoding="utf-8"))
+    assert stamped["base_url"] == "http://localhost:9999/v1"
+    # The written entry matches the stamp...
+    assert _is_our_entry(dict(stamped))
+    # ...but a user-repurposed entry at the same port (changed name/api_key)
+    # no longer does — it must never be adopted or removed (Greptile P1).
+    repurposed = dict(stamped, name="My Own Service", api_key="sk-user")
+    assert not _is_our_entry(repurposed)
+    assert not _is_our_entry({"base_url": "http://localhost:7777/v1"})
+
+
+def test_provider_register_failure_does_not_stamp(monkeypatch, tmp_path):
+    """A failed save must not leave a stamp: without a live entry in config,
+    a stamp would make a later user-owned entry at that endpoint look like
+    ours (Greptile P1 'stamp after saving')."""
+    from _provider import register_provider
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.delenv("AWS_BUILD_ADAPTER_PORT", raising=False)
+    mock_module = MagicMock(
+        load_config=MagicMock(return_value={}),
+        save_config=MagicMock(side_effect=OSError("disk full")),
+    )
+    with patch.dict(
+        "sys.modules", {"hermes_cli": mock_module, "hermes_cli.config": mock_module}
+    ):
+        assert register_provider(9999) is False
+    assert not (tmp_path / "builder" / "adapter_stamp.json").exists()
 
 
 def test_provider_unregister_skips_when_import_fails():

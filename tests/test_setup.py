@@ -8,6 +8,7 @@ Motivated by a Greptile review round:
     declare `auto`, selecting a model outside the advertised catalog.
 """
 
+import json
 import os
 import re
 import shutil
@@ -129,12 +130,16 @@ def test_setup_fails_cleanly_when_no_manifest_exists(tmp_path):
     assert b"plugin.yaml not found" in proc.stderr
 
 
-def test_setup_persists_adapter_port_stamp(tmp_path):
-    """setup.sh records the adapter port under <HERMES_HOME>/builder/ so a
-    later uninstall.sh can recognise the entry without the env var set."""
+def test_setup_persists_provider_entry_stamp(tmp_path):
+    """setup.sh records the provider entry it wrote under
+    <HERMES_HOME>/builder/ so a later uninstall.sh can recognise it without
+    the env var set."""
     _run_setup(tmp_path)
-    stamp = tmp_path / "builder" / "adapter_port"
-    assert stamp.read_text(encoding="utf-8").strip() == "8088"
+    stamp = json.loads(
+        (tmp_path / "builder" / "adapter_stamp.json").read_text(encoding="utf-8")
+    )
+    assert stamp["base_url"] == "http://localhost:8088/v1"
+    assert stamp["name"] == "AWS Builder"
 
 
 def test_setup_then_uninstall_roundtrip_at_custom_port(tmp_path):
@@ -156,8 +161,10 @@ def test_setup_then_uninstall_roundtrip_at_custom_port(tmp_path):
         timeout=60,
         env=setup_env,
     )
-    stamp = home / "builder" / "adapter_port"
-    assert stamp.read_text(encoding="utf-8").strip() == "9999"
+    stamp = json.loads(
+        (home / "builder" / "adapter_stamp.json").read_text(encoding="utf-8")
+    )
+    assert stamp["base_url"] == "http://localhost:9999/v1"
     assert "http://localhost:9999/v1" in (home / "config.yaml").read_text(
         encoding="utf-8"
     )
