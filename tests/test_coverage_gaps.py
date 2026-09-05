@@ -52,6 +52,12 @@ def test_provider_is_our_base_url():
     assert _is_our_base_url("http://127.0.0.1:8088/v1")
     assert not _is_our_base_url("http://example.com:8088/v1")
     assert not _is_our_base_url(123)
+    # The port must be explicit: every writer of our entries (setup.sh,
+    # register_provider) emits http://<loopback>:<port>/v1, so a port-less
+    # loopback URL is a foreign provider on its default port.
+    assert not _is_our_base_url("http://localhost/v1")
+    assert not _is_our_base_url("http://localhost:80880/v1")
+    assert not _is_our_base_url("http://localhost:9999/v1")
 
 
 def test_provider_is_our_entry():

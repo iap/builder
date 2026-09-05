@@ -80,7 +80,11 @@ def _is_our_base_url(base: str) -> bool:
 
     Parses the URL instead of substring matching so a foreign entry like
     ``http://localhost:80880/v1`` (port prefix) or a host that merely embeds
-    ``localhost:8088`` is not misclassified as ours."""
+    ``localhost:8088`` is not misclassified as ours. The port must be stated
+    explicitly: every writer of our entries (setup.sh, register_provider)
+    emits ``http://<loopback>:<port>/v1``, so a port-less loopback URL (e.g.
+    ``http://localhost/v1``) is a foreign provider on its default port and
+    must not be adopted or removed."""
     if not isinstance(base, str):
         return False
     from urllib.parse import urlsplit
@@ -88,8 +92,10 @@ def _is_our_base_url(base: str) -> bool:
     try:
         parts = urlsplit(base)
         host = (parts.hostname or "").lower()
-        port = parts.port or 8088  # default when the URL has no explicit port
+        port = parts.port
     except ValueError:
+        return False
+    if port is None:
         return False
     expected_port = int(_adapter_base_url_marker().lstrip(":"))
     return host in ("127.0.0.1", "localhost") and port == expected_port
