@@ -30,6 +30,11 @@ restart Hermes
 - `plugins.enabled` entry
 - `platform_toolsets.*` / `known_plugin_toolsets.*` entries
 - dangling `model.provider` if it pointed at builder
+
+Provider entries are matched by ownership: a block at our slug is removed only
+when its `base_url` points at the plugin's loopback adapter (or is absent). An
+entry that merely shares the slug but points elsewhere (e.g. your own proxy) is
+left untouched.
 - empty `providers` / `plugins` / toolset stubs
 
 ## Reinstall / migration notes
