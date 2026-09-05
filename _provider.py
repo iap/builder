@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -56,35 +57,68 @@ def _adapter_base_url(port: int) -> str:
     return f"http://localhost:{port}/v1"
 
 
-def _adapter_base_url_marker() -> str:
-    """Loopback host forms that identify OUR adapter's base_url.
+def _adapter_port_stamp_path() -> Any:
+    """Path of the persisted adapter-port stamp, or None if unresolvable.
 
-    Legacy ``setup.sh`` wrote the provider entry with ``127.0.0.1``
-    (e.g. ``http://127.0.0.1:8088/v1``), while current ``register_provider``
-    writes ``localhost`` (``_adapter_base_url``). Both are our loopback
-    adapter, so adoption must recognise either form — otherwise a renamed
-    legacy entry would never be adopted and the stale ``key_env`` (false
-    'No API key' notification) would survive. Returns the port so callers can
-    match on the loopback host + port, host-agnostic.
+    Lives under ``<HERMES_HOME>/builder/`` (the plugin's data dir that survives
+    reinstalls, same reasoning as the token store) — never inside config.yaml,
+    where an extra key would trigger Hermes core's "unknown config keys" warning.
+    """
+    home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+    return Path(home) / "builder" / "adapter_port"
+
+
+def _stamp_adapter_port(port: int) -> None:
+    """Best-effort: persist the adapter port for uninstall.sh.
+
+    setup.sh / register_provider may write ``base_url`` with a custom
+    ``AWS_BUILD_ADAPTER_PORT`` (e.g. :9999). A later uninstall.sh that runs
+    without the env var set must still recognise that entry as ours — so the
+    port is stamped to disk at write time (Greptile P1). Never raises: a
+    failed stamp only degrades uninstall to the env/8088 heuristics.
     """
     try:
-        port = int(os.environ.get("AWS_BUILD_ADAPTER_PORT", "8088"))
-    except (TypeError, ValueError):
-        port = 8088
-    return f":{port}"
+        stamp = _adapter_port_stamp_path()
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.write_text(f"{int(port)}\n", encoding="utf-8")
+    except (OSError, TypeError, ValueError):
+        logger.debug("builder: could not persist adapter port stamp", exc_info=True)
+
+
+def _owned_ports() -> set:
+    """Ports the plugin is known to have used, for ownership matching.
+
+    Union of the ``AWS_BUILD_ADAPTER_PORT`` env override (this process), the
+    persisted stamp (past processes, possibly a different port), and the 8088
+    default. A loopback base_url on any of these belongs to us.
+    """
+    ports = {8088}
+    env_port = os.environ.get("AWS_BUILD_ADAPTER_PORT")
+    if env_port:
+        try:
+            env_val = int(env_port)
+        except ValueError:
+            env_val = None
+        if env_val and env_val > 0:
+            ports.add(env_val)
+    try:
+        stamped = int(_adapter_port_stamp_path().read_text(encoding="utf-8").strip())
+    except (OSError, TypeError, ValueError):
+        stamped = None
+    if stamped and stamped > 0:
+        ports.add(stamped)
+    return ports
 
 
 def _is_our_base_url(base: str) -> bool:
     """True if ``base`` points at our loopback adapter (127.0.0.1 or localhost
-    on the adapter port), regardless of which loopback host string was used.
+    on a port we own), regardless of which loopback host string was used.
 
     Parses the URL instead of substring matching so a foreign entry like
     ``http://localhost:80880/v1`` (port prefix) or a host that merely embeds
     ``localhost:8088`` is not misclassified as ours. The port must be stated
-    explicitly: every writer of our entries (setup.sh, register_provider)
-    emits ``http://<loopback>:<port>/v1``, so a port-less loopback URL (e.g.
-    ``http://localhost/v1``) is a foreign provider on its default port and
-    must not be adopted or removed."""
+    explicitly (every writer of our entries emits it) and must be one we are
+    known to have used — see _owned_ports."""
     if not isinstance(base, str):
         return False
     from urllib.parse import urlsplit
@@ -97,8 +131,7 @@ def _is_our_base_url(base: str) -> bool:
         return False
     if port is None:
         return False
-    expected_port = int(_adapter_base_url_marker().lstrip(":"))
-    return host in ("127.0.0.1", "localhost") and port == expected_port
+    return host in ("127.0.0.1", "localhost") and port in _owned_ports()
 
 
 def _is_our_entry(entry: Any) -> bool:
@@ -228,6 +261,11 @@ def register_provider(port: int) -> bool:
             "builder: providers.%s present and user-managed; leaving it.", PROVIDER_SLUG
         )
         return False
+
+    # We own this entry, so persist the (actual) adapter port for uninstall.sh
+    # before touching config — it must recognise this entry as ours later even
+    # if AWS_BUILD_ADAPTER_PORT is no longer set (Greptile P1).
+    _stamp_adapter_port(port)
 
     # We own this entry (managed, or a legacy plugin entry we adopt), so
     # rebuild the model list from the currently-declared models rather than

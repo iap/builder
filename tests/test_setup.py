@@ -127,3 +127,54 @@ def test_setup_fails_cleanly_when_no_manifest_exists(tmp_path):
     )
     assert proc.returncode == 1
     assert b"plugin.yaml not found" in proc.stderr
+
+
+def test_setup_persists_adapter_port_stamp(tmp_path):
+    """setup.sh records the adapter port under <HERMES_HOME>/builder/ so a
+    later uninstall.sh can recognise the entry without the env var set."""
+    _run_setup(tmp_path)
+    stamp = tmp_path / "builder" / "adapter_port"
+    assert stamp.read_text(encoding="utf-8").strip() == "8088"
+
+
+def test_setup_then_uninstall_roundtrip_at_custom_port(tmp_path):
+    """End-to-end (Greptile P1): setup at a custom port persists it; a later
+    uninstall WITHOUT AWS_BUILD_ADAPTER_PORT still recognises and removes the
+    plugin-created provider entry."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.yaml").write_text("other: value\n", encoding="utf-8")
+    setup_env = {
+        **os.environ,
+        "HERMES_HOME": str(home),
+        "AWS_BUILD_ADAPTER_PORT": "9999",
+    }
+    subprocess.run(
+        ["bash", str(_SCRIPT)],
+        check=True,
+        capture_output=True,
+        timeout=60,
+        env=setup_env,
+    )
+    stamp = home / "builder" / "adapter_port"
+    assert stamp.read_text(encoding="utf-8").strip() == "9999"
+    assert "http://localhost:9999/v1" in (home / "config.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    uninstall_env = {
+        k: v for k, v in os.environ.items() if k != "AWS_BUILD_ADAPTER_PORT"
+    }
+    uninstall_env["HERMES_HOME"] = str(home)
+    uninstall = Path(__file__).resolve().parents[1] / "scripts" / "uninstall.sh"
+    subprocess.run(
+        ["bash", str(uninstall)],
+        check=True,
+        capture_output=True,
+        timeout=60,
+        env=uninstall_env,
+    )
+
+    cfg = (home / "config.yaml").read_text(encoding="utf-8")
+    assert "aws-builder" not in cfg
+    assert "http://localhost:9999/v1" not in cfg

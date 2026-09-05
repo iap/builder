@@ -255,6 +255,16 @@ if ! grep -qE '^[[:space:]]*aws-builder:' "$CONFIG"; then
   exit 1
 fi
 
+# Persist the adapter port so uninstall.sh recognises our provider entry as
+# plugin-owned even when AWS_BUILD_ADAPTER_PORT is no longer set in the
+# environment (setup may have used a custom port, e.g. :9999). Written only
+# after the config update is verified; lives under <HERMES_HOME>/builder/
+# (the plugin's data dir, which survives reinstalls — same reasoning as the
+# token store), never as an extra key in config.yaml.
+PORT_DIR="${HERMES_HOME:-$HOME/.hermes}/builder"
+mkdir -p "$PORT_DIR"
+printf '%s\n' "$PORT" > "$PORT_DIR/adapter_port"
+
 # Ensure builder is in plugins.enabled so the dashboard tab + the plugin
 # loader actually activate it. The builder plugin is kind: standalone, which
 # is opt-in via plugins.enabled; without this entry it is silently gated out

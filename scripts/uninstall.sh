@@ -179,28 +179,55 @@ def _provider_block_base_urls(lines):
     return slugs
 
 
+def _owned_ports():
+    """Ports the plugin is known to have used: the AWS_BUILD_ADAPTER_PORT env
+    override (this run), the persisted stamp setup.sh/register_provider wrote
+    (<HERMES_HOME>/builder/adapter_port — survives an env var that is no
+    longer set), and the 8088 default."""
+    import os
+
+    ports = {8088}
+    env_port = os.environ.get("AWS_BUILD_ADAPTER_PORT")
+    if env_port:
+        try:
+            env_val = int(env_port)
+        except ValueError:
+            env_val = None
+        if env_val and env_val > 0:
+            ports.add(env_val)
+    from pathlib import Path
+
+    home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+    try:
+        stamped = int(
+            (Path(home) / "builder" / "adapter_port")
+            .read_text(encoding="utf-8")
+            .strip()
+        )
+    except (OSError, ValueError):
+        stamped = None
+    if stamped and stamped > 0:
+        ports.add(stamped)
+    return ports
+
+
 def _is_our_base_url(value):
     """True if base_url points at this plugin's loopback adapter.
 
     Mirrors _provider._is_our_base_url: loopback host (127.0.0.1/localhost)
-    with the adapter port stated explicitly, so a foreign endpoint that
-    merely shares the slug is never treated as ours."""
+    with an explicitly stated port we are known to have used, so a foreign
+    endpoint that merely shares the slug is never treated as ours."""
     if not value:
         return False
-    import os
     from urllib.parse import urlsplit
 
-    try:
-        port = int(os.environ.get("AWS_BUILD_ADAPTER_PORT", "8088"))
-    except ValueError:
-        port = 8088
     try:
         parts = urlsplit(value)
         host = (parts.hostname or "").lower()
         url_port = parts.port
     except ValueError:
         return False
-    return host in ("127.0.0.1", "localhost") and url_port == port
+    return host in ("127.0.0.1", "localhost") and url_port in _owned_ports()
 
 
 def _is_owned_provider(slug, base_url):

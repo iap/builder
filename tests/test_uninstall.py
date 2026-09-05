@@ -503,3 +503,46 @@ def test_uninstall_keeps_loopback_entry_on_a_different_port(monkeypatch):
         present=["builder:", "base_url: http://127.0.0.1:9999/v1"],
     )
     assert removed == []
+
+
+def test_uninstall_removes_entry_at_persisted_custom_port(monkeypatch, tmp_path):
+    """Greptile P1 regression: setup ran with AWS_BUILD_ADAPTER_PORT=9999 and
+    persisted the port; uninstall WITHOUT the env var must still recognise the
+    plugin-created entry as ours and remove it."""
+    monkeypatch.delenv("AWS_BUILD_ADAPTER_PORT", raising=False)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    (tmp_path / "builder").mkdir()
+    (tmp_path / "builder" / "adapter_port").write_text("9999\n", encoding="utf-8")
+    cfg = textwrap.dedent(
+        """\
+        providers:
+          aws-builder:
+            name: AWS Builder
+            base_url: http://localhost:9999/v1
+            api_key: no-key-required
+        """
+    )
+    out, removed = _run(cfg)
+    _assert(
+        out,
+        removed,
+        absent=["aws-builder:", "base_url:"],
+        removed_has="providers:aws-builder",
+    )
+
+
+def test_uninstall_keeps_foreign_port_without_stamp(monkeypatch, tmp_path):
+    """No env override and no persisted stamp: a non-8088 loopback entry at
+    our slug is foreign and must be kept."""
+    monkeypatch.delenv("AWS_BUILD_ADAPTER_PORT", raising=False)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    cfg = textwrap.dedent(
+        """\
+        providers:
+          aws-builder:
+            base_url: http://localhost:9999/v1
+        """
+    )
+    out, removed = _run(cfg)
+    _assert(out, removed, present=["base_url: http://localhost:9999/v1"])
+    assert removed == []
