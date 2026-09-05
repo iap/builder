@@ -86,7 +86,17 @@ fi
 # model catalog) instead of hardcoding — setup.sh should not duplicate the
 # model list that also lives in plugin.yaml and backend.list_models().
 BLOCK_FILE="$(mktemp)"
+# Manifest source: prefer the installed copy so the generated block matches
+# what actually runs; fall back to this checkout so setup.sh also works when
+# invoked from a source repo before `hermes plugins install` lands a copy.
 PLUGIN_YAML="${HERMES_HOME:-$HOME/.hermes}/plugins/builder/plugin.yaml"
+if [[ ! -f "$PLUGIN_YAML" ]]; then
+  PLUGIN_YAML="$SRC_ROOT/plugin.yaml"
+fi
+if [[ ! -f "$PLUGIN_YAML" ]]; then
+  echo "✗ plugin.yaml not found (installed plugin or $SRC_ROOT)" >&2
+  exit 1
+fi
 python3 - "$BLOCK_FILE" "$PLUGIN_YAML" "$PORT" <<'PY'
 import sys, yaml
 

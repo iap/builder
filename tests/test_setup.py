@@ -8,9 +8,16 @@ Motivated by a Greptile review round:
     declare `auto`, selecting a model outside the advertised catalog.
 """
 
+import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
+
+pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="bash unavailable")
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "setup.sh"
 _HEREDOC = re.search(
@@ -63,3 +70,60 @@ def test_setup_models_scalar_is_not_iterated(tmp_path, monkeypatch):
     out = _generate("models: auto\n", tmp_path, monkeypatch)
     assert 'model: "auto"' in out
     assert 'model: "a"' not in out
+
+
+def _run_setup(home, plugin_yaml=None):
+    """Run the real setup.sh against a temp HERMES_HOME holding a config.yaml.
+
+    plugin_yaml: optional manifest text installed at
+    <HERMES_HOME>/plugins/builder/plugin.yaml to test preference order."""
+    (home / "config.yaml").write_text("other: value\n", encoding="utf-8")
+    if plugin_yaml is not None:
+        installed = home / "plugins" / "builder"
+        installed.mkdir(parents=True)
+        (installed / "plugin.yaml").write_text(plugin_yaml, encoding="utf-8")
+    subprocess.run(
+        ["bash", str(_SCRIPT)],
+        check=True,
+        capture_output=True,
+        timeout=60,
+        env={**os.environ, "HERMES_HOME": str(home), "AWS_BUILD_ADAPTER_PORT": "8088"},
+    )
+    return (home / "config.yaml").read_text(encoding="utf-8")
+
+
+def test_setup_runs_from_source_checkout_without_installed_plugin(tmp_path):
+    """No installed plugin copy: setup.sh must fall back to the source
+    repo's plugin.yaml and still produce a complete provider block."""
+    out = _run_setup(tmp_path)
+    assert "aws-builder:" in out
+    assert "http://localhost:8088/v1" in out
+    assert "claude-haiku-4.5" in out  # catalog came from the source manifest
+
+
+def test_setup_prefers_installed_manifest_over_source(tmp_path):
+    """When the installed copy's plugin.yaml exists, it wins over the source
+    checkout's manifest (the block must match what actually runs)."""
+    out = _run_setup(tmp_path, plugin_yaml="models:\n  - custom-a\n  - custom-b\n")
+    assert '"custom-a"' in out
+    assert "claude-haiku-4.5" not in out
+
+
+def test_setup_fails_cleanly_when_no_manifest_exists(tmp_path):
+    """No installed copy AND no source manifest: exit 1 with a clear error,
+    not a python traceback from the heredoc."""
+    src = tmp_path / "src"
+    (src / "scripts").mkdir(parents=True)
+    shutil.copy(_SCRIPT, src / "scripts" / "setup.sh")
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.yaml").write_text("other: value\n", encoding="utf-8")
+    proc = subprocess.run(
+        ["bash", str(src / "scripts" / "setup.sh")],
+        check=False,  # the failure (exit 1) is the assertion target
+        capture_output=True,
+        timeout=60,
+        env={**os.environ, "HERMES_HOME": str(home), "AWS_BUILD_ADAPTER_PORT": "8088"},
+    )
+    assert proc.returncode == 1
+    assert b"plugin.yaml not found" in proc.stderr
