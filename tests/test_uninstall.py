@@ -422,3 +422,84 @@ def test_uninstall_preserves_quoted_whitespace_scalars():
         ],
     )
     assert removed == []
+
+
+def test_uninstall_leaves_user_managed_provider_entry():
+    """A providers.aws-builder block whose base_url is NOT the plugin's
+    loopback adapter is user-managed — uninstall must not remove the block
+    or the model.provider reference that still points at it."""
+    cfg = textwrap.dedent(
+        """\
+        providers:
+          aws-builder:
+            name: My Custom Endpoint
+            base_url: https://example.com/v1
+            api_key: sk-user
+          other-provider:
+            type: foo
+        plugins:
+          enabled:
+            - builder
+        model:
+          provider: aws-builder
+          temperature: 0.7
+        """
+    )
+    out, removed = _run(cfg)
+    _assert(
+        out,
+        removed,
+        absent=["- builder"],
+        present=[
+            "aws-builder:",
+            "base_url: https://example.com/v1",
+            "api_key: sk-user",
+            "provider: aws-builder",
+            "temperature: 0.7",
+        ],
+    )
+    assert "providers:aws-builder" not in removed
+    assert "model.provider" not in removed
+
+
+def test_uninstall_removes_owned_adapter_provider_entry(monkeypatch):
+    """A providers.aws-builder block carrying the plugin's own loopback
+    base_url is plugin-owned and must be removed (positive control)."""
+    monkeypatch.delenv("AWS_BUILD_ADAPTER_PORT", raising=False)
+    cfg = textwrap.dedent(
+        """\
+        providers:
+          aws-builder:
+            name: AWS Builder
+            base_url: http://localhost:8088/v1
+            api_key: no-key-required
+        """
+    )
+    out, removed = _run(cfg)
+    _assert(
+        out,
+        removed,
+        absent=["aws-builder:", "base_url:", "no-key-required"],
+        removed_has="providers:aws-builder",
+    )
+
+
+def test_uninstall_keeps_loopback_entry_on_a_different_port(monkeypatch):
+    """A loopback base_url on a different port is not our adapter — the
+    entry is user-managed and must be kept."""
+    monkeypatch.delenv("AWS_BUILD_ADAPTER_PORT", raising=False)
+    cfg = textwrap.dedent(
+        """\
+        providers:
+          builder:
+            name: My Local LLM
+            base_url: http://127.0.0.1:9999/v1
+        """
+    )
+    out, removed = _run(cfg)
+    _assert(
+        out,
+        removed,
+        present=["builder:", "base_url: http://127.0.0.1:9999/v1"],
+    )
+    assert removed == []

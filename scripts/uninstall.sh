@@ -122,6 +122,102 @@ def _is_builder_item(s):
     return False
 
 
+def _block_base_url_lines(blines):
+    """Unquoted base_url scalar from a provider block's body lines, else None."""
+    for ln in blines:
+        if _mapping_key(ln) == "base_url":
+            s = _strip_inline_comment(ln)
+            return _unquote(s.split(":", 1)[1].strip())
+    return None
+
+
+def _provider_block_base_urls(lines):
+    """Map builder provider slug -> base_url (or None) for blocks directly
+    under the top-level ``providers:`` key.
+
+    Cheap pre-scan so _cleanup can classify ownership before deciding
+    removals: ``model.provider`` may appear before or after the provider
+    block in the file, so both decisions must use the same verdict.
+    """
+    slugs = {}
+    n = len(lines)
+    prov_idx = prov_ind = None
+    for idx, ln in enumerate(lines):
+        s = ln.strip()
+        if _content_indent(ln) == 0 and _mapping_key(s) == "providers":
+            prov_idx, prov_ind = idx, _indent(ln)
+            break
+    if prov_idx is None:
+        return slugs
+    child_ind = None
+    cur = None  # (slug, body lines)
+    blocks = []
+    j = prov_idx + 1
+    while j < n:
+        ln = lines[j]
+        # Blank lines and comments never end the block or start a child.
+        if not ln.strip() or ln.strip().startswith("#"):
+            j += 1
+            continue
+        ind = _indent(ln)
+        if ind <= prov_ind:
+            break
+        if child_ind is None:
+            child_ind = ind
+        if ind == child_ind:
+            if cur:
+                blocks.append(cur)
+            cur = (_mapping_key(ln.strip()), [])
+        elif cur:
+            cur[1].append(ln)
+        j += 1
+    if cur:
+        blocks.append(cur)
+    for slug, body in blocks:
+        if slug in ("aws-builder", "builder"):
+            slugs[slug] = _block_base_url_lines(body)
+    return slugs
+
+
+def _is_our_base_url(value):
+    """True if base_url points at this plugin's loopback adapter.
+
+    Mirrors _provider._is_our_base_url: loopback host (127.0.0.1/localhost)
+    with the adapter port stated explicitly, so a foreign endpoint that
+    merely shares the slug is never treated as ours."""
+    if not value:
+        return False
+    import os
+    from urllib.parse import urlsplit
+
+    try:
+        port = int(os.environ.get("AWS_BUILD_ADAPTER_PORT", "8088"))
+    except ValueError:
+        port = 8088
+    try:
+        parts = urlsplit(value)
+        host = (parts.hostname or "").lower()
+        url_port = parts.port
+    except ValueError:
+        return False
+    return host in ("127.0.0.1", "localhost") and url_port == port
+
+
+def _is_owned_provider(slug, base_url):
+    """True if a providers.<slug> block is the plugin's own and may be removed.
+
+    A PRESENT base_url that is not our loopback adapter is a user-managed
+    endpoint — kept. A MISSING base_url is a dangling builder leftover
+    (nothing for Hermes to route to) — removed, matching this script's
+    historical contract. (Runtime unregister_provider() is stricter — it
+    requires the matching base_url — because it runs automatically rather
+    than at an operator's explicit request with a fresh backup on disk.)
+    """
+    if slug not in ("aws-builder", "builder"):
+        return False
+    return base_url is None or _is_our_base_url(base_url)
+
+
 removed = []
 emptied = set()  # container paths (tuples) that _cleanup may have emptied
 
@@ -135,6 +231,14 @@ def _cleanup(lines):
     stack = []  # [(indent, key), ...] — ancestor mapping keys of the current line
     i = 0
     n = len(lines)
+    # Ownership pre-scan: provider blocks at our slug whose base_url is a
+    # foreign endpoint are user-managed and must survive both the block
+    # removal (1) and the dangling model.provider cleanup (3).
+    foreign_slugs = {
+        slug
+        for slug, base in _provider_block_base_urls(lines).items()
+        if not _is_owned_provider(slug, base)
+    }
     while i < n:
         ln = lines[i]
         s = ln.strip()
@@ -152,7 +256,14 @@ def _cleanup(lines):
 
         # 1) provider blocks: aws-builder:/builder: directly under `providers`
         provider_slug = _mapping_key(s) if path == ["providers"] else None
-        if provider_slug in ("aws-builder", "builder"):
+        if provider_slug in foreign_slugs:
+            # User-managed endpoint at our slug (non-plugin base_url): keep
+            # the whole block — fall through to normal line processing.
+            print(
+                f"ℹ providers.{provider_slug} has a non-plugin base_url; "
+                "left untouched (user-managed)"
+            )
+        elif provider_slug in ("aws-builder", "builder"):
             removed.append("providers:" + provider_slug)
             emptied.add(tuple(path))
             ki = ind
@@ -184,8 +295,15 @@ def _cleanup(lines):
                 i += 1
                 continue
 
-        # 3) dangling model.provider pointing at a removed slug
-        if path == ["model"] and _provider_value(s) in ("aws-builder", "builder"):
+        # 3) dangling model.provider pointing at a removed slug. If the
+        #    provider entry was user-managed and kept, its reference stays
+        #    valid — removing it would break the user's model selection.
+        provider_ref = _provider_value(s)
+        if (
+            path == ["model"]
+            and provider_ref in ("aws-builder", "builder")
+            and provider_ref not in foreign_slugs
+        ):
             removed.append("model.provider")
             emptied.add(tuple(path))
             i += 1
