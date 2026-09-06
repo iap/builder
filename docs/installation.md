@@ -61,7 +61,7 @@ hermes plugins uninstall builder
 # restart Hermes
 ```
 
-`uninstall.sh` removes `providers.aws-builder`, `plugins.enabled`, and toolset-list entries. Sibling providers are preserved.
+`uninstall.sh` removes `providers.aws-builder`, `plugins.enabled`, and toolset-list entries. Sibling providers are preserved, and so is a `providers.aws-builder`/`builder` entry whose `base_url` points somewhere other than the plugin's loopback adapter (user-managed).
 
 ## Environment variables
 

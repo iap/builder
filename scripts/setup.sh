@@ -86,7 +86,17 @@ fi
 # model catalog) instead of hardcoding — setup.sh should not duplicate the
 # model list that also lives in plugin.yaml and backend.list_models().
 BLOCK_FILE="$(mktemp)"
+# Manifest source: prefer the installed copy so the generated block matches
+# what actually runs; fall back to this checkout so setup.sh also works when
+# invoked from a source repo before `hermes plugins install` lands a copy.
 PLUGIN_YAML="${HERMES_HOME:-$HOME/.hermes}/plugins/builder/plugin.yaml"
+if [[ ! -f "$PLUGIN_YAML" ]]; then
+  PLUGIN_YAML="$SRC_ROOT/plugin.yaml"
+fi
+if [[ ! -f "$PLUGIN_YAML" ]]; then
+  echo "✗ plugin.yaml not found (installed plugin or $SRC_ROOT)" >&2
+  exit 1
+fi
 python3 - "$BLOCK_FILE" "$PLUGIN_YAML" "$PORT" <<'PY'
 import sys, yaml
 
@@ -244,6 +254,32 @@ if ! grep -qE '^[[:space:]]*aws-builder:' "$CONFIG"; then
   cp "$BACKUP" "$CONFIG"
   exit 1
 fi
+
+# Persist the provider entry we just wrote so uninstall.sh can recognise it
+# as plugin-owned even when AWS_BUILD_ADAPTER_PORT is no longer set (setup
+# may have used a custom port, e.g. :9999). The stamp records the FULL entry
+# — a bare port would stay trusted forever and make a later user-owned entry
+# at that port look like ours — and is written only after the config update
+# is verified. It lives under <HERMES_HOME>/builder/ (the plugin's data dir,
+# which survives reinstalls — same reasoning as the token store), never as
+# an extra key in config.yaml. Best-effort: a failed stamp only degrades
+# uninstall to the env/8088 ownership heuristics.
+PORT_DIR="${HERMES_HOME:-$HOME/.hermes}/builder"
+mkdir -p "$PORT_DIR"
+python3 - "$BLOCK_FILE" "$PORT_DIR/adapter_stamp.json" <<'PY'
+import json
+import sys
+
+import yaml
+
+block_path, stamp_path = sys.argv[1], sys.argv[2]
+with open(block_path, encoding="utf-8") as fh:
+    block = yaml.safe_load(fh) or {}
+entry = block.get("aws-builder")
+if isinstance(entry, dict) and entry.get("base_url"):
+    with open(stamp_path, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry))
+PY
 
 # Ensure builder is in plugins.enabled so the dashboard tab + the plugin
 # loader actually activate it. The builder plugin is kind: standalone, which

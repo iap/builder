@@ -12,8 +12,10 @@ See https://github.com/iap/builder/issues/20
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -56,31 +58,103 @@ def _adapter_base_url(port: int) -> str:
     return f"http://localhost:{port}/v1"
 
 
-def _adapter_base_url_marker() -> str:
-    """Loopback host forms that identify OUR adapter's base_url.
+def _stamp_path() -> Any:
+    """Path of the provider-entry stamp.
 
-    Legacy ``setup.sh`` wrote the provider entry with ``127.0.0.1``
-    (e.g. ``http://127.0.0.1:8088/v1``), while current ``register_provider``
-    writes ``localhost`` (``_adapter_base_url``). Both are our loopback
-    adapter, so adoption must recognise either form — otherwise a renamed
-    legacy entry would never be adopted and the stale ``key_env`` (false
-    'No API key' notification) would survive. Returns the port so callers can
-    match on the loopback host + port, host-agnostic.
+    Lives under ``<HERMES_HOME>/builder/`` (the plugin's data dir that survives
+    reinstalls, same reasoning as the token store) — never inside config.yaml,
+    where an extra key would trigger Hermes core's "unknown config keys" warning.
+    """
+    home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+    return Path(home) / "builder" / "adapter_stamp.json"
+
+
+def _stamp_provider_entry(entry: dict) -> None:
+    """Best-effort: persist the provider entry the plugin just wrote.
+
+    setup.sh / register_provider may write ``base_url`` with a custom
+    ``AWS_BUILD_ADAPTER_PORT`` (e.g. :9999); a later run or uninstall.sh
+    without the env var set must still recognise that entry as ours. The
+    stamp records the FULL entry — a bare port would stay trusted forever
+    and make a later user-owned entry at that port look like ours (Greptile
+    P1) — and is written only after the entry is live in config, so a failed
+    save never leaves a phantom stamp (Greptile P1 "stamp after saving").
+    Never raises: a failed stamp only degrades ownership to the env/8088
+    base_url heuristic.
     """
     try:
-        port = int(os.environ.get("AWS_BUILD_ADAPTER_PORT", "8088"))
-    except (TypeError, ValueError):
-        port = 8088
-    return f":{port}"
+        stamp = _stamp_path()
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.write_text(json.dumps(entry), encoding="utf-8")
+    except (OSError, TypeError, ValueError):
+        logger.debug("builder: could not persist provider entry stamp", exc_info=True)
+
+
+def _stamped_entry() -> dict | None:
+    """The provider entry (dict) the plugin last wrote, from the stamp."""
+    try:
+        data = json.loads(_stamp_path().read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _matches_stamp(entry: Any) -> bool:
+    """True if the entry still carries everything the plugin last wrote.
+
+    Only string-valued stamp fields gate ownership (``models`` is rewritten
+    on every register and ``discover_models`` is constant, so neither may
+    veto); ``api_key`` treats the ``"***"`` redaction sentinel and the
+    canonical ``"no-key-required"`` as equal. A user who repurposes the slug
+    for their own service changes at least one stamped field (name,
+    api_key, base_url, …) and no longer matches."""
+    stamped = _stamped_entry()
+    if not stamped or not stamped.get("base_url"):
+        return False
+    if not isinstance(entry, dict) or not entry.get("base_url"):
+        return False
+    for key, value in stamped.items():
+        if not isinstance(value, str):
+            continue
+        ours = entry.get(key)
+        if (
+            key == "api_key"
+            and value in ("***", "no-key-required")
+            and ours in ("***", "no-key-required")
+        ):
+            continue
+        if ours != value:
+            return False
+    return True
+
+
+def _owned_ports() -> set:
+    """Ports the adapter binds as of this process: the AWS_BUILD_ADAPTER_PORT
+    env override and the 8088 default. Custom ports from past runs are
+    covered by the entry stamp (see _matches_stamp), never by a bare port
+    match — a port must not outlive the entry it was recorded for."""
+    ports = {8088}
+    env_port = os.environ.get("AWS_BUILD_ADAPTER_PORT")
+    if env_port:
+        try:
+            env_val = int(env_port)
+        except ValueError:
+            env_val = None
+        if env_val and env_val > 0:
+            ports.add(env_val)
+    return ports
 
 
 def _is_our_base_url(base: str) -> bool:
-    """True if ``base`` points at our loopback adapter (127.0.0.1 or localhost
-    on the adapter port), regardless of which loopback host string was used.
+    """True if ``base`` points at our loopback adapter as bound right now
+    (127.0.0.1 or localhost on the env/default port), regardless of which
+    loopback host string was used.
 
     Parses the URL instead of substring matching so a foreign entry like
     ``http://localhost:80880/v1`` (port prefix) or a host that merely embeds
-    ``localhost:8088`` is not misclassified as ours."""
+    ``localhost:8088`` is not misclassified as ours. The port must be stated
+    explicitly (every writer of our entries emits it); a port-less loopback
+    URL is a foreign provider on its default port."""
     if not isinstance(base, str):
         return False
     from urllib.parse import urlsplit
@@ -88,28 +162,32 @@ def _is_our_base_url(base: str) -> bool:
     try:
         parts = urlsplit(base)
         host = (parts.hostname or "").lower()
-        port = parts.port or 8088  # default when the URL has no explicit port
+        port = parts.port
     except ValueError:
         return False
-    expected_port = int(_adapter_base_url_marker().lstrip(":"))
-    return host in ("127.0.0.1", "localhost") and port == expected_port
+    if port is None:
+        return False
+    return host in ("127.0.0.1", "localhost") and port in _owned_ports()
 
 
 def _is_our_entry(entry: Any) -> bool:
     """True if an existing ``providers.<slug>`` entry belongs to this plugin.
 
-    Detection is based solely on observable, documented fields —
-    the adapter's loopback ``base_url`` (127.0.0.1/localhost:<adapter port>).
-    No private marker key is needed in config.yaml (which Hermes core flags as
-    "unknown config keys ignored"). Returns True for entries we wrote
-    *and* for entries an old setup.sh wrote (same adapter endpoint),
-    so both are adopted/rewritten; False for a genuinely foreign/user-managed
-    entry (different base_url, even if by coincidence named "AWS Builder").
-    """
+    Two-tier, observable-fields-only (no private marker key in config.yaml,
+    which Hermes core flags as "unknown config keys ignored"):
+
+    1. stamp match — the entry still carries everything the plugin last
+       wrote (adapter_stamp.json, recorded after a successful write), which
+       recognises our entries even when AWS_BUILD_ADAPTER_PORT is no longer
+       set while rejecting a user-repurposed entry at the same port;
+    2. base_url match — loopback on the env/default adapter port, which
+       recognises entries written before stamps existed.
+
+    False for a genuinely foreign/user-managed entry (different base_url, or
+    a repurposed slug whose fields no longer match the stamp)."""
     if not isinstance(entry, dict):
         return False
-    base = entry.get("base_url") or ""
-    return _is_our_base_url(base)
+    return _matches_stamp(entry) or _is_our_base_url(entry.get("base_url") or "")
 
 
 def _entries_equivalent(a: Any, b: Any) -> bool:
@@ -259,6 +337,9 @@ def register_provider(port: int) -> bool:
     # load_config()/save_config() is a full YAML round-trip that strips every
     # comment, so rewriting on every plugin load would destroy user comments.
     if _entries_equivalent(entry, existing) and not changed:
+        # Entry is already live in config, so record it as our last write —
+        # a fresh stamp keeps ownership valid across env-var changes.
+        _stamp_provider_entry(entry)
         logger.info(
             "builder: provider '%s' already current; skipping write", PROVIDER_SLUG
         )
@@ -270,6 +351,9 @@ def register_provider(port: int) -> bool:
     except Exception as exc:  # noqa: BLE001
         logger.warning("builder: save_config failed, provider not persisted: %s", exc)
         return False
+    # Stamp only after the save succeeded: a stamp without a live entry would
+    # make a later user-owned entry at that endpoint look like ours.
+    _stamp_provider_entry(entry)
     logger.info(
         "builder: registered provider '%s' -> %s", PROVIDER_SLUG, entry["base_url"]
     )

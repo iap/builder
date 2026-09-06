@@ -10,6 +10,7 @@ Motivated by two Greptile review rounds:
     be preserved — they are user-owned lists that merely share the name.
 """
 
+import json
 import re
 import textwrap
 from pathlib import Path
@@ -421,4 +422,177 @@ def test_uninstall_preserves_quoted_whitespace_scalars():
             "temperature: 0.7",
         ],
     )
+    assert removed == []
+
+
+def test_uninstall_leaves_user_managed_provider_entry():
+    """A providers.aws-builder block whose base_url is NOT the plugin's
+    loopback adapter is user-managed — uninstall must not remove the block
+    or the model.provider reference that still points at it."""
+    cfg = textwrap.dedent(
+        """\
+        providers:
+          aws-builder:
+            name: My Custom Endpoint
+            base_url: https://example.com/v1
+            api_key: sk-user
+          other-provider:
+            type: foo
+        plugins:
+          enabled:
+            - builder
+        model:
+          provider: aws-builder
+          temperature: 0.7
+        """
+    )
+    out, removed = _run(cfg)
+    _assert(
+        out,
+        removed,
+        absent=["- builder"],
+        present=[
+            "aws-builder:",
+            "base_url: https://example.com/v1",
+            "api_key: sk-user",
+            "provider: aws-builder",
+            "temperature: 0.7",
+        ],
+    )
+    assert "providers:aws-builder" not in removed
+    assert "model.provider" not in removed
+
+
+def test_uninstall_removes_owned_adapter_provider_entry(monkeypatch):
+    """A providers.aws-builder block carrying the plugin's own loopback
+    base_url is plugin-owned and must be removed (positive control)."""
+    monkeypatch.delenv("AWS_BUILD_ADAPTER_PORT", raising=False)
+    cfg = textwrap.dedent(
+        """\
+        providers:
+          aws-builder:
+            name: AWS Builder
+            base_url: http://localhost:8088/v1
+            api_key: no-key-required
+        """
+    )
+    out, removed = _run(cfg)
+    _assert(
+        out,
+        removed,
+        absent=["aws-builder:", "base_url:", "no-key-required"],
+        removed_has="providers:aws-builder",
+    )
+
+
+def test_uninstall_keeps_loopback_entry_on_a_different_port(monkeypatch):
+    """A loopback base_url on a different port is not our adapter — the
+    entry is user-managed and must be kept."""
+    monkeypatch.delenv("AWS_BUILD_ADAPTER_PORT", raising=False)
+    cfg = textwrap.dedent(
+        """\
+        providers:
+          builder:
+            name: My Local LLM
+            base_url: http://127.0.0.1:9999/v1
+        """
+    )
+    out, removed = _run(cfg)
+    _assert(
+        out,
+        removed,
+        present=["builder:", "base_url: http://127.0.0.1:9999/v1"],
+    )
+    assert removed == []
+
+
+def test_uninstall_removes_entry_at_persisted_custom_port(monkeypatch, tmp_path):
+    """Greptile P1 regression: setup ran with AWS_BUILD_ADAPTER_PORT=9999 and
+    stamped the entry it wrote; uninstall WITHOUT the env var must still
+    recognise the plugin-created entry as ours and remove it."""
+    monkeypatch.delenv("AWS_BUILD_ADAPTER_PORT", raising=False)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    (tmp_path / "builder").mkdir()
+    stamp = {
+        "name": "AWS Builder",
+        "transport": "openai_chat",
+        "base_url": "http://localhost:9999/v1",
+        "api_key": "no-key-required",
+        "model": "auto",
+    }
+    (tmp_path / "builder" / "adapter_stamp.json").write_text(
+        json.dumps(stamp), encoding="utf-8"
+    )
+    cfg = textwrap.dedent(
+        """\
+        providers:
+          aws-builder:
+            name: AWS Builder
+            transport: openai_chat
+            base_url: http://localhost:9999/v1
+            api_key: no-key-required
+            model: auto
+        """
+    )
+    out, removed = _run(cfg)
+    _assert(
+        out,
+        removed,
+        absent=["aws-builder:", "base_url:"],
+        removed_has="providers:aws-builder",
+    )
+
+
+def test_uninstall_keeps_user_repurposed_entry_at_stamped_port(monkeypatch, tmp_path):
+    """Greptile P1 regression: a stamp from a past custom-port install must
+    not make a LATER user-owned entry at the same port look like ours. The
+    user rewrote name/api_key — the block no longer matches the stamp and
+    must be kept, along with the model.provider reference to it."""
+    monkeypatch.delenv("AWS_BUILD_ADAPTER_PORT", raising=False)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    (tmp_path / "builder").mkdir()
+    stamp = {
+        "name": "AWS Builder",
+        "transport": "openai_chat",
+        "base_url": "http://localhost:9999/v1",
+        "api_key": "no-key-required",
+        "model": "auto",
+    }
+    (tmp_path / "builder" / "adapter_stamp.json").write_text(
+        json.dumps(stamp), encoding="utf-8"
+    )
+    cfg = textwrap.dedent(
+        """\
+        providers:
+          aws-builder:
+            name: My Own Service
+            base_url: http://localhost:9999/v1
+            api_key: sk-user
+        model:
+          provider: aws-builder
+        """
+    )
+    out, removed = _run(cfg)
+    _assert(
+        out,
+        removed,
+        present=["My Own Service", "sk-user", "provider: aws-builder"],
+    )
+    assert removed == []
+
+
+def test_uninstall_keeps_foreign_port_without_stamp(monkeypatch, tmp_path):
+    """No env override and no persisted stamp: a non-8088 loopback entry at
+    our slug is foreign and must be kept."""
+    monkeypatch.delenv("AWS_BUILD_ADAPTER_PORT", raising=False)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    cfg = textwrap.dedent(
+        """\
+        providers:
+          aws-builder:
+            base_url: http://localhost:9999/v1
+        """
+    )
+    out, removed = _run(cfg)
+    _assert(out, removed, present=["base_url: http://localhost:9999/v1"])
     assert removed == []
