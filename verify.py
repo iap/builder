@@ -171,6 +171,7 @@ def main() -> int:
         "bid_logout",
         "models",
         "tags",
+        "q_debug",
     }
     check(expected.issubset(set(captured)), f"all tools registered: {sorted(captured)}")
 
