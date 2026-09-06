@@ -41,6 +41,7 @@ SSO_OIDC_SYMBOLS = (
     "logout",
     "_load_token",
     "refresh_token",
+    "ensure_valid",
 )
 
 
