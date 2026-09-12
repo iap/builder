@@ -82,7 +82,7 @@ def _run_setup(home, plugin_yaml=None):
         installed.mkdir(parents=True)
         (installed / "plugin.yaml").write_text(plugin_yaml, encoding="utf-8")
     subprocess.run(
-        "bash", str(_SCRIPT)],
+        ["bash", str(_SCRIPT)],
         check=True,
         capture_output=True,
         timeout=60,
@@ -153,7 +153,7 @@ def test_setup_then_uninstall_roundtrip_at_custom_port(tmp_path):
         "AWS_BUILD_ADAPTER_PORT": "9999",
     }
     subprocess.run(
-        "bash", str(_SCRIPT)],
+        ["bash", str(_SCRIPT)],
         check=True,
         capture_output=True,
         timeout=60,
