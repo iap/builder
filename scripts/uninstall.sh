@@ -32,9 +32,14 @@ export PYTHONUTF8=1
 # Bash 3.2 compatible; the array is never empty so `set -u` is safe.
 PYCMD=()
 if [[ -n "${PYTHON:-}" ]]; then
-  # Explicit override, may itself contain args (e.g. PYTHON="py -3").
-  # shellcheck disable=SC2206
-  PYCMD=($PYTHON)
+  if [[ -x "$PYTHON" ]] || command -v "$PYTHON" >/dev/null 2>&1; then
+    # Single executable path (possibly containing spaces) — keep whole.
+    PYCMD=("$PYTHON")
+  else
+    # Interpreter plus args (e.g. PYTHON="py -3") — word-split.
+    # shellcheck disable=SC2206
+    PYCMD=($PYTHON)
+  fi
 fi
 # Validate the head word; an invalid/blank override falls back to auto-detect.
 # (${PYCMD[0]:-} is set-u safe even when the split yields no words.)
