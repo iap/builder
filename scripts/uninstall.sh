@@ -24,6 +24,38 @@ set -euo pipefail
 # when stdout is a non-UTF-8 pipe (e.g. Windows cp1252 under redirect).
 export PYTHONUTF8=1
 
+# Resolve the Python interpreter into an argv array (PYCMD). Preference order:
+# explicit $PYTHON, then python3, python, then the Windows `py` launcher.
+# An array (not a plain "$PYTHON" string) is required because the `py -3`
+# fallback contains a space and must word-split at invocation — a quoted
+# "$PYTHON" would look for a binary literally named "py -3" (exit 127).
+# Bash 3.2 compatible; the array is never empty so `set -u` is safe.
+PYCMD=()
+if [[ -n "${PYTHON:-}" ]]; then
+  if [[ -x "$PYTHON" ]] || command -v "$PYTHON" >/dev/null 2>&1; then
+    # Single executable path (possibly containing spaces) — keep whole.
+    PYCMD=("$PYTHON")
+  else
+    # Interpreter plus args (e.g. PYTHON="py -3") — word-split.
+    # shellcheck disable=SC2206
+    PYCMD=($PYTHON)
+  fi
+fi
+# Validate the head word; an invalid/blank override falls back to auto-detect.
+# (${PYCMD[0]:-} is set-u safe even when the split yields no words.)
+if [[ -z "${PYCMD[0]:-}" ]] || ! command -v "${PYCMD[0]}" >/dev/null 2>&1; then
+  if command -v python3 >/dev/null 2>&1; then
+    PYCMD=(python3)
+  elif command -v python >/dev/null 2>&1; then
+    PYCMD=(python)
+  elif command -v py >/dev/null 2>&1; then
+    PYCMD=(py -3)
+  else
+    echo "✗ neither python3, python, nor py found on PATH (override with PYTHON)" >&2
+    exit 1
+  fi
+fi
+
 CONFIG="${HERMES_HOME:-$HOME/.hermes}/config.yaml"
 
 if [[ ! -f "$CONFIG" ]]; then
@@ -39,7 +71,7 @@ fi
 #   * dangling model.provider      (if it pointed at the removed slug)
 # Sibling keys/providers and all user comments/formatting are preserved — we
 # never do a yaml.safe_load + safe_dump round-trip (that strips comments).
-python3 - "$CONFIG" <<'PY'
+"${PYCMD[@]}" - "$CONFIG" <<'PY'
 import sys
 import os
 from pathlib import Path
@@ -193,7 +225,7 @@ def _provider_block_scalars(lines):
     if cur:
         blocks.append(cur)
     for slug, body in blocks:
-        if slug in ("aws-builder", "builder"):
+        if slug in ("aws-builder", "aws-build", "builder"):
             scalars_by_slug[slug] = _block_scalars(body)
     return scalars_by_slug
 
@@ -295,7 +327,7 @@ def _is_owned_provider(slug, base_url, scalars):
     base_url is a dangling builder leftover (nothing for Hermes to route to)
     — removed, matching this script's historical contract.
     """
-    if slug not in ("aws-builder", "builder"):
+    if slug not in ("aws-builder", "aws-build", "builder"):
         return False
     if _matches_stamp_scalars(_stamped_entry(), scalars):
         return True
@@ -348,7 +380,7 @@ def _cleanup(lines):
                 f"ℹ providers.{provider_slug} has a non-plugin base_url; "
                 "left untouched (user-managed)"
             )
-        elif provider_slug in ("aws-builder", "builder"):
+        elif provider_slug in ("aws-builder", "aws-build", "builder"):
             removed.append("providers:" + provider_slug)
             emptied.add(tuple(path))
             ki = ind
@@ -386,7 +418,7 @@ def _cleanup(lines):
         provider_ref = _provider_value(s)
         if (
             path == ["model"]
-            and provider_ref in ("aws-builder", "builder")
+            and provider_ref in ("aws-builder", "aws-build", "builder")
             and provider_ref not in foreign_slugs
         ):
             removed.append("model.provider")

@@ -14,11 +14,13 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="bash unavailable")
+# Resolve bash path at module level (pytest may sanitize PATH at test time).
+_BASH = shutil.which("bash")
+pytestmark = pytest.mark.skipif(_BASH is None, reason="bash unavailable")
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "setup.sh"
 _HEREDOC = re.search(
-    r"python3 - \"\$BLOCK_FILE\" \"\$PLUGIN_YAML\" \"\$PORT\" <<'PY'\r?\nimport sys\r?\n(.*?)\r?\nPY\r?\n",
+    r'"\$\{PYCMD\[@\]\}" - "\$BLOCK_FILE" "\$PLUGIN_YAML" "\$PORT" <<\'PY\'\r?\nimport sys\r?\n(.*?)\r?\nPY\r?\n',
     _SCRIPT.read_text(encoding="utf-8"),
     re.DOTALL,
 )
@@ -71,12 +73,17 @@ def _run_setup(home, plugin_yaml=None):
         installed = home / "plugins" / "builder"
         installed.mkdir(parents=True)
         (installed / "plugin.yaml").write_text(plugin_yaml, encoding="utf-8")
+    env = {**os.environ, "HERMES_HOME": str(home), "AWS_BUILD_ADAPTER_PORT": "8088"}
+    # Ensure python is discoverable by setup.sh (Windows fallback).
+    python_path = shutil.which("python") or shutil.which("python3")
+    if python_path:
+        env["PYTHON"] = python_path
     subprocess.run(
-        ["bash", str(_SCRIPT)],
+        [_BASH, str(_SCRIPT)],
         check=True,
         capture_output=True,
         timeout=60,
-        env={**os.environ, "HERMES_HOME": str(home), "AWS_BUILD_ADAPTER_PORT": "8088"},
+        env=env,
     )
     return (home / "config.yaml").read_text(encoding="utf-8")
 
@@ -102,7 +109,7 @@ def test_setup_fails_cleanly_when_no_manifest_exists(tmp_path):
     home.mkdir()
     (home / "config.yaml").write_text("other: value\n", encoding="utf-8")
     proc = subprocess.run(
-        ["bash", str(src / "scripts" / "setup.sh")],
+        [_BASH, str(src / "scripts" / "setup.sh")],
         check=False,
         capture_output=True,
         timeout=60,
@@ -130,8 +137,11 @@ def test_setup_then_uninstall_roundtrip_at_custom_port(tmp_path):
         "HERMES_HOME": str(home),
         "AWS_BUILD_ADAPTER_PORT": "9999",
     }
+    python_path = shutil.which("python") or shutil.which("python3")
+    if python_path:
+        setup_env["PYTHON"] = python_path
     subprocess.run(
-        ["bash", str(_SCRIPT)],
+        [_BASH, str(_SCRIPT)],
         check=True,
         capture_output=True,
         timeout=60,
@@ -149,9 +159,11 @@ def test_setup_then_uninstall_roundtrip_at_custom_port(tmp_path):
         k: v for k, v in os.environ.items() if k != "AWS_BUILD_ADAPTER_PORT"
     }
     uninstall_env["HERMES_HOME"] = str(home)
+    if python_path:
+        uninstall_env["PYTHON"] = python_path
     uninstall = Path(__file__).resolve().parents[1] / "scripts" / "uninstall.sh"
     subprocess.run(
-        ["bash", str(uninstall)],
+        [_BASH, str(uninstall)],
         check=True,
         capture_output=True,
         timeout=60,

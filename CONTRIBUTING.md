@@ -64,7 +64,7 @@ never read or write your real Hermes state.
 - `auth/sso_oidc.py` — RFC 8628 device flow, anonymous public client. Secrets
   (`auth/bid_token.json`, `auth/bid_registration.json`, `auth/bid_flow.json`) are written
   `chmod 600` and gitignored. **Never** return a raw token from a tool handler.
-- `region.py` does not exist — endpoints are pinned to `us-east-1` in code.
+- Endpoints are pinned to `us-east-1` in code.
 
 ## Security checklist for changes
 
@@ -79,6 +79,21 @@ never read or write your real Hermes state.
 1. Fork / branch, make focused commits, keep the suite green.
 2. Run `pytest` and `verify.py` before pushing.
 3. Open a PR describing the change and any live-testing you performed.
+4. Use GitHub alert syntax in the PR body to call out critical information:
+
+   - `[!IMPORTANT]` — changes that affect install/uninstall flow, config
+     migration, or workflow scope requirements (e.g., "CI changes excluded;
+     follow-up PR needed").
+   - `[!WARNING]` — hard gates that must not be bypassed (e.g., "`verify.py`
+     reports a secret leak"; "do not merge while adapter loopback guard is
+     weakened").
+   - `[!NOTE]` — informational context that affects review (e.g., "tested only
+     on Windows; CI covers Ubuntu").
+   - `[!CAUTION]` — behavioral changes that could surprise users (e.g., "token
+     store path changed"; "Python floor lowered").
+
+   Place alerts at the top of the PR body so they are visible without
+   scrolling.
 
 By submitting a contribution you certify it is your own work and licensed under
 MIT OR Apache-2.0 as described above.

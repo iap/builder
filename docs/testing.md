@@ -29,7 +29,7 @@ ${HERMES_HOME:-$HOME/.hermes}/hermes-agent/venv/bin/python3 -m pytest tests/ -q
 |------|---------------|
 | `tests/test_backend.py` | Event-stream parser, token resolution, model catalog, `_resolve_model_id`, `_parse_tool_calls`, adapter SSE shape |
 | `tests/test_build.py` | Adapter request/response translation, tool-call XML→OpenAI frames, auth flow, CLI commands, provider registration |
-| `tests/test_chat_dispatch.py` | Real Hermes tool-dispatch integration: plugin discovery, registry resolution, `models`/`tags` tool output, secret-leak gate |
+| `tests/integration/test_chat_dispatch.py` | Real Hermes tool-dispatch integration: plugin discovery, registry resolution, `models`/`tags` tool output, secret-leak gate |
 | `tests/test_import_contract.py` | Public symbol contract guard — fails loudly if a refactor removes a symbol callers depend on |
 
 ## Key invariants tested
