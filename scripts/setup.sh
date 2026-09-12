@@ -184,6 +184,19 @@ except Exception:
 providers = c.get("providers")
 has_existing = isinstance(providers, dict) and "aws-builder" in providers
 
+def _atomic_write_lines(path, lines):
+    """Atomic write to path: temp file adjacent to target, then os.replace()."""
+    import os
+    from tempfile import NamedTemporaryFile
+    tmp = NamedTemporaryFile(
+        mode="w", dir=os.path.dirname(str(path)), delete=False, encoding="utf-8"
+    )
+    tmp.write("\n".join(lines) + "\n")
+    tmp.flush()
+    os.fsync(tmp.fileno())
+    tmp.close()
+    os.replace(tmp.name, str(path))
+
 if has_existing:
     # Line-based replacement of the existing aws-builder block. Preserves the
     # rest of config.yaml (comments, formatting, other providers) verbatim; a
@@ -222,19 +235,6 @@ if has_existing:
                 rel = (len(ln) - len(ln.lstrip())) - base
                 reindented.append(" " * max(0, ab_indent + rel) + ln.lstrip())
         raw_lines[ab_idx:end] = reindented
-
-def _atomic_write_lines(path, lines):
-    """Atomic write to path: temp file adjacent to target, then os.replace()."""
-    import os
-    from tempfile import NamedTemporaryFile
-    tmp = NamedTemporaryFile(
-        mode="w", dir=os.path.dirname(str(path)), delete=False, encoding="utf-8"
-    )
-    tmp.write("\n".join(lines) + "\n")
-    tmp.flush()
-    os.fsync(tmp.fileno())
-    tmp.close()
-    os.replace(tmp.name, str(path))
 
     _atomic_write_lines(cfg_path, raw_lines)
     print("✓ updated providers: aws-builder in config.yaml (model catalog refreshed)")
