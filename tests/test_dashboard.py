@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
+fastapi = pytest.importorskip("fastapi", reason="fastapi not installed (pip install fastapi)")
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 

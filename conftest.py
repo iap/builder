@@ -52,10 +52,13 @@ for p in (str(PLUGIN_DIR), str(HERMES_AGENT_DIR)):
 TEST_HERMES_HOME = Path(tempfile.mkdtemp(prefix="builder-"))
 os.environ["HERMES_HOME"] = str(TEST_HERMES_HOME)
 (TEST_HERMES_HOME / "plugins").mkdir(parents=True)
-(TEST_HERMES_HOME / "plugins" / "builder").symlink_to(
-    PLUGIN_DIR,
-    target_is_directory=True,
-)
+plugin_link = TEST_HERMES_HOME / "plugins" / "builder"
+try:
+    plugin_link.symlink_to(PLUGIN_DIR, target_is_directory=True)
+except OSError:
+    # Windows: symlinks require admin privileges. Fall back to a copy.
+    import shutil
+    shutil.copytree(PLUGIN_DIR, plugin_link)
 (TEST_HERMES_HOME / "config.yaml").write_text(
     yaml.safe_dump({"plugins": {"enabled": ["builder"]}}),
     encoding="utf-8",
