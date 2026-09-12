@@ -410,7 +410,7 @@ def unregister_provider() -> bool:
         return False
 
     removed = False
-    for slug in (PROVIDER_SLUG, "builder"):
+    for slug in (PROVIDER_SLUG, "aws-build"):
         entry = providers.get(slug)
         if not isinstance(entry, dict) or not _is_our_entry(entry):
             continue
