@@ -206,7 +206,7 @@ def _provider_block_scalars(lines):
     if cur:
         blocks.append(cur)
     for slug, body in blocks:
-        if slug in ("aws-builder", "builder"):
+        if slug in ("aws-builder", "aws-build", "builder"):
             scalars_by_slug[slug] = _block_scalars(body)
     return scalars_by_slug
 
@@ -308,7 +308,7 @@ def _is_owned_provider(slug, base_url, scalars):
     base_url is a dangling builder leftover (nothing for Hermes to route to)
     — removed, matching this script's historical contract.
     """
-    if slug not in ("aws-builder", "builder"):
+    if slug not in ("aws-builder", "aws-build", "builder"):
         return False
     if _matches_stamp_scalars(_stamped_entry(), scalars):
         return True
@@ -361,7 +361,7 @@ def _cleanup(lines):
                 f"ℹ providers.{provider_slug} has a non-plugin base_url; "
                 "left untouched (user-managed)"
             )
-        elif provider_slug in ("aws-builder", "builder"):
+        elif provider_slug in ("aws-builder", "aws-build", "builder"):
             removed.append("providers:" + provider_slug)
             emptied.add(tuple(path))
             ki = ind
@@ -399,7 +399,7 @@ def _cleanup(lines):
         provider_ref = _provider_value(s)
         if (
             path == ["model"]
-            and provider_ref in ("aws-builder", "builder")
+            and provider_ref in ("aws-builder", "aws-build", "builder")
             and provider_ref not in foreign_slugs
         ):
             removed.append("model.provider")

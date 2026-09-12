@@ -34,7 +34,7 @@ scripts/
 tests/
   test_backend.py    event-stream parser, token resolution, model catalog
   test_build.py      adapter SSE shape, tool-call translation, auth flow, CLI
-  test_chat_dispatch.py  real Hermes tool-dispatch integration tests
+  test_chat_dispatch.py  real Hermes tool-dispatch integration tests (in tests/integration/)
   test_import_contract.py  public symbol contract guard
 ```
 
