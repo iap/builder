@@ -27,7 +27,7 @@ set up, test, and submit changes.
 
 The plugin is a Hermes Agent plugin. It needs:
 
-- Python 3.11+ (the Hermes agent venv is at `<HERMES_HOME>/hermes-agent/venv`).
+- Python 3.12+ (the Hermes agent venv is at `<HERMES_HOME>/hermes-agent/venv`).
 - `requests` and `botocore` (already present in the Hermes agent venv).
 - A Builder ID token for any **live** chat/auth calls (see `bid_login`).
 
@@ -64,7 +64,7 @@ never read or write your real Hermes state.
 - `auth/sso_oidc.py` — RFC 8628 device flow, anonymous public client. Secrets
   (`auth/bid_token.json`, `auth/bid_registration.json`, `auth/bid_flow.json`) are written
   `chmod 600` and gitignored. **Never** return a raw token from a tool handler.
-- `region.py` does not exist — endpoints are pinned to `us-east-1` in code.
+- Endpoints are pinned to `us-east-1` in code.
 
 ## Security checklist for changes
 

@@ -28,10 +28,6 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["."]
 
-[tool.ty]
-src = ["."]
-exclude = ["dashboard/dist", "__pycache__", ".venv"]
-
 [tool.ruff]
 exclude = [
     ".github",
