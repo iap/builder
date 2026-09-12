@@ -86,7 +86,7 @@ def _plugin_pre_tool_call(
         target = str(args.get("path") or args.get("file") or "")
         try:
             real_target = _os.path.realpath(_os.path.expanduser(target))
-        except Exception:
+        except OSError:
             real_target = target
         for core_path in _HERMES_CORE:
             if real_target.startswith(core_path):
