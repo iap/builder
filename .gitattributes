@@ -1,0 +1,2 @@
+# Declare shell scripts as LF so they run on all platforms.
+*.sh text eol=lf

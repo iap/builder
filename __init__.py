@@ -29,70 +29,92 @@ def _plugin_pre_tool_call(
     args: dict[str, Any],
     **kwargs: Any,
 ) -> dict[str, str] | None:
-    """Builder plugin guard: blocks dangerous tool calls.
+    """Builder plugin guard: blocks dangerous tool calls."""
+    import os as _os
 
-    Registered as a ``pre_tool_call`` hook in ``register()``. Hermes
-    core calls ``get_pre_tool_call_block_message()`` before dispatching
-    each tool call; the first ``{"action": "block", "message": "..."}``
-    return wins and prevents execution.
-
-    This defense-in-depth guard covers (a) future builder tool additions
-    and (b) any tool call that Hermes routes through the plugin's hook.
-    It is additive to Hermes's global ``approvals.mode`` — it does not
-    replace or override it.
-    """
-    _HERMES_CORE = (
-        os.path.expanduser("~/.hermes/hermes-agent"),
-        os.path.expanduser("~/.hermes/config.yaml"),
+    _HERMES_CORE = tuple(
+        _os.path.realpath(_os.path.expanduser(p))
+        for p in (
+            "~/.hermes/hermes-agent",
+            "~/.hermes/config.yaml",
+            "~/.hermes/plugins/builder",
+        )
     )
     _DESTRUCTIVE = (
         "rm -rf ",
+        "rm -fr ",
         "shutil.rmtree",
         "chmod -R",
         ">/dev/sda",
-        "mkfs",
+        "mkfs ",
+        "mkfs.",
         "dd if=",
+        "dd of=",
     )
-    _PRIVILEGE = (
-        "sudo ",
-        "su -",
-        "su ",
-        "pkexec ",
-        "doas ",
+    _DESTRUCTIVE_WIN = (
+        "del /f ",
+        "del /s ",
+        "rd /s ",
+        "rd /q ",
+        "format ",
+        "fsutil ",
     )
+    _PRIVILEGE = ("sudo ", "su -", "su ", "pkexec ", "doas ")
+
+    def _is_dangerous(cmd: str) -> str | None:
+        """Return the matched pattern if the command is dangerous, else None."""
+        lowered = cmd.lower()
+        for pattern in _DESTRUCTIVE:
+            if pattern in cmd:
+                return pattern
+        for pattern in _DESTRUCTIVE_WIN:
+            if pattern in lowered:
+                return pattern
+        return None
 
     if tool_name == "terminal":
         cmd = (args.get("command") or "").strip()
-        for pattern in _DESTRUCTIVE:
-            if pattern in cmd:
+        # Check the full command and each token split on shell separators.
+        import re as _re
+
+        tokens = _re.split(r"[;&|\n\r]+", cmd)
+        for segment in tokens:
+            segment = segment.strip()
+            if not segment:
+                continue
+            matched = _is_dangerous(segment)
+            if matched:
                 return {
                     "action": "block",
                     "message": (
-                        "\u26a0 Destructive shell command blocked by builder guard: "
-                        f"`{cmd[:200]}`. Set approvals.mode to 'off' in your "
-                        "Hermes config to allow auto-approval of non-destructive "
-                        "commands, or run this command directly from a terminal."
+                        "⚠ Destructive shell command blocked by builder guard: "
+                        f"`{cmd[:200]}`. Run this command directly from a terminal."
                     ),
                 }
-        for pattern in _PRIVILEGE:
-            if cmd.startswith(pattern):
-                return {
-                    "action": "block",
-                    "message": (
-                        "\u26a0 Privilege escalation blocked by builder guard: "
-                        f"`{cmd[:200]}`. Plugin-originated shell commands do "
-                        "not support sudo/su. Run such commands directly from "
-                        "a terminal session."
-                    ),
-                }
+            # Block privilege escalation anywhere in the first token.
+            for pattern in _PRIVILEGE:
+                if segment.startswith(pattern) or f" {pattern}" in f" {segment}":
+                    return {
+                        "action": "block",
+                        "message": (
+                            "⚠ Privilege escalation blocked by builder guard: "
+                            f"`{cmd[:200]}`. Run such commands directly from a terminal session."
+                        ),
+                    }
     elif tool_name in ("write_file", "patch"):
         target = str(args.get("path") or args.get("file") or "")
+        try:
+            real_target = _os.path.realpath(_os.path.expanduser(target))
+        except OSError:
+            real_target = target
         for core_path in _HERMES_CORE:
-            if target.startswith(core_path):
+            # Compare path components to avoid blocking sibling paths like
+            # ~/.hermes/config.yaml.bak or ~/.hermes/hermes-agent-notes/file.
+            if real_target.startswith(core_path + _os.sep) or real_target == core_path:
                 return {
                     "action": "block",
                     "message": (
-                        "\u26a0 Write to Hermes protected path blocked by builder "
+                        "⚠ Write to Hermes protected path blocked by builder "
                         f"guard: `{target}`. Modifying Hermes core files may "
                         "break the installation."
                     ),
@@ -101,19 +123,12 @@ def _plugin_pre_tool_call(
 
 
 def _tool_result_helpers():
-    """Return Hermes's house (success, error) serializers with ensure_ascii=False.
-
-    Delegates to ``tools.registry.tool_result`` / ``tool_error`` so plugin
-    output is byte-identical to core tools: valid JSON with ``ensure_ascii=False``
-    (non-ASCII text like "café" / "—" / CJK is NOT escaped to ``\u0058\u0058\u0058\u0058`` escapes
-    in JSON, which corrupts the answer when the TUI renders it verbatim). Relative-first/absolute
-    fallback import matches the pattern auth/sso_oidc uses under Hermes core.
-    """
+    """Return Hermes's house (success, error) serializers with ensure_ascii=False."""
     try:
         from tools.registry import tool_error, tool_result  # type: ignore
 
         return tool_result, tool_error
-    except ImportError:  # __main__ / tests where hermes-agent is on sys.path
+    except ImportError:
         pass
     try:
         from registry import tool_error, tool_result  # type: ignore
@@ -148,15 +163,7 @@ def _error(message: str, code: str = "error") -> str:
 
 
 def _check_available() -> bool:
-    """Placeholder check_fn — always True.
-
-    The real auth/import guard is per-tool: each handler wraps its own
-    calls in try/except and surfaces errors cleanly (see
-    _handle_ask_q, _handle_bid_status, etc.). Maintaining a separate
-    pre-flight check that only tests whether get_status can be imported
-    (not whether the user is authenticated) was a false positive gate
-    that unnecessarily blocked read-only tools like q_debug and models
-    even when the plugin was fully functional."""
+    """Placeholder check_fn — always True."""
     return True
 
 
@@ -185,9 +192,6 @@ def _handle_ask_q(args: dict[str, Any], **kwargs: Any) -> str:
 
 def _handle_bid_login(args: dict[str, Any], **kwargs: Any) -> str:
     try:
-        # Single token store (auth/sso_oidc auth/bid_token.json). start_login()
-        # guards re-auth when already authenticated, so no stale-token
-        # cleanup is needed here.
         info = start_login()
         if info.get("already_authenticated"):
             return _success(
@@ -228,7 +232,6 @@ def _handle_bid_show_identity(args: dict[str, Any], **kwargs: Any) -> str:
 
 def _handle_bid_logout(args: dict[str, Any], **kwargs: Any) -> str:
     try:
-        # logout() clears the sso mirror (auth/bid_token.json, auth/bid_registration.json, auth/bid_flow.json).
         logout()
         return _success({"message": "Logged out; secrets cleared."})
     except Exception as exc:
@@ -245,12 +248,7 @@ def _handle_tags(args: dict[str, Any], **kwargs: Any) -> str:
 
 
 def _handle_q_debug(args: dict[str, Any], **kwargs: Any) -> str:
-    """Lightweight calibration/debug snapshot for Hermes TUI/CLI tuning.
-
-    Returns auth/model metadata plus the active host render prefs (mode/theme)
-    so a Q-backed agent can self-adapt its output to the running Hermes CLI/TUI
-    without manual calibration. No raw token, no client secret.
-    """
+    """Lightweight calibration/debug snapshot for Hermes TUI/CLI tuning."""
     try:
         status = get_status()
     except Exception as exc:
@@ -307,7 +305,7 @@ _TOOLS = (
                     },
                     "model": {
                         "type": "string",
-                        "description": "Model to use; sent to Q as modelId. Defaults to 'auto' (Q picks). Named Claude variants are advertised but the account's entitlement decides which are usable.",
+                        "description": "Model to use; sent to Q as modelId.",
                         "enum": [*list_models()],
                     },
                     "conversation_id": {
@@ -384,7 +382,7 @@ _TOOLS = (
         "tags",
         {
             "name": "tags",
-            "description": "List free-form tags describing the AWS Builder ID plugin (aws, amazon-q, claude, chat, builder-id, auth).",
+            "description": "List free-form tags describing the AWS Builder ID plugin.",
             "parameters": {"type": "object", "properties": {}},
         },
         _handle_tags,
@@ -406,25 +404,10 @@ _TOOLS = (
 
 
 def register(ctx) -> None:
-    """Register all builder plugin tools + start the OpenAI adapter.
-
-    The adapter lets builder be a *selectable chat model* in the Hermes
-    TUI/CLI (Way A): it speaks OpenAI's /v1/chat/completions wire
-    format on the Hermes side and translates to Q via backend.chat(). It is
-    launched as a daemon background thread here (dies with the Hermes
-    session) — the plugin's own in-process OpenAI adapter on :8088
-    (NOT a separate standalone server). If it fails to bind
-    we log and continue; the ask_q tool still works tool-only.
-    """
+    """Register all builder plugin tools + start the OpenAI adapter."""
     global _registered
     if _registered:
         return
-
-    # Register the plugin-level tool guard as a pre_tool_call hook.
-    # Hermes core calls get_pre_tool_call_block_message() before
-    # dispatching each tool call; the first {"action": "block"}
-    # return wins and prevents execution.
-    ctx.register_hook("pre_tool_call", _plugin_pre_tool_call)
 
     for name, schema, handler, check_fn, emoji in _TOOLS:
         ctx.register_tool(
@@ -436,6 +419,9 @@ def register(ctx) -> None:
             emoji=emoji,
         )
 
+    # Register hook AFTER successful tool registration so a partial failure
+    # doesn't leave an orphaned hook with _registered=False.
+    ctx.register_hook("pre_tool_call", _plugin_pre_tool_call)
     _registered = True
 
     # Best-effort: start the local OpenAI-compatible adapter so Hermes can
@@ -456,10 +442,6 @@ def register(ctx) -> None:
             actual,
         )
     except OSError as exc:
-        # If the adapter is already running (another active Hermes session
-        # bound the port), that is healthy — skip the warning. Surface
-        # everything else. Probe the port (not just this process's _server)
-        # so the warning is suppressed when another session owns it.
         if not adapter.is_running(host=adapter.HOST, port=port):
             logger.warning(
                 "builder adapter failed to start (tool-only mode OK): %s", exc
@@ -468,9 +450,6 @@ def register(ctx) -> None:
     except Exception as exc:  # noqa: BLE001
         logger.warning("builder adapter failed to start (tool-only mode OK): %s", exc)
         _srv = None
-    # Surface the adapter as a selectable model provider in the dashboard
-    # Models picker (see https://github.com/iap/builder/issues/20). Best-effort:
-    # if config is unavailable or a user already manages this provider, skip.
     if actual is not None:
         try:
             from . import _provider  # package import

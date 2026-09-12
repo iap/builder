@@ -63,6 +63,16 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+# Cap per-request body so a declared large Content-Length with no payload
+# can't exhaust memory. Q answers are small; 1 MiB is generous.
+_MAX_REQUEST_BYTES = 1 * 1024 * 1024
+
+# Max seconds to wait for a request body. Loopback reads complete in
+# milliseconds; this only fires on stalled/partial sends (slow-loris), where
+# an allowed-size Content-Length with an incomplete body would otherwise hold
+# the handler thread indefinitely.
+_REQUEST_READ_TIMEOUT_S = 10
+
 
 # IPv6-capable server: the stdlib ThreadingHTTPServer binds AF_INET only,
 # so a loopback IPv6 host (::1) raises gaierror "Address family for
@@ -102,6 +112,8 @@ _WILDCARD = ("0.0.0.0", "::", "", "*")
 def _is_loopback_host(host: str) -> bool:
     """True if a host string (no port) is a loopback address."""
     h = host.strip().lower()
+    if not h:
+        return False
     if h.startswith("[") and h.endswith("]"):
         h = h[1:-1]
     return h in _LOOPBACK or h == "0:0:0:0:0:0:0:1"
@@ -156,6 +168,7 @@ def _resolve_bind_host(requested: str) -> str:
 
 _server: ThreadingHTTPServer | None = None
 _thread: threading.Thread | None = None
+_server_lock = threading.Lock()
 
 
 # Tool-call convention injected into Q's single prompt. Q's
@@ -545,7 +558,7 @@ class _Handler(BaseHTTPRequestHandler):
         # address but every real request was still 403'd, making the opt-in
         # unusable. Origin protection stays regardless.
         allow_public = os.environ.get("AWS_BUILD_ADAPTER_ALLOW_PUBLIC") == "1"
-        if host and not allow_public and not _is_loopback_host(host):
+        if not allow_public and not _is_loopback_host(host):
             self._send(403, b'{"error":"forbidden: non-loopback Host"}')
             return
         origin = self.headers.get("Origin")
@@ -556,9 +569,33 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(404, b'{"error":"not found"}')
             return
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-            raw = self.rfile.read(length) if length else b"{}"
+            length = max(0, int(self.headers.get("Content-Length", "0")))
+            # Cap per-request body so a declared large Content-Length with no
+            # payload can't exhaust memory.
+            if length > _MAX_REQUEST_BYTES:
+                self._send(413, json.dumps({"error": "payload too large"}).encode())
+                return
+            # Bound the body read so a stalled client declaring an allowed-size
+            # body can't hold this handler thread indefinitely (slow-loris).
+            # The timeout covers ONLY the read and is cleared before backend
+            # work / streaming writes, so slow SSE consumers are unaffected.
+            # getattr: unit tests drive do_POST with a stub handler lacking a
+            # real socket — skip the timeout there.
+            conn = getattr(self, "connection", None)
+            if conn is not None and length:
+                conn.settimeout(_REQUEST_READ_TIMEOUT_S)
+            try:
+                raw = self.rfile.read(length) if length else b"{}"
+            finally:
+                if conn is not None and length:
+                    conn.settimeout(None)
             body = json.loads(raw.decode("utf-8") or "{}")
+        except TimeoutError:
+            self._send(408, json.dumps({"error": "request timeout"}).encode())
+            # The timed-out socket object refuses further reads; don't let the
+            # keep-alive loop attempt another request on it (noisy traceback).
+            self.close_connection = True
+            return
         except Exception as exc:
             self._send(400, json.dumps({"error": f"bad request: {exc}"}).encode())
             return
@@ -577,79 +614,59 @@ def start(
 
     Returns (server, actual_port). Idempotent: calling twice returns the
     already-running server. Safe to call from ``register()``.
-
-    CROSS-PROCESS GUARD: before binding, probe whether *another* process
-    already holds the requested loopback port (e.g. a second Hermes process /
-    the gateway). If so, we do NOT clobber it — we raise ``OSError`` with a
-    clear message naming the likely culprit, which ``register()`` catches and
-    downgrades to a warning (tool-only mode). This replaces the old silent
-    ``[Errno 48] Address already in use`` that left Way A (builder as a
-    selectable chat model) silently dead whenever the gateway already bound
-    :8077 (the gateway's internal socket). Verified: when the gateway
-    owns :8077, ``register()`` now logs the real cause instead of an opaque
-    bind error.
-
-    SECURITY — LOCAL-ONLY SERVER: the adapter proxies requests to Amazon Q
-    using the plugin's stored Builder ID token, so it must never be reachable
-    from the network. It binds loopback (``127.0.0.1`` / ``::1`` / ``localhost``)
-    by default. Binding any other host is rejected by ``_resolve_bind_host``
-    unless ``AWS_BUILD_ADAPTER_ALLOW_PUBLIC=1`` is set explicitly. There is no
-    auth on the endpoint itself — that is safe ONLY because it is loopback-only.
     """
     global _server, _thread
-    if _server is not None:
-        return _server, _server.server_address[1]  # type: ignore[union-attr]
+    with _server_lock:
+        if _server is not None:
+            return _server, _server.server_address[1]  # type: ignore[union-attr]
 
-    bind_host = _resolve_bind_host(host)
+        bind_host = _resolve_bind_host(host)
 
-    # Cross-process probe: if a foreign listener already owns this port, fail
-    # fast with an actionable message instead of raising a bare OSError:48.
-    import socket
+        # Cross-process probe: if a foreign listener already owns this port, fail
+        # fast with an actionable message instead of raising a bare OSError:48.
+        import socket
 
-    # Family-aware probe: bind_host may be IPv6 loopback (::1) — an AF_INET
-    # socket cannot connect to it (Errno 47), so pick the family to match.
-    _family = socket.AF_INET6 if ":" in bind_host else socket.AF_INET
-    _probe = socket.socket(_family, socket.SOCK_STREAM)
-    try:
-        _probe.settimeout(0.4)
-        code = _probe.connect_ex((bind_host, port))
-    finally:
-        _probe.close()
-    if code == 0:  # connection succeeded => port already in use by another proc
-        owner = ""
+        _family = socket.AF_INET6 if ":" in bind_host else socket.AF_INET
+        _probe = socket.socket(_family, socket.SOCK_STREAM)
         try:
-            _raw = subprocess.run(
-                ["lsof", "-t", "-i", f"{bind_host}:{port}"],
-                capture_output=True,
-                text=True,
-                timeout=3,
-            ).stdout.strip()
-            if _raw:
-                owner = f" (held by PID {_raw.split()[0]})"
-        except Exception:
-            pass
-        raise OSError(
-            f"builder adapter cannot bind {bind_host}:{port}{owner} — port already "
-            f"in use by another process. Builder stays in tool-only mode; the "
-            f"'-m aws-builder' chat path is unavailable until that port is free."
-        )
+            _probe.settimeout(0.4)
+            code = _probe.connect_ex((bind_host, port))
+        finally:
+            _probe.close()
+        if code == 0:
+            owner = ""
+            try:
+                _raw = subprocess.run(
+                    ["lsof", "-t", "-i", f"{bind_host}:{port}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                ).stdout.strip()
+                if _raw:
+                    owner = f" (held by PID {_raw.split()[0]})"
+            except Exception:
+                pass
+            raise OSError(
+                f"builder adapter cannot bind {bind_host}:{port}{owner} — port already "
+                f"in use by another process. Builder stays in tool-only mode; the "
+                f"'-m aws-builder' chat path is unavailable until that port is free."
+            )
 
-    srv = _FamilyAwareHTTPServer((bind_host, port), _Handler)
-    t = threading.Thread(target=srv.serve_forever, daemon=True)
-    t.start()
-    _server, _thread = srv, t
-    return srv, srv.server_address[
-        1
-    ]  # return the ACTUAL bound port (port=0 -> OS picks)
+        srv = _FamilyAwareHTTPServer((bind_host, port), _Handler)
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        _server, _thread = srv, t
+        return srv, srv.server_address[1]
 
 
 def stop() -> None:
     """Stop the adapter (tests / cleanup). No-op if not running."""
     global _server, _thread
-    if _server is not None:
-        _server.shutdown()
-        _server.server_close()
-    _server, _thread = None, None
+    with _server_lock:
+        if _server is not None:
+            _server.shutdown()
+            _server.server_close()
+        _server, _thread = None, None
 
 
 def is_running(host: str = HOST, port: int = DEFAULT_PORT) -> bool:
