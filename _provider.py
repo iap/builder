@@ -79,9 +79,7 @@ def _stamp_provider_entry(entry: dict) -> None:
     try:
         stamp = _stamp_path()
         stamp.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(
-            dir=str(stamp.parent), suffix=".tmp"
-        )
+        fd, tmp = tempfile.mkstemp(dir=str(stamp.parent), suffix=".tmp")
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(json.dumps(entry))
             fh.flush()
