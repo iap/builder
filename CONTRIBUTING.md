@@ -17,9 +17,10 @@ set up, test, and submit changes.
   Amazon.com, Inc. This is an unofficial community project, not affiliated with
   or endorsed by Amazon. Keep wording that respects those marks and states
   non-affiliation where appropriate.
-- **Commits:** short, label-prefixed subjects using Conventional Commits-lite:
-  `feat(builder):`, `fix(builder):`, `chore(builder):`, `docs(builder):`,
-  `test(builder):`, `refactor(builder):`, `sec(builder):`. Bodies only
+- **Commits:** short subjects using Conventional Commits, without a scope:
+  `feat:`, `fix:`, `chore:`, `docs:`, `test:`,
+  `refactor:`, `sec:`. No `(builder)` scope — this repo contains only the
+  builder plugin, so it adds no information. Bodies only
   when a critical bug/security reason must be recorded. Keep subjects ≤ ~72
   chars.
 
@@ -74,23 +75,47 @@ never read or write your real Hermes state.
       atomic temp-then-rename helper.
 - [ ] No new hardcoded credentials or endpoints beyond the pinned Q/OIDC hosts.
 
+## Branch flow
+
+1. Branch from `main`: `<type>/kebab-case-topic` (e.g. `fix/adapter-timeout`,
+   `docs/branch-flow`). One branch per change; one PR per branch.
+2. Push early and open a draft PR when work spans both environments, so the
+   other side reviews instead of duplicating the work.
+3. Before merge, sync with `main`: rebase if the branch is private to you,
+   merge `main` into the branch if both environments share it. Never rewrite
+   history someone else may have pulled — force-push only your own PR branch,
+   and only with `--force-with-lease`.
+4. Merge requirements: CI green, `verify.py` green, review comments addressed.
+   Merge with a merge commit (preserves review context); never commit directly
+   to `main`.
+5. Delete the branch after merge so `git branch -r` stays readable.
+
 ## Submitting
 
 1. Fork / branch, make focused commits, keep the suite green.
-2. Run `pytest` and `verify.py` before pushing.
-3. Open a PR describing the change and any live-testing you performed.
-4. Use GitHub alert syntax in the PR body to call out critical information:
+2. Branch name uses a Conventional Commits type prefix with kebab-case scope:
+   `feat/…`, `fix/…`, `sec/…`, `refactor/…`, `test/…`, `docs/…`, `chore/…`.
+3. Run `pytest` and `verify.py` before pushing.
+4. Open a PR describing the change and any live-testing you performed.
+5. Use GitHub alert syntax in the PR body to call out critical information
+   (blockquote form — bare `[!...]` markers render as literal text):
 
-   - `[!IMPORTANT]` — changes that affect install/uninstall flow, config
-     migration, or workflow scope requirements (e.g., "CI changes excluded;
-     follow-up PR needed").
-   - `[!WARNING]` — hard gates that must not be bypassed (e.g., "`verify.py`
-     reports a secret leak"; "do not merge while adapter loopback guard is
-     weakened").
-   - `[!NOTE]` — informational context that affects review (e.g., "tested only
-     on Windows; CI covers Ubuntu").
-   - `[!CAUTION]` — behavioral changes that could surprise users (e.g., "token
-     store path changed"; "Python floor lowered").
+   > [!IMPORTANT]
+   > changes that affect install/uninstall flow, config migration, or
+   > workflow scope requirements (e.g., "CI changes excluded; follow-up
+   > PR needed").
+
+   > [!WARNING]
+   > hard gates that must not be bypassed (e.g., "`verify.py` reports a
+   > secret leak"; "do not merge while adapter loopback guard is weakened").
+
+   > [!NOTE]
+   > informational context that affects review (e.g., "tested only on
+   > Windows; CI covers Ubuntu").
+
+   > [!CAUTION]
+   > behavioral changes that could surprise users (e.g., "token store path
+   > changed"; "Python floor lowered").
 
    Place alerts at the top of the PR body so they are visible without
    scrolling.
