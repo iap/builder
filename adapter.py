@@ -64,8 +64,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 # Cap per-request body so a declared large Content-Length with no payload
-# can't hang the thread indefinitely. Q answers are small; 1 MiB is generous.
+# can't exhaust memory. Q answers are small; 1 MiB is generous.
 _MAX_REQUEST_BYTES = 1 * 1024 * 1024
+
+# Max seconds to wait for a request body. Loopback reads complete in
+# milliseconds; this only fires on stalled/partial sends (slow-loris), where
+# an allowed-size Content-Length with an incomplete body would otherwise hold
+# the handler thread indefinitely.
+_REQUEST_READ_TIMEOUT_S = 10
 
 
 # IPv6-capable server: the stdlib ThreadingHTTPServer binds AF_INET only,
@@ -565,12 +571,31 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             length = max(0, int(self.headers.get("Content-Length", "0")))
             # Cap per-request body so a declared large Content-Length with no
-            # payload can't hang the thread indefinitely.
+            # payload can't exhaust memory.
             if length > _MAX_REQUEST_BYTES:
                 self._send(413, json.dumps({"error": "payload too large"}).encode())
                 return
-            raw = self.rfile.read(length) if length else b"{}"
+            # Bound the body read so a stalled client declaring an allowed-size
+            # body can't hold this handler thread indefinitely (slow-loris).
+            # The timeout covers ONLY the read and is cleared before backend
+            # work / streaming writes, so slow SSE consumers are unaffected.
+            # getattr: unit tests drive do_POST with a stub handler lacking a
+            # real socket — skip the timeout there.
+            conn = getattr(self, "connection", None)
+            if conn is not None and length:
+                conn.settimeout(_REQUEST_READ_TIMEOUT_S)
+            try:
+                raw = self.rfile.read(length) if length else b"{}"
+            finally:
+                if conn is not None and length:
+                    conn.settimeout(None)
             body = json.loads(raw.decode("utf-8") or "{}")
+        except TimeoutError:
+            self._send(408, json.dumps({"error": "request timeout"}).encode())
+            # The timed-out socket object refuses further reads; don't let the
+            # keep-alive loop attempt another request on it (noisy traceback).
+            self.close_connection = True
+            return
         except Exception as exc:
             self._send(400, json.dumps({"error": f"bad request: {exc}"}).encode())
             return
