@@ -17,14 +17,13 @@ import pytest
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="bash unavailable")
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "setup.sh"
-# Flexible regex that handles both CRLF and LF line endings
 _HEREDOC = re.search(
-    r"<<'PY'\r?\n(import sys[, ]*yaml)\r?\n(.*?)\r?\nPY\r?\n",
+    r"<<'PY'\r?\nimport sys, yaml\r?\n(.*?)\r?\nPY\r?\n",
     _SCRIPT.read_text(encoding="utf-8"),
     re.DOTALL,
 )
 assert _HEREDOC, "setup.sh block-generation heredoc not found"
-_BLOCK_CODE = _HEREDOC.group(1) + "\n" + _HEREDOC.group(2)
+_BLOCK_CODE = "import sys, yaml\n" + _HEREDOC.group(1)
 
 
 def _generate(manifest_text, tmp_path, monkeypatch):
