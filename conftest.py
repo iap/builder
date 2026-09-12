@@ -58,6 +58,7 @@ try:
 except OSError:
     # Windows: symlinks require admin privileges. Fall back to a copy.
     import shutil
+
     shutil.copytree(PLUGIN_DIR, plugin_link)
 (TEST_HERMES_HOME / "config.yaml").write_text(
     yaml.safe_dump({"plugins": {"enabled": ["builder"]}}),
