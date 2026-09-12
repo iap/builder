@@ -129,19 +129,23 @@ BUILD_LIVE=1 python3 -m pytest tests/ -q
 
 ## Commit style
 
-Conventional Commits-lite with the `builder` scope:
+Conventional Commits, without a scope:
 
 ```
-feat(builder): <subject>
-fix(builder): <subject>
-sec(builder): <subject>
-refactor(builder): <subject>
-test(builder): <subject>
-docs(builder): <subject>
-chore(builder): <subject>
+feat: <subject>
+fix: <subject>
+sec: <subject>
+refactor: <subject>
+test: <subject>
+docs: <subject>
+chore: <subject>
 ```
 
-Subject ≤ 72 chars. Body only when a critical bug or security reason must be recorded.
+No `(builder)` scope: this repo contains only the builder plugin, so the
+scope would be identical on every commit and carries no information. Past
+history still shows the old `type(builder):` form — leave it alone; the
+no-scope form applies going forward. Subject ≤ 72 chars. Body only when a
+critical bug or security reason must be recorded.
 
 ## Security checklist
 
