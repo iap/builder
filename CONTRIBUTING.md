@@ -75,6 +75,21 @@ never read or write your real Hermes state.
       atomic temp-then-rename helper.
 - [ ] No new hardcoded credentials or endpoints beyond the pinned Q/OIDC hosts.
 
+## Branch flow
+
+1. Branch from `main`: `<type>/kebab-case-topic` (e.g. `fix/adapter-timeout`,
+   `docs/branch-flow`). One branch per change; one PR per branch.
+2. Push early and open a draft PR when work spans both environments, so the
+   other side reviews instead of duplicating the work.
+3. Before merge, sync with `main`: rebase if the branch is private to you,
+   merge `main` into the branch if both environments share it. Never rewrite
+   history someone else may have pulled — force-push only your own PR branch,
+   and only with `--force-with-lease`.
+4. Merge requirements: CI green, `verify.py` green, review comments addressed.
+   Merge with a merge commit (preserves review context); never commit directly
+   to `main`.
+5. Delete the branch after merge so `git branch -r` stays readable.
+
 ## Submitting
 
 1. Fork / branch, make focused commits, keep the suite green.
