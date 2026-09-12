@@ -57,9 +57,20 @@ try:
     plugin_link.symlink_to(PLUGIN_DIR, target_is_directory=True)
 except OSError:
     # Windows: symlinks require admin privileges. Fall back to a copy.
+    # Exclude dev artifacts to keep the temp profile small.
     import shutil
 
-    shutil.copytree(PLUGIN_DIR, plugin_link)
+    ignore = shutil.ignore_patterns(
+        "__pycache__",
+        ".venv",
+        ".git",
+        ".pytest_cache",
+        "tests",
+        "docs",
+        "uv.lock",
+        ".github",
+    )
+    shutil.copytree(PLUGIN_DIR, plugin_link, ignore=ignore)
 (TEST_HERMES_HOME / "config.yaml").write_text(
     yaml.safe_dump({"plugins": {"enabled": ["builder"]}}),
     encoding="utf-8",

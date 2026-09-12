@@ -4,13 +4,15 @@ set -euo pipefail
 
 export PYTHONUTF8=1
 
-# Use python3 if available, otherwise fall back to python (Windows).
+# Use python3 if available, otherwise fall back to python, then py (Windows launcher).
 PYTHON="${PYTHON:-python3}"
 if ! command -v "$PYTHON" >/dev/null 2>&1; then
   if command -v python >/dev/null 2>&1; then
     PYTHON="python"
+  elif command -v py >/dev/null 2>&1; then
+    PYTHON="py -3"
   else
-    echo "✗ neither python3 nor python found on PATH" >&2
+    echo "✗ neither python3, python, nor py found on PATH" >&2
     exit 1
   fi
 fi

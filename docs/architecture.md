@@ -67,6 +67,8 @@ Writes/removes a `providers.aws-builder` entry in Hermes `config.yaml` so the ad
 
 Ownership detection uses `_is_our_entry()` (loopback base_url + provider name) — no private marker keys, which Hermes core would flag as unknown.
 
+Legacy migration: the provider slug was renamed `aws-build` → `aws-builder` for naming consistency. `_provider.py` detects and migrates entries written under the old slug so existing config isn't orphaned, and `unregister_provider()` removes entries at both slugs.
+
 Endpoints are pinned to `us-east-1` in code.
 
 ### `__init__.py` — tool registration
