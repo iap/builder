@@ -21,8 +21,9 @@ import pytest
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="bash unavailable")
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "setup.sh"
+# Flexible regex that handles both CRLF and LF line endings in setup.sh
 _HEREDOC = re.search(
-    r"<<'PY'\nimport sys, yaml\n(.*?)\nPY\n",
+    r"<<'PY'\r?\nimport sys, yaml\r?\n(.*?)\r?\nPY\r?\n",
     _SCRIPT.read_text(encoding="utf-8"),
     re.DOTALL,
 )
@@ -74,17 +75,14 @@ def test_setup_models_scalar_is_not_iterated(tmp_path, monkeypatch):
 
 
 def _run_setup(home, plugin_yaml=None):
-    """Run the real setup.sh against a temp HERMES_HOME holding a config.yaml.
-
-    plugin_yaml: optional manifest text installed at
-    <HERMES_HOME>/plugins/builder/plugin.yaml to test preference order."""
+    """Run the real setup.sh against a temp HERMES_HOME holding a config.yaml."""
     (home / "config.yaml").write_text("other: value\n", encoding="utf-8")
     if plugin_yaml is not None:
         installed = home / "plugins" / "builder"
         installed.mkdir(parents=True)
         (installed / "plugin.yaml").write_text(plugin_yaml, encoding="utf-8")
     subprocess.run(
-        ["bash", str(_SCRIPT)],
+        "bash", str(_SCRIPT)],
         check=True,
         capture_output=True,
         timeout=60,
@@ -99,7 +97,7 @@ def test_setup_runs_from_source_checkout_without_installed_plugin(tmp_path):
     out = _run_setup(tmp_path)
     assert "aws-builder:" in out
     assert "http://localhost:8088/v1" in out
-    assert "claude-haiku-4.5" in out  # catalog came from the source manifest
+    assert "claude-haiku-4.5" in out
 
 
 def test_setup_prefers_installed_manifest_over_source(tmp_path):
@@ -120,8 +118,8 @@ def test_setup_fails_cleanly_when_no_manifest_exists(tmp_path):
     home.mkdir()
     (home / "config.yaml").write_text("other: value\n", encoding="utf-8")
     proc = subprocess.run(
-        ["bash", str(src / "scripts" / "setup.sh")],
-        check=False,  # the failure (exit 1) is the assertion target
+        [bash, str(src / "scripts" / "setup.sh")],
+        check=False,
         capture_output=True,
         timeout=60,
         env={**os.environ, "HERMES_HOME": str(home), "AWS_BUILD_ADAPTER_PORT": "8088"},
@@ -155,7 +153,7 @@ def test_setup_then_uninstall_roundtrip_at_custom_port(tmp_path):
         "AWS_BUILD_ADAPTER_PORT": "9999",
     }
     subprocess.run(
-        ["bash", str(_SCRIPT)],
+        "bash", str(_SCRIPT)],
         check=True,
         capture_output=True,
         timeout=60,
@@ -175,7 +173,7 @@ def test_setup_then_uninstall_roundtrip_at_custom_port(tmp_path):
     uninstall_env["HERMES_HOME"] = str(home)
     uninstall = Path(__file__).resolve().parents[1] / "scripts" / "uninstall.sh"
     subprocess.run(
-        ["bash", str(uninstall)],
+        [bash, str(uninstall)],
         check=True,
         capture_output=True,
         timeout=60,
