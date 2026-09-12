@@ -627,7 +627,7 @@ def _load_model_override() -> list[str] | None:
     try:
         with open(_PLUGIN_YAML, "r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
-    except (OSError, ValueError):
+    except (OSError, ValueError, yaml.YAMLError):
         return None
     models = data.get("models")
     if isinstance(models, list) and models:
@@ -683,7 +683,7 @@ def _load_tag_override() -> list[str] | None:
     try:
         with open(_PLUGIN_YAML, "r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
-    except (OSError, ValueError):
+    except (OSError, ValueError, yaml.YAMLError):
         return None
     tags = data.get("tags")
     if isinstance(tags, list) and tags:

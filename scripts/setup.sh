@@ -222,7 +222,21 @@ if has_existing:
                 rel = (len(ln) - len(ln.lstrip())) - base
                 reindented.append(" " * max(0, ab_indent + rel) + ln.lstrip())
         raw_lines[ab_idx:end] = reindented
-    Path(cfg_path).write_text("\n".join(raw_lines) + "\n")
+
+def _atomic_write_lines(path, lines):
+    """Atomic write to path: temp file adjacent to target, then os.replace()."""
+    import os
+    from tempfile import NamedTemporaryFile
+    tmp = NamedTemporaryFile(
+        mode="w", dir=os.path.dirname(str(path)), delete=False, encoding="utf-8"
+    )
+    tmp.write("\n".join(lines) + "\n")
+    tmp.flush()
+    os.fsync(tmp.fileno())
+    tmp.close()
+    os.replace(tmp.name, str(path))
+
+    _atomic_write_lines(cfg_path, raw_lines)
     print("✓ updated providers: aws-builder in config.yaml (model catalog refreshed)")
     sys.exit(0)
 
@@ -246,7 +260,7 @@ else:
     if s in ("providers: {}", "providers: []"):
         raw_lines[prov_idx] = " " * (len(raw_lines[prov_idx]) - len(raw_lines[prov_idx].lstrip())) + "providers:"
     raw_lines[prov_idx + 1:prov_idx + 1] = block.splitlines()
-Path(cfg_path).write_text("\n".join(raw_lines) + "\n")
+_atomic_write_lines(cfg_path, raw_lines)
 PY
 
 if ! grep -qE '^[[:space:]]*aws-builder:' "$CONFIG"; then
@@ -311,12 +325,24 @@ for i, ln in enumerate(lines):
         plugins_idx = i
         break
 
+def _atomic_write(path_obj, text):
+    """Atomic write: temp file adjacent to target, then os.replace()."""
+    from tempfile import NamedTemporaryFile
+    tmp = NamedTemporaryFile(
+        mode="w", dir=str(path_obj.parent), delete=False, encoding="utf-8"
+    )
+    tmp.write(text)
+    tmp.flush()
+    os.fsync(tmp.fileno())
+    tmp.close()
+    os.replace(tmp.name, str(path_obj))
+
 if plugins_idx is None:
     lines.append("")
     lines.append("plugins:")
     lines.append("  enabled:")
     lines.append("    - builder")
-    p.write_text("\n".join(lines) + "\n")
+    _atomic_write(p, "\n".join(lines) + "\n")
     print("✓ added builder to plugins.enabled")
     sys.exit(0)
 
@@ -334,7 +360,7 @@ for i in range(plugins_idx + 1, len(lines)):
 if enabled_idx is None:
     lines.insert(plugins_idx + 1, "  enabled:")
     lines.insert(plugins_idx + 2, "    - builder")
-    p.write_text("\n".join(lines) + "\n")
+    _atomic_write(p, "\n".join(lines) + "\n")
     print("✓ added builder to plugins.enabled")
     sys.exit(0)
 
@@ -358,7 +384,7 @@ if already:
     sys.exit(0)
 
 lines.insert(insert_after + 1, f"{item_indent}- builder")
-p.write_text("\n".join(lines) + "\n")
+_atomic_write(p, "\n".join(lines) + "\n")
 print("✓ added builder to plugins.enabled")
 
 PY

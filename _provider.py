@@ -72,20 +72,21 @@ def _stamp_path() -> Any:
 def _stamp_provider_entry(entry: dict) -> None:
     """Best-effort: persist the provider entry the plugin just wrote.
 
-    setup.sh / register_provider may write ``base_url`` with a custom
-    ``AWS_BUILD_ADAPTER_PORT`` (e.g. :9999); a later run or uninstall.sh
-    without the env var set must still recognise that entry as ours. The
-    stamp records the FULL entry — a bare port would stay trusted forever
-    and make a later user-owned entry at that port look like ours (Greptile
-    P1) — and is written only after the entry is live in config, so a failed
-    save never leaves a phantom stamp (Greptile P1 "stamp after saving").
-    Never raises: a failed stamp only degrades ownership to the env/8088
-    base_url heuristic.
+    Atomic write (tempfile + os.replace) so a crash mid-write doesn't
+    corrupt adapter_stamp.json and degrade ownership detection.
     """
+    import tempfile
     try:
         stamp = _stamp_path()
         stamp.parent.mkdir(parents=True, exist_ok=True)
-        stamp.write_text(json.dumps(entry), encoding="utf-8")
+        fd, tmp = tempfile.mkstemp(
+            dir=str(stamp.parent), suffix=".tmp"
+        )
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry))
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, str(stamp))
     except (OSError, TypeError, ValueError):
         logger.debug("builder: could not persist provider entry stamp", exc_info=True)
 
@@ -261,9 +262,20 @@ def register_provider(port: int) -> bool:
 
     config = copy.deepcopy(config)
     providers = config.get("providers")
-    if not isinstance(providers, dict):
+    if isinstance(providers, dict):
+        pass
+    elif providers is None:
         providers = {}
         config["providers"] = providers
+    else:
+        # Non-dict providers (list, scalar, null from manual edit or old format):
+        # can't safely inject a dict entry into it. Log and skip rather than
+        # silently destroying all existing providers.
+        logger.warning(
+            "builder: providers is not a mapping (got %s); skipping provider registration",
+            type(providers).__name__,
+        )
+        return False
 
     # One-time migration: the provider slug was renamed aws-build -> aws-builder
     # for naming consistency (issue #20 / PR #21). Move any entry we previously

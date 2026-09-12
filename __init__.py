@@ -29,37 +29,35 @@ def _plugin_pre_tool_call(
     args: dict[str, Any],
     **kwargs: Any,
 ) -> dict[str, str] | None:
-    """Builder plugin guard: blocks dangerous tool calls.
+    """Builder plugin guard: blocks dangerous tool calls."""
+    import os as _os
 
-    Registered as a ``pre_tool_call`` hook in ``register()``. Hermes
-    core calls ``get_pre_tool_call_block_message()`` before dispatching
-    each tool call; the first ``{"action": "block", "message": "..."}``
-    return wins and prevents execution.
-
-    This defense-in-depth guard covers (a) future builder tool additions
-    and (b) any tool call that Hermes routes through the plugin's hook.
-    It is additive to Hermes's global ``approvals.mode`` — it does not
-    replace or override it.
-    """
-    _HERMES_CORE = (
-        os.path.expanduser("~/.hermes/hermes-agent"),
-        os.path.expanduser("~/.hermes/config.yaml"),
+    _HERMES_CORE = tuple(
+        _os.path.realpath(_os.path.expanduser(p))
+        for p in (
+            "~/.hermes/hermes-agent",
+            "~/.hermes/config.yaml",
+            "~/.hermes/plugins/builder",
+        )
     )
     _DESTRUCTIVE = (
         "rm -rf ",
+        "rm -fr ",
         "shutil.rmtree",
         "chmod -R",
         ">/dev/sda",
-        "mkfs",
+        "mkfs ",
+        "mkfs.",
         "dd if=",
+        "dd of=",
+        "del /f ",
+        "del /s ",
+        "rd /s ",
+        "rd /q ",
+        "format ",
+        "fsutil ",
     )
-    _PRIVILEGE = (
-        "sudo ",
-        "su -",
-        "su ",
-        "pkexec ",
-        "doas ",
-    )
+    _PRIVILEGE = ("sudo ", "su -", "su ", "pkexec ", "doas ")
 
     if tool_name == "terminal":
         cmd = (args.get("command") or "").strip()
@@ -68,31 +66,34 @@ def _plugin_pre_tool_call(
                 return {
                     "action": "block",
                     "message": (
-                        "\u26a0 Destructive shell command blocked by builder guard: "
-                        f"`{cmd[:200]}`. Set approvals.mode to 'off' in your "
-                        "Hermes config to allow auto-approval of non-destructive "
-                        "commands, or run this command directly from a terminal."
+                        "⚠ Destructive shell command blocked by builder guard: "
+                        f"`{cmd[:200]}`. Run this command directly from a terminal."
                     ),
                 }
+        # Block privilege escalation anywhere in the first token or as the
+        # first word of the command.
+        stripped = cmd.strip()
         for pattern in _PRIVILEGE:
-            if cmd.startswith(pattern):
+            if stripped.startswith(pattern) or f" {pattern}" in f" {stripped}":
                 return {
                     "action": "block",
                     "message": (
-                        "\u26a0 Privilege escalation blocked by builder guard: "
-                        f"`{cmd[:200]}`. Plugin-originated shell commands do "
-                        "not support sudo/su. Run such commands directly from "
-                        "a terminal session."
+                        "⚠ Privilege escalation blocked by builder guard: "
+                        f"`{cmd[:200]}`. Run such commands directly from a terminal session."
                     ),
                 }
     elif tool_name in ("write_file", "patch"):
         target = str(args.get("path") or args.get("file") or "")
+        try:
+            real_target = _os.path.realpath(_os.path.expanduser(target))
+        except Exception:
+            real_target = target
         for core_path in _HERMES_CORE:
-            if target.startswith(core_path):
+            if real_target.startswith(core_path):
                 return {
                     "action": "block",
                     "message": (
-                        "\u26a0 Write to Hermes protected path blocked by builder "
+                        "⚠ Write to Hermes protected path blocked by builder "
                         f"guard: `{target}`. Modifying Hermes core files may "
                         "break the installation."
                     ),
@@ -420,12 +421,6 @@ def register(ctx) -> None:
     if _registered:
         return
 
-    # Register the plugin-level tool guard as a pre_tool_call hook.
-    # Hermes core calls get_pre_tool_call_block_message() before
-    # dispatching each tool call; the first {"action": "block"}
-    # return wins and prevents execution.
-    ctx.register_hook("pre_tool_call", _plugin_pre_tool_call)
-
     for name, schema, handler, check_fn, emoji in _TOOLS:
         ctx.register_tool(
             name=name,
@@ -436,6 +431,9 @@ def register(ctx) -> None:
             emoji=emoji,
         )
 
+    # Register hook AFTER successful tool registration so a partial failure
+    # doesn't leave an orphaned hook with _registered=False.
+    ctx.register_hook("pre_tool_call", _plugin_pre_tool_call)
     _registered = True
 
     # Best-effort: start the local OpenAI-compatible adapter so Hermes can

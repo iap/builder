@@ -67,4 +67,9 @@ filterwarnings = [
 ]
 
 [tool.mise]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
 # tools are managed via mise's uv backend; see .mise.toml
