@@ -11,10 +11,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
-      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
-        with:
-          repository: iap/hermes-agent
-          path: hermes-agent
       - uses: astral-sh/setup-uv@094aa226ed0e8f079adf9b0803105ffdac7bb465
         with:
           version: "0.5.x"
@@ -24,13 +20,12 @@ jobs:
       - name: Install deps
         run: uv sync --extra dev
       - name: Lint
-        run: ruff check . --exclude hermes-agent
+        run: ruff check .
       - name: Format
-        run: ruff format --check . --exclude hermes-agent
+        run: ruff format --check .
       - name: Tests
         env:
           HERMES_HOME: ${{ github.workspace }}
-          PYTHONPATH: ${{ github.workspace }}/hermes-agent
         run: uv run pytest -x -q tests
 
   verify:
@@ -59,12 +54,10 @@ jobs:
     needs: verify
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
         with:
           repository: iap/hermes-agent
           path: hermes-agent
-      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
-        with:
-          path: plugin-src
       - uses: astral-sh/setup-uv@094aa226ed0e8f079adf9b0803105ffdac7bb465
         with:
           version: "0.5.x"
@@ -74,9 +67,9 @@ jobs:
           set -euo pipefail
           HM="${{ github.workspace }}/hm"
           mkdir -p "$HM/plugins"
-          ln -s "${{ github.workspace }}/plugin-src" "$HM/plugins/builder"
+          ln -s "${{ github.workspace }}" "$HM/plugins/builder"
           echo "HERMES_HOME=$HM" >> "$GITHUB_ENV"
-          cd "${{ github.workspace }}/plugin-src"
+          cd "${{ github.workspace }}"
           uv sync --extra dev
       - name: Integration tests
         env:
@@ -84,5 +77,5 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/hermes-agent
         run: |
           set -euo pipefail
-          cd "${{ github.workspace }}/plugin-src"
+          cd "${{ github.workspace }}"
           uv run pytest -x -q tests/integration
