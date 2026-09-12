@@ -87,7 +87,7 @@ def _plugin_pre_tool_call(
                 return {
                     "action": "block",
                     "message": (
-                        "\u26a0 Destructive shell command blocked by builder guard: "
+                        "⚠ Destructive shell command blocked by builder guard: "
                         f"`{cmd[:200]}`. Run this command directly from a terminal."
                     ),
                 }
@@ -97,7 +97,7 @@ def _plugin_pre_tool_call(
                     return {
                         "action": "block",
                         "message": (
-                            "\u26a0 Privilege escalation blocked by builder guard: "
+                            "⚠ Privilege escalation blocked by builder guard: "
                             f"`{cmd[:200]}`. Run such commands directly from a terminal session."
                         ),
                     }
@@ -114,7 +114,7 @@ def _plugin_pre_tool_call(
                 return {
                     "action": "block",
                     "message": (
-                        "\u26a0 Write to Hermes protected path blocked by builder "
+                        "⚠ Write to Hermes protected path blocked by builder "
                         f"guard: `{target}`. Modifying Hermes core files may "
                         "break the installation."
                     ),
@@ -126,11 +126,13 @@ def _tool_result_helpers():
     """Return Hermes's house (success, error) serializers with ensure_ascii=False."""
     try:
         from tools.registry import tool_error, tool_result  # type: ignore
+
         return tool_result, tool_error
     except ImportError:
         pass
     try:
         from registry import tool_error, tool_result  # type: ignore
+
         return tool_result, tool_error
     except ImportError:
         pass
