@@ -81,11 +81,18 @@ def _stamp_provider_entry(entry: dict) -> None:
         stamp = _stamp_path()
         stamp.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=str(stamp.parent), suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(json.dumps(entry))
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, str(stamp))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry))
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, str(stamp))
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except Exception:
+                pass
+            raise
     except (OSError, TypeError, ValueError):
         logger.debug("builder: could not persist provider entry stamp", exc_info=True)
 

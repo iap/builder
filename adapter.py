@@ -64,6 +64,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 
+# Cap per-request body so a declared large Content-Length with no payload
+# can't hang the thread indefinitely. Q answers are small; 1 MiB is generous.
+_MAX_REQUEST_BYTES = 1 * 1024 * 1024
+
+
 # IPv6-capable server: the stdlib ThreadingHTTPServer binds AF_INET only,
 # so a loopback IPv6 host (::1) raises gaierror "Address family for
 # hostname not supported" on Linux. Override address_family so the socket
@@ -562,6 +567,9 @@ class _Handler(BaseHTTPRequestHandler):
             length = max(0, int(self.headers.get("Content-Length", "0")))
             # Cap per-request body so a declared large Content-Length with no
             # payload can't hang the thread indefinitely.
+            if length > _MAX_REQUEST_BYTES:
+                self._send(413, json.dumps({"error": "payload too large"}).encode())
+                return
             raw = self.rfile.read(length) if length else b"{}"
             body = json.loads(raw.decode("utf-8") or "{}")
         except Exception as exc:

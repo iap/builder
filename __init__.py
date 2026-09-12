@@ -50,6 +50,8 @@ def _plugin_pre_tool_call(
         "mkfs.",
         "dd if=",
         "dd of=",
+    )
+    _DESTRUCTIVE_WIN = (
         "del /f ",
         "del /s ",
         "rd /s ",
@@ -59,10 +61,28 @@ def _plugin_pre_tool_call(
     )
     _PRIVILEGE = ("sudo ", "su -", "su ", "pkexec ", "doas ")
 
-    if tool_name == "terminal":
-        cmd = (args.get("command") or "").strip()
+    def _is_dangerous(cmd: str) -> str | None:
+        """Return the matched pattern if the command is dangerous, else None."""
+        lowered = cmd.lower()
         for pattern in _DESTRUCTIVE:
             if pattern in cmd:
+                return pattern
+        for pattern in _DESTRUCTIVE_WIN:
+            if pattern in lowered:
+                return pattern
+        return None
+
+    if tool_name == "terminal":
+        cmd = (args.get("command") or "").strip()
+        # Check the full command and each token split on shell separators.
+        import re as _re
+        tokens = _re.split(r'[;&|\n\r]+', cmd)
+        for segment in tokens:
+            segment = segment.strip()
+            if not segment:
+                continue
+            matched = _is_dangerous(segment)
+            if matched:
                 return {
                     "action": "block",
                     "message": (
@@ -70,18 +90,16 @@ def _plugin_pre_tool_call(
                         f"`{cmd[:200]}`. Run this command directly from a terminal."
                     ),
                 }
-        # Block privilege escalation anywhere in the first token or as the
-        # first word of the command.
-        stripped = cmd.strip()
-        for pattern in _PRIVILEGE:
-            if stripped.startswith(pattern) or f" {pattern}" in f" {stripped}":
-                return {
-                    "action": "block",
-                    "message": (
-                        "⚠ Privilege escalation blocked by builder guard: "
-                        f"`{cmd[:200]}`. Run such commands directly from a terminal session."
-                    ),
-                }
+            # Block privilege escalation anywhere in the first token.
+            for pattern in _PRIVILEGE:
+                if segment.startswith(pattern) or f" {pattern}" in f" {segment}":
+                    return {
+                        "action": "block",
+                        "message": (
+                            "⚠ Privilege escalation blocked by builder guard: "
+                            f"`{cmd[:200]}`. Run such commands directly from a terminal session."
+                        ),
+                    }
     elif tool_name in ("write_file", "patch"):
         target = str(args.get("path") or args.get("file") or "")
         try:
@@ -89,7 +107,9 @@ def _plugin_pre_tool_call(
         except OSError:
             real_target = target
         for core_path in _HERMES_CORE:
-            if real_target.startswith(core_path):
+            # Compare path components to avoid blocking sibling paths like
+            # ~/.hermes/config.yaml.bak or ~/.hermes/hermes-agent-notes/file.
+            if real_target.startswith(core_path + _os.sep) or real_target == core_path:
                 return {
                     "action": "block",
                     "message": (
