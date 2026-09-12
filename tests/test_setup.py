@@ -18,7 +18,7 @@ pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="bash unava
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "setup.sh"
 _HEREDOC = re.search(
-    r"<<'PY'\r?\nimport sys\r?\n\r?\nblockfile, plugin_yaml, port = sys\.argv\[1\], sys\.argv\[2\], sys\.argv\[3\]\r?\n(.*?)\r?\nPY\r?\n",
+    r"python3 - \"\$BLOCK_FILE\" \"\$PLUGIN_YAML\" \"\$PORT\" <<'PY'\r?\nimport sys\r?\n(.*?)\r?\nPY\r?\n",
     _SCRIPT.read_text(encoding="utf-8"),
     re.DOTALL,
 )
