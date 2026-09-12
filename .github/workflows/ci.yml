@@ -6,16 +6,21 @@ on:
   pull_request:
     branches: [main]
 
+# Least privilege: these jobs only read the repo and run tests.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
       - uses: astral-sh/setup-uv@094aa226ed0e8f079adf9b0803105ffdac7bb465
         with:
           version: "0.5.x"
       - run: uv --version
-      - run: uv tool install ruff@0.16
+      - run: uv tool install ruff@0.16.2
       - run: ruff --version
       - name: Install deps
         run: uv sync --extra dev
@@ -31,6 +36,7 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     needs: test
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
@@ -52,6 +58,7 @@ jobs:
   integration-test:
     runs-on: ubuntu-latest
     needs: verify
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
