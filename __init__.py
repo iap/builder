@@ -76,7 +76,7 @@ def _plugin_pre_tool_call(
         cmd = (args.get("command") or "").strip()
         # Check the full command and each token split on shell separators.
         import re as _re
-        tokens = _re.split(r'[;&|\n\r]+', cmd)
+        tokens = _re.split(r"[;&|\n\r]+", cmd)
         for segment in tokens:
             segment = segment.strip()
             if not segment:
