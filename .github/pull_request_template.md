@@ -14,24 +14,26 @@ Briefly describe the change and why it is needed.
 
 ## Branch
 
-This PR was opened from a branch using one of:
+This PR was opened from a branch using one of (matching a Conventional
+Commits-lite scope in `AGENTS.md`):
+- `feat/…`
 - `fix/…`
-- `bugs/…`
-- `feature/…`
-- `chore/…`
-- `docs/…`
-- `test/…`
-- `refactor/…`
 - `sec/…`
+- `refactor/…`
+- `test/…`
+- `docs/…`
+- `chore/…`
 
-[!IMPORTANT] Branch must use the Conventional Commits-lite prefix matching the PR scope.
+> [!IMPORTANT]
+> Branch prefix must match the PR's scope.
 
 ## Checklist
 
-- [ ] Tests pass: `python -m pytest -q -k "not adapter"`
+- [ ] Tests pass: `python3 -m pytest tests/ -q`
 - [ ] `verify.py` is green
 - [ ] No raw tokens/secrets in code, logs, or tool output
 - [ ] Adapter stays loopback-only unless an explicit guard is added
 - [ ] Updated docs/README if user-facing behavior changed
 
-[!WARNING] Do NOT merge if `verify.py` reports a secret leak. This is a hard gate.
+> [!WARNING]
+> Do NOT merge if `verify.py` reports a secret leak. This is a hard gate.
