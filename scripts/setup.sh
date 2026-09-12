@@ -243,23 +243,53 @@ import json
 import sys
 
 block_path, stamp_path = sys.argv[1], sys.argv[2]
+entry = None
 try:
+    import yaml
+
     with open(block_path, encoding="utf-8") as fh:
-        text = fh.read()
-    import re
-    match = re.search(r'aws-builder:\n(.*?)(?=\n\s*\w+:\n|\Z)', text, re.DOTALL)
-    if match:
-        block_text = "aws-builder:\n" + match.group(1)
-        entry = {}
-        for line in block_text.splitlines()[1:]:
-            if ':' in line:
-                key, val = line.split(':', 1)
-                entry[key.strip()] = val.strip()
-        if entry.get("base_url"):
-            with open(stamp_path, "w", encoding="utf-8") as fh:
-                fh.write(json.dumps(entry))
+        block = yaml.safe_load(fh) or {}
+    candidate = block.get("aws-builder")
+    if isinstance(candidate, dict):
+        entry = candidate
+except Exception:
+    entry = None
+if entry is None:
+    # No PyYAML: parse the generated block text directly. Only take scalar
+    # fields at the entry's own indent (nested `models:` keys are skipped),
+    # and strip YAML quote delimiters so stamped values compare equal to the
+    # unquoted scalars uninstall.sh extracts from config.yaml.
+    try:
+        with open(block_path, encoding="utf-8") as fh:
+            text = fh.read()
+        import re
+
+        match = re.search(r'aws-builder:\n(.*?)(?=\n\s*\w+:\n|\Z)', text, re.DOTALL)
+        if match:
+            entry = {}
+            field_indent = None
+            for line in ("aws-builder:\n" + match.group(1)).splitlines()[1:]:
+                if not line.strip() or ":" not in line:
+                    continue
+                indent = len(line) - len(line.lstrip())
+                if field_indent is None:
+                    field_indent = indent
+                if indent != field_indent:
+                    continue
+                key, val = line.split(":", 1)
+                val = val.strip()
+                if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+                    val = val[1:-1]
+                if key.strip():
+                    entry[key.strip()] = val
+    except Exception:
+        entry = None
+try:
+    if isinstance(entry, dict) and entry.get("base_url"):
+        with open(stamp_path, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry))
 except Exception as exc:
-    print(f"  (skipped stamp: {exc})" >&2)
+    print(f"  (skipped stamp: {exc})", file=sys.stderr)
 PY
 
 # Ensure builder is in plugins.enabled.
