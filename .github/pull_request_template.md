@@ -18,6 +18,13 @@ This PR was opened from a branch using one of:
 - `fix/…`
 - `bugs/…`
 - `feature/…`
+- `chore/…`
+- `docs/…`
+- `test/…`
+- `refactor/…`
+- `sec/…`
+
+[!IMPORTANT] Branch must use the Conventional Commits-lite prefix matching the PR scope.
 
 ## Checklist
 
@@ -26,3 +33,5 @@ This PR was opened from a branch using one of:
 - [ ] No raw tokens/secrets in code, logs, or tool output
 - [ ] Adapter stays loopback-only unless an explicit guard is added
 - [ ] Updated docs/README if user-facing behavior changed
+
+[!WARNING] Do NOT merge if `verify.py` reports a secret leak. This is a hard gate.
