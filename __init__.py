@@ -76,6 +76,7 @@ def _plugin_pre_tool_call(
         cmd = (args.get("command") or "").strip()
         # Check the full command and each token split on shell separators.
         import re as _re
+
         tokens = _re.split(r"[;&|\n\r]+", cmd)
         for segment in tokens:
             segment = segment.strip()
@@ -86,7 +87,7 @@ def _plugin_pre_tool_call(
                 return {
                     "action": "block",
                     "message": (
-                        "⚠ Destructive shell command blocked by builder guard: "
+                        "\u26a0 Destructive shell command blocked by builder guard: "
                         f"`{cmd[:200]}`. Run this command directly from a terminal."
                     ),
                 }
@@ -96,7 +97,7 @@ def _plugin_pre_tool_call(
                     return {
                         "action": "block",
                         "message": (
-                            "⚠ Privilege escalation blocked by builder guard: "
+                            "\u26a0 Privilege escalation blocked by builder guard: "
                             f"`{cmd[:200]}`. Run such commands directly from a terminal session."
                         ),
                     }
@@ -113,7 +114,7 @@ def _plugin_pre_tool_call(
                 return {
                     "action": "block",
                     "message": (
-                        "⚠ Write to Hermes protected path blocked by builder "
+                        "\u26a0 Write to Hermes protected path blocked by builder "
                         f"guard: `{target}`. Modifying Hermes core files may "
                         "break the installation."
                     ),
@@ -122,23 +123,14 @@ def _plugin_pre_tool_call(
 
 
 def _tool_result_helpers():
-    """Return Hermes's house (success, error) serializers with ensure_ascii=False.
-
-    Delegates to ``tools.registry.tool_result`` / ``tool_error`` so plugin
-    output is byte-identical to core tools: valid JSON with ``ensure_ascii=False``
-    (non-ASCII text like "café" / "—" / CJK is NOT escaped to ``\u0058\u0058\u0058\u0058`` escapes
-    in JSON, which corrupts the answer when the TUI renders it verbatim). Relative-first/absolute
-    fallback import matches the pattern auth/sso_oidc uses under Hermes core.
-    """
+    """Return Hermes's house (success, error) serializers with ensure_ascii=False."""
     try:
         from tools.registry import tool_error, tool_result  # type: ignore
-
         return tool_result, tool_error
-    except ImportError:  # __main__ / tests where hermes-agent is on sys.path
+    except ImportError:
         pass
     try:
         from registry import tool_error, tool_result  # type: ignore
-
         return tool_result, tool_error
     except ImportError:
         pass
@@ -169,15 +161,7 @@ def _error(message: str, code: str = "error") -> str:
 
 
 def _check_available() -> bool:
-    """Placeholder check_fn — always True.
-
-    The real auth/import guard is per-tool: each handler wraps its own
-    calls in try/except and surfaces errors cleanly (see
-    _handle_ask_q, _handle_bid_status, etc.). Maintaining a separate
-    pre-flight check that only tests whether get_status can be imported
-    (not whether the user is authenticated) was a false positive gate
-    that unnecessarily blocked read-only tools like q_debug and models
-    even when the plugin was fully functional."""
+    """Placeholder check_fn — always True."""
     return True
 
 
@@ -206,9 +190,6 @@ def _handle_ask_q(args: dict[str, Any], **kwargs: Any) -> str:
 
 def _handle_bid_login(args: dict[str, Any], **kwargs: Any) -> str:
     try:
-        # Single token store (auth/sso_oidc auth/bid_token.json). start_login()
-        # guards re-auth when already authenticated, so no stale-token
-        # cleanup is needed here.
         info = start_login()
         if info.get("already_authenticated"):
             return _success(
@@ -249,7 +230,6 @@ def _handle_bid_show_identity(args: dict[str, Any], **kwargs: Any) -> str:
 
 def _handle_bid_logout(args: dict[str, Any], **kwargs: Any) -> str:
     try:
-        # logout() clears the sso mirror (auth/bid_token.json, auth/bid_registration.json, auth/bid_flow.json).
         logout()
         return _success({"message": "Logged out; secrets cleared."})
     except Exception as exc:
@@ -266,12 +246,7 @@ def _handle_tags(args: dict[str, Any], **kwargs: Any) -> str:
 
 
 def _handle_q_debug(args: dict[str, Any], **kwargs: Any) -> str:
-    """Lightweight calibration/debug snapshot for Hermes TUI/CLI tuning.
-
-    Returns auth/model metadata plus the active host render prefs (mode/theme)
-    so a Q-backed agent can self-adapt its output to the running Hermes CLI/TUI
-    without manual calibration. No raw token, no client secret.
-    """
+    """Lightweight calibration/debug snapshot for Hermes TUI/CLI tuning."""
     try:
         status = get_status()
     except Exception as exc:
@@ -328,7 +303,7 @@ _TOOLS = (
                     },
                     "model": {
                         "type": "string",
-                        "description": "Model to use; sent to Q as modelId. Defaults to 'auto' (Q picks). Named Claude variants are advertised but the account's entitlement decides which are usable.",
+                        "description": "Model to use; sent to Q as modelId.",
                         "enum": [*list_models()],
                     },
                     "conversation_id": {
@@ -405,7 +380,7 @@ _TOOLS = (
         "tags",
         {
             "name": "tags",
-            "description": "List free-form tags describing the AWS Builder ID plugin (aws, amazon-q, claude, chat, builder-id, auth).",
+            "description": "List free-form tags describing the AWS Builder ID plugin.",
             "parameters": {"type": "object", "properties": {}},
         },
         _handle_tags,
@@ -427,16 +402,7 @@ _TOOLS = (
 
 
 def register(ctx) -> None:
-    """Register all builder plugin tools + start the OpenAI adapter.
-
-    The adapter lets builder be a *selectable chat model* in the Hermes
-    TUI/CLI (Way A): it speaks OpenAI's /v1/chat/completions wire
-    format on the Hermes side and translates to Q via backend.chat(). It is
-    launched as a daemon background thread here (dies with the Hermes
-    session) — the plugin's own in-process OpenAI adapter on :8088
-    (NOT a separate standalone server). If it fails to bind
-    we log and continue; the ask_q tool still works tool-only.
-    """
+    """Register all builder plugin tools + start the OpenAI adapter."""
     global _registered
     if _registered:
         return
@@ -474,10 +440,6 @@ def register(ctx) -> None:
             actual,
         )
     except OSError as exc:
-        # If the adapter is already running (another active Hermes session
-        # bound the port), that is healthy — skip the warning. Surface
-        # everything else. Probe the port (not just this process's _server)
-        # so the warning is suppressed when another session owns it.
         if not adapter.is_running(host=adapter.HOST, port=port):
             logger.warning(
                 "builder adapter failed to start (tool-only mode OK): %s", exc
@@ -486,9 +448,6 @@ def register(ctx) -> None:
     except Exception as exc:  # noqa: BLE001
         logger.warning("builder adapter failed to start (tool-only mode OK): %s", exc)
         _srv = None
-    # Surface the adapter as a selectable model provider in the dashboard
-    # Models picker (see https://github.com/iap/builder/issues/20). Best-effort:
-    # if config is unavailable or a user already manages this provider, skip.
     if actual is not None:
         try:
             from . import _provider  # package import
