@@ -15,7 +15,7 @@ Briefly describe the change and why it is needed.
 ## Branch
 
 This PR was opened from a branch using one of (matching a Conventional
-Commits-lite scope in `AGENTS.md`):
+Commits type in `AGENTS.md`):
 - `feat/…`
 - `fix/…`
 - `sec/…`
