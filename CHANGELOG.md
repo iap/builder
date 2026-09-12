@@ -1,8 +1,9 @@
 # Changelog
 
 All notable changes to the Hermes Builder plugin are documented here.
-Format inspired by [Keep a Changelog](https://keepachangelog.com/),
-commits use Conventional Commits-lite with the `builder` scope.
+Format inspired by [Keep a Changelog](https://keepachangelog.com/).
+History uses Conventional Commits-lite with the `builder` scope;
+new commits use scope-less Conventional Commits (see `AGENTS.md`).
 
 ## [Unreleased]
 
