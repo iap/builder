@@ -33,7 +33,7 @@ def _generate(manifest_text, tmp_path, monkeypatch):
     monkeypatch.setattr(
         sys, "argv", ["setup.py", str(blockfile), str(plugin_yaml), "8088"]
     )
-    exec(compile(_BLOCK_CODE, "<setup_block>", "exec"), {})
+    exec(compile(_BLOCK_CODE, "<setup_block>", "exec"), {})  # noqa: S102
     return blockfile.read_text(encoding="utf-8")
 
 
