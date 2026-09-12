@@ -63,7 +63,6 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-
 # Cap per-request body so a declared large Content-Length with no payload
 # can't hang the thread indefinitely. Q answers are small; 1 MiB is generous.
 _MAX_REQUEST_BYTES = 1 * 1024 * 1024

@@ -90,7 +90,7 @@ def _stamp_provider_entry(entry: dict) -> None:
         except Exception:
             try:
                 os.unlink(tmp)
-            except Exception:
+            except OSError:
                 pass
             raise
     except (OSError, TypeError, ValueError):
