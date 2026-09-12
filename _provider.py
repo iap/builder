@@ -76,6 +76,7 @@ def _stamp_provider_entry(entry: dict) -> None:
     corrupt adapter_stamp.json and degrade ownership detection.
     """
     import tempfile
+
     try:
         stamp = _stamp_path()
         stamp.parent.mkdir(parents=True, exist_ok=True)
