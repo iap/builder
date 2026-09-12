@@ -340,7 +340,7 @@ PY
 
 echo
 echo "NEXT: restart Hermes, then in TUI/CLI use '-m aws-builder' or pick 'AWS Builder'."
-echo "      (login once with: bid_login  — approve in browser)"
+echo "      (login once with: bid_login — approve in browser)"
 
 # Best-effort reachability probe.
 if command -v curl >/dev/null 2>&1; then
