@@ -118,7 +118,7 @@ def test_setup_fails_cleanly_when_no_manifest_exists(tmp_path):
     home.mkdir()
     (home / "config.yaml").write_text("other: value\n", encoding="utf-8")
     proc = subprocess.run(
-        [bash, str(src / "scripts" / "setup.sh")],
+        ["bash", str(src / "scripts" / "setup.sh")],
         check=False,
         capture_output=True,
         timeout=60,
@@ -173,7 +173,7 @@ def test_setup_then_uninstall_roundtrip_at_custom_port(tmp_path):
     uninstall_env["HERMES_HOME"] = str(home)
     uninstall = Path(__file__).resolve().parents[1] / "scripts" / "uninstall.sh"
     subprocess.run(
-        [bash, str(uninstall)],
+        ["bash", str(uninstall)],
         check=True,
         capture_output=True,
         timeout=60,
