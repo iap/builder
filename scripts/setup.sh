@@ -69,7 +69,7 @@ fi
 
 # Generate the provider block — handles missing pyyaml gracefully.
 python3 - "$BLOCK_FILE" "$PLUGIN_YAML" "$PORT" <<'PY'
-import sys
+import sys, yaml
 
 blockfile, plugin_yaml, port = sys.argv[1], sys.argv[2], sys.argv[3]
 
