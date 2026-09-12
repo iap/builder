@@ -23,7 +23,7 @@ _HEREDOC = re.search(
     re.DOTALL,
 )
 assert _HEREDOC, "setup.sh block-generation heredoc not found"
-_BLOCK_CODE = "import sys\n" + _HEREDOC.group(1)
+_BLOCK_CODE = "import sys\nblockfile, plugin_yaml, port = sys.argv[1], sys.argv[2], sys.argv[3]\n" + _HEREDOC.group(1)
 
 
 def _generate(manifest_text, tmp_path, monkeypatch):
