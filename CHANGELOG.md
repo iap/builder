@@ -4,6 +4,30 @@ All notable changes to the Hermes Builder plugin are documented here.
 Format inspired by [Keep a Changelog](https://keepachangelog.com/),
 commits use Conventional Commits-lite with the `builder` scope.
 
+## [Unreleased]
+
+### Fixed
+
+- **`_provider.py` — `unregister_provider()` legacy slug mismatch** — the loop removed `"builder"` entries but the actual legacy slug is `"aws-build"`, leaving old config entries orphaned after unregister. Now iterates `("aws-builder", "aws-build")`.
+- **`conftest.py` — Windows symlink failure** — the test fixture used `symlink_to()` which requires admin privileges on Windows, breaking the entire test suite for non-admin users. Falls back to `shutil.copytree` when symlinks fail with `OSError`.
+- **`tests/test_dashboard.py` — hard `fastapi` import** — importing `fastapi` at module level aborted test collection when `fastapi` wasn't installed. Now uses `pytest.importorskip()` so the suite runs without dev deps.
+- **`scripts/setup.sh` — `python3` not found on Windows** — the script assumed `python3` is on PATH (it isn't on Windows). Now uses `${PYTHON:-python3}` with a `python` fallback, and the `PYTHON` env var for explicit control.
+- **`scripts/uninstall.sh` — same `python3` issue** — applied the same `PYTHON` fallback as `setup.sh`.
+
+### Changed
+
+- **`dashboard/manifest.json` — version bump 1.0.0 → 1.1.0** — matched the version in `plugin.yaml` and `pyproject.toml`.
+- **`pyproject.toml` — removed empty `[tool.ty]` section** — `ty` config was unused dead config.
+- **`pytest.ini` — clarified filterwarnings comment** — the comment incorrectly implied no filter existed, but `pyproject.toml` has one.
+- **`pyproject.toml` — Python 3.12 → 3.11** — matching hermes-agent's `requires-python = ">=3.11,<3.14"` floor.
+- **`CONTRIBUTING.md` and `docs/architecture.md` — removed confusing `region.py` reference** — the file doesn't exist; replaced with a direct statement that endpoints are pinned to `us-east-1`.
+- **`docs/testing.md` — removed `test_chat_dispatch.py` reference** — file doesn't exist at that path; the integration test exists at `tests/integration/test_chat_dispatch.py` but is not a top-level test.
+
+### Tests
+
+- 241 tests pass, 1 skipped (live OIDC), 0 failures.
+- `verify.py` — all 30 checks passed.
+
 ## [1.1.0] — 2026-08-08
 
 ### Summary

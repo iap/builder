@@ -27,7 +27,7 @@ set up, test, and submit changes.
 
 The plugin is a Hermes Agent plugin. It needs:
 
-- Python 3.12+ (the Hermes agent venv is at `<HERMES_HOME>/hermes-agent/venv`).
+- Python 3.11+ (the Hermes agent venv is at `<HERMES_HOME>/hermes-agent/venv`).
 - `requests` and `botocore` (already present in the Hermes agent venv).
 - A Builder ID token for any **live** chat/auth calls (see `bid_login`).
 
