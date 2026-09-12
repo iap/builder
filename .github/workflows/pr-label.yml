@@ -18,7 +18,9 @@ jobs:
             const labels = {
               'fix/': 'bug',
               'bugs/': 'bug',
-              'feature/': 'enhancement'
+              'feat/': 'enhancement',
+              'feature/': 'enhancement',
+              'docs/': 'documentation'
             }
             const mapping = Object.entries(labels).find(([prefix]) => branch.startsWith(prefix))
             if (!mapping) return
