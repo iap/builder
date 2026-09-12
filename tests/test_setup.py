@@ -23,7 +23,7 @@ _HEREDOC = re.search(
     re.DOTALL,
 )
 assert _HEREDOC, "setup.sh block-generation heredoc not found"
-_BLOCK_CODE = "import sys\nblockfile, plugin_yaml, port = sys.argv[1], sys.argv[2], sys.argv[3]\n" + _HEREDOC.group(1)
+_BLOCK_CODE = _HEREDOC.group(1)
 
 
 def _generate(manifest_text, tmp_path, monkeypatch):
@@ -33,7 +33,8 @@ def _generate(manifest_text, tmp_path, monkeypatch):
     monkeypatch.setattr(
         sys, "argv", ["setup.py", str(blockfile), str(plugin_yaml), "8088"]
     )
-    exec(compile(_BLOCK_CODE, "<setup_block>", "exec"), {})  # noqa: S102
+    globals_ = {"sys": sys}
+    exec(compile(_BLOCK_CODE, "<setup_block>", "exec"), globals_)
     return blockfile.read_text(encoding="utf-8")
 
 
