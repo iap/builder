@@ -4,6 +4,17 @@ set -euo pipefail
 
 export PYTHONUTF8=1
 
+# Use python3 if available, otherwise fall back to python (Windows).
+PYTHON="${PYTHON:-python3}"
+if ! command -v "$PYTHON" >/dev/null 2>&1; then
+  if command -v python >/dev/null 2>&1; then
+    PYTHON="python"
+  else
+    echo "✗ neither python3 nor python found on PATH" >&2
+    exit 1
+  fi
+fi
+
 CONFIG="${HERMES_HOME:-$HOME/.hermes}/config.yaml"
 BACKUP="${CONFIG}.bak.$(date +%Y%m%d_%H%M%S)"
 PORT="${AWS_BUILD_ADAPTER_PORT:-8088}"
@@ -31,7 +42,7 @@ cp "$CONFIG" "$BACKUP"
 echo "✓ backed up config → $BACKUP"
 
 # Detect existing providers: block indentation.
-INDENT=$(python3 - "$CONFIG" <<'PY'
+INDENT=$("$PYTHON" - "$CONFIG" <<'PY'
 import sys
 from pathlib import Path
 
@@ -69,7 +80,7 @@ fi
 
 # Generate the provider block. Uses pyyaml if available, otherwise emits a
 # plain mapping. Works without pyyaml so setup.sh runs in minimal environments.
-python3 - "$BLOCK_FILE" "$PLUGIN_YAML" "$PORT" <<'PY'
+"$PYTHON" - "$BLOCK_FILE" "$PLUGIN_YAML" "$PORT" <<'PY'
 import sys
 
 blockfile, plugin_yaml, port = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -115,7 +126,7 @@ with open(blockfile, "w") as fh:
 PY
 
 # Rewrite the temp file with the detected indent and insert into config.
-python3 - "$CONFIG" "$INDENT" "$BLOCK_FILE" "$PORT" <<'PY'
+"$PYTHON" - "$CONFIG" "$INDENT" "$BLOCK_FILE" "$PORT" <<'PY'
 import sys
 from pathlib import Path
 
@@ -238,7 +249,7 @@ fi
 # Persist the provider entry stamp.
 PORT_DIR="${HERMES_HOME:-$HOME/.hermes}/builder"
 mkdir -p "$PORT_DIR"
-python3 - "$BLOCK_FILE" "$PORT_DIR/adapter_stamp.json" <<'PY'
+"$PYTHON" - "$BLOCK_FILE" "$PORT_DIR/adapter_stamp.json" <<'PY'
 import json
 import sys
 
@@ -293,7 +304,7 @@ except Exception as exc:
 PY
 
 # Ensure builder is in plugins.enabled.
-python3 - "$CONFIG" <<'PY'
+"$PYTHON" - "$CONFIG" <<'PY'
 import sys
 from pathlib import Path
 

@@ -24,6 +24,17 @@ set -euo pipefail
 # when stdout is a non-UTF-8 pipe (e.g. Windows cp1252 under redirect).
 export PYTHONUTF8=1
 
+# Use python3 if available, otherwise fall back to python (Windows).
+PYTHON="${PYTHON:-python3}"
+if ! command -v "$PYTHON" >/dev/null 2>&1; then
+  if command -v python >/dev/null 2>&1; then
+    PYTHON="python"
+  else
+    echo "✗ neither python3 nor python found on PATH" >&2
+    exit 1
+  fi
+fi
+
 CONFIG="${HERMES_HOME:-$HOME/.hermes}/config.yaml"
 
 if [[ ! -f "$CONFIG" ]]; then
@@ -39,7 +50,7 @@ fi
 #   * dangling model.provider      (if it pointed at the removed slug)
 # Sibling keys/providers and all user comments/formatting are preserved — we
 # never do a yaml.safe_load + safe_dump round-trip (that strips comments).
-python3 - "$CONFIG" <<'PY'
+"$PYTHON" - "$CONFIG" <<'PY'
 import sys
 import os
 from pathlib import Path
