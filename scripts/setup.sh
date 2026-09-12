@@ -191,11 +191,17 @@ def _atomic_write_lines(path, lines):
     tmp = NamedTemporaryFile(
         mode="w", dir=os.path.dirname(str(path)), delete=False, encoding="utf-8"
     )
-    tmp.write("\n".join(lines) + "\n")
-    tmp.flush()
-    os.fsync(tmp.fileno())
-    tmp.close()
-    os.replace(tmp.name, str(path))
+    try:
+        tmp.write("\n".join(lines) + "\n")
+        tmp.flush()
+        tmp.close()
+        os.replace(tmp.name, str(path))
+    except Exception:
+        try:
+            os.unlink(tmp.name)
+        except Exception:
+            pass
+        raise
 
 if has_existing:
     # Line-based replacement of the existing aws-builder block. Preserves the
