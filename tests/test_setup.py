@@ -20,7 +20,7 @@ pytestmark = pytest.mark.skipif(_BASH is None, reason="bash unavailable")
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "setup.sh"
 _HEREDOC = re.search(
-    r'"\$PYTHON" - "\$BLOCK_FILE" "\$PLUGIN_YAML" "\$PORT" <<\'PY\'\r?\nimport sys\r?\n(.*?)\r?\nPY\r?\n',
+    r'"\$\{PYCMD\[@\]\}" - "\$BLOCK_FILE" "\$PLUGIN_YAML" "\$PORT" <<\'PY\'\r?\nimport sys\r?\n(.*?)\r?\nPY\r?\n',
     _SCRIPT.read_text(encoding="utf-8"),
     re.DOTALL,
 )

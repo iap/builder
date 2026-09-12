@@ -4,15 +4,29 @@ set -euo pipefail
 
 export PYTHONUTF8=1
 
-# Use python3 if available, otherwise fall back to python, then py (Windows launcher).
-PYTHON="${PYTHON:-python3}"
-if ! command -v "$PYTHON" >/dev/null 2>&1; then
-  if command -v python >/dev/null 2>&1; then
-    PYTHON="python"
+# Resolve the Python interpreter into an argv array (PYCMD). Preference order:
+# explicit $PYTHON, then python3, python, then the Windows `py` launcher.
+# An array (not a plain "$PYTHON" string) is required because the `py -3`
+# fallback contains a space and must word-split at invocation — a quoted
+# "$PYTHON" would look for a binary literally named "py -3" (exit 127).
+# Bash 3.2 compatible; the array is never empty so `set -u` is safe.
+PYCMD=()
+if [[ -n "${PYTHON:-}" ]]; then
+  # Explicit override, may itself contain args (e.g. PYTHON="py -3").
+  # shellcheck disable=SC2206
+  PYCMD=($PYTHON)
+fi
+# Validate the head word; an invalid/blank override falls back to auto-detect.
+# (${PYCMD[0]:-} is set-u safe even when the split yields no words.)
+if [[ -z "${PYCMD[0]:-}" ]] || ! command -v "${PYCMD[0]}" >/dev/null 2>&1; then
+  if command -v python3 >/dev/null 2>&1; then
+    PYCMD=(python3)
+  elif command -v python >/dev/null 2>&1; then
+    PYCMD=(python)
   elif command -v py >/dev/null 2>&1; then
-    PYTHON="py -3"
+    PYCMD=(py -3)
   else
-    echo "✗ neither python3, python, nor py found on PATH" >&2
+    echo "✗ neither python3, python, nor py found on PATH (override with PYTHON)" >&2
     exit 1
   fi
 fi
@@ -44,7 +58,7 @@ cp "$CONFIG" "$BACKUP"
 echo "✓ backed up config → $BACKUP"
 
 # Detect existing providers: block indentation.
-INDENT=$("$PYTHON" - "$CONFIG" <<'PY'
+INDENT=$("${PYCMD[@]}" - "$CONFIG" <<'PY'
 import sys
 from pathlib import Path
 
@@ -82,7 +96,7 @@ fi
 
 # Generate the provider block. Uses pyyaml if available, otherwise emits a
 # plain mapping. Works without pyyaml so setup.sh runs in minimal environments.
-"$PYTHON" - "$BLOCK_FILE" "$PLUGIN_YAML" "$PORT" <<'PY'
+"${PYCMD[@]}" - "$BLOCK_FILE" "$PLUGIN_YAML" "$PORT" <<'PY'
 import sys
 
 blockfile, plugin_yaml, port = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -128,7 +142,7 @@ with open(blockfile, "w") as fh:
 PY
 
 # Rewrite the temp file with the detected indent and insert into config.
-"$PYTHON" - "$CONFIG" "$INDENT" "$BLOCK_FILE" "$PORT" <<'PY'
+"${PYCMD[@]}" - "$CONFIG" "$INDENT" "$BLOCK_FILE" "$PORT" <<'PY'
 import sys
 from pathlib import Path
 
@@ -251,7 +265,7 @@ fi
 # Persist the provider entry stamp.
 PORT_DIR="${HERMES_HOME:-$HOME/.hermes}/builder"
 mkdir -p "$PORT_DIR"
-"$PYTHON" - "$BLOCK_FILE" "$PORT_DIR/adapter_stamp.json" <<'PY'
+"${PYCMD[@]}" - "$BLOCK_FILE" "$PORT_DIR/adapter_stamp.json" <<'PY'
 import json
 import sys
 
@@ -306,7 +320,7 @@ except Exception as exc:
 PY
 
 # Ensure builder is in plugins.enabled.
-"$PYTHON" - "$CONFIG" <<'PY'
+"${PYCMD[@]}" - "$CONFIG" <<'PY'
 import sys
 from pathlib import Path
 
