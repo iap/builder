@@ -18,12 +18,12 @@ pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="bash unava
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "setup.sh"
 _HEREDOC = re.search(
-    r"<<'PY'\r?\nimport sys, yaml\r?\n(.*?)\r?\nPY\r?\n",
+    r"<<'PY'\r?\nimport sys\r?\n(.*?)\r?\nPY\r?\n",
     _SCRIPT.read_text(encoding="utf-8"),
     re.DOTALL,
 )
 assert _HEREDOC, "setup.sh block-generation heredoc not found"
-_BLOCK_CODE = "import sys, yaml\n" + _HEREDOC.group(1)
+_BLOCK_CODE = "import sys\n" + _HEREDOC.group(1)
 
 
 def _generate(manifest_text, tmp_path, monkeypatch):

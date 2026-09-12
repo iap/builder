@@ -70,7 +70,7 @@ fi
 # Generate the provider block. Uses pyyaml if available, otherwise emits a
 # plain mapping. Works without pyyaml so setup.sh runs in minimal environments.
 python3 - "$BLOCK_FILE" "$PLUGIN_YAML" "$PORT" <<'PY'
-import sys, yaml
+import sys
 
 blockfile, plugin_yaml, port = sys.argv[1], sys.argv[2], sys.argv[3]
 
