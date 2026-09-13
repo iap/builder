@@ -16,6 +16,7 @@ Hermes config without importing core.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 _cache: dict[str, str] | None = None
 _load_config_fn: Callable[[], dict] | None = None
@@ -58,3 +59,78 @@ def reset_prefs_cache() -> None:
     """Drop the cached prefs (tests)."""
     global _cache
     _cache = None
+
+
+def _plugin_transform_tool_result(
+    tool_name: str,
+    args: dict,
+    result: str,
+    **kwargs: Any,
+) -> str | None:
+    """Transform tool result for TUI display only.
+
+    Preserves the JSON envelope for structured callers (verify.py, scripts).
+    Only replaces the display string when render_mode is explicitly "tui".
+    """
+    try:
+        prefs = load_render_prefs()
+    except (KeyError, TypeError):
+        return None
+
+    render_mode = prefs.get("render_mode", "auto")
+    if render_mode != "tui":
+        return None
+
+    try:
+        import json
+
+        payload = json.loads(result)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    if tool_name == "models":
+        models = payload.get("models", [])
+        tags = payload.get("tags", [])
+        lines = ["Available models:"]
+        for m in models:
+            lines.append(f"  • {m}")
+        if tags:
+            lines.append("Tags:")
+            for t in tags:
+                lines.append(f"  • {t}")
+        return "\n".join(lines)
+
+    if tool_name == "tags":
+        tags = payload.get("tags", [])
+        return "Tags:\n" + "\n".join(f"  • {t}" for t in tags)
+
+    if tool_name == "q_debug":
+        return _format_q_debug_tui(payload)
+
+    return None
+
+
+def _format_q_debug_tui(payload: dict) -> str:
+    auth = payload.get("auth", {})
+    identity = payload.get("identity", {})
+    models = payload.get("models", [])
+    tags = payload.get("tags", [])
+    render = payload.get("render", [])
+
+    lines = ["Builder ID Status"]
+    lines.append(
+        f"  Auth: {'authenticated' if auth.get('authenticated') else 'not authenticated'} {auth.get('phase', 'unknown')}"
+    )
+    if auth.get("token_expires_at_iso"):
+        lines.append(f"  Expires: {auth['token_expires_at_iso']}")
+    if identity.get("token_type"):
+        lines.append(f"  Token: {identity['token_type']}")
+    if identity.get("has_refresh_token") is not None:
+        lines.append(f"  Refresh: {'yes' if identity['has_refresh_token'] else 'no'}")
+    if identity.get("scopes"):
+        lines.append(f"  Scopes: {', '.join(identity['scopes'])}")
+    lines.append(f"  Models: {', '.join(models)}")
+    lines.append(f"  Tags: {', '.join(tags)}")
+    if render:
+        lines.append(f"  Render: {render}")
+    return "\n".join(lines)

@@ -270,6 +270,7 @@ def _handle_q_debug(args: dict[str, Any], **kwargs: Any) -> str:
             "phase": status.get("phase"),
             "token_expires_at": status.get("token_expires_at"),
             "refreshed": status.get("refreshed"),
+            "token_expires_at_iso": status.get("token_expires_at_iso"),
         },
         "identity": {
             "token_type": identity.get("token_type"),
@@ -282,6 +283,24 @@ def _handle_q_debug(args: dict[str, Any], **kwargs: Any) -> str:
         "render": prefs,
     }
     return _success(payload)
+
+
+def _plugin_transform_tool_result(
+    tool_name: str,
+    args: dict,
+    result: str,
+    **kwargs: Any,
+) -> str | None:
+    """Transform tool result for TUI display only.
+
+    Preserves the JSON envelope for structured callers (verify.py, scripts).
+    Only replaces the display string when render_mode is explicitly "tui".
+    """
+    try:
+        from . import _format  # package import
+    except ImportError:
+        import _format  # type: ignore
+    return _format._plugin_transform_tool_result(tool_name, args, result, **kwargs)
 
 
 # --- tool registry ---
@@ -422,6 +441,7 @@ def register(ctx) -> None:
     # Register hook AFTER successful tool registration so a partial failure
     # doesn't leave an orphaned hook with _registered=False.
     ctx.register_hook("pre_tool_call", _plugin_pre_tool_call)
+    ctx.register_hook("transform_tool_result", _plugin_transform_tool_result)
     _registered = True
 
     # Best-effort: start the local OpenAI-compatible adapter so Hermes can
