@@ -74,10 +74,12 @@ def _run_setup(home, plugin_yaml=None):
         installed.mkdir(parents=True)
         (installed / "plugin.yaml").write_text(plugin_yaml, encoding="utf-8")
     env = {**os.environ, "HERMES_HOME": str(home), "AWS_BUILD_ADAPTER_PORT": "8088"}
-    # Ensure python is discoverable by setup.sh (Windows fallback).
-    python_path = shutil.which("python") or shutil.which("python3")
-    if python_path:
-        env["PYTHON"] = python_path
+    # Pin PYTHON to the interpreter running these tests, not whichever python happens
+    # to be on PATH. setup.sh does `import yaml` in a bare try/except and silently
+    # falls back to a hardcoded model list when that fails, so an unrelated
+    # interpreter makes these tests pass or fail based on its PyYAML rather than on
+    # setup.sh's behavior. PyYAML is a runtime dependency, so sys.executable has it.
+    env["PYTHON"] = sys.executable
     subprocess.run(
         [_BASH, str(_SCRIPT)],
         check=True,
@@ -137,9 +139,7 @@ def test_setup_then_uninstall_roundtrip_at_custom_port(tmp_path):
         "HERMES_HOME": str(home),
         "AWS_BUILD_ADAPTER_PORT": "9999",
     }
-    python_path = shutil.which("python") or shutil.which("python3")
-    if python_path:
-        setup_env["PYTHON"] = python_path
+    setup_env["PYTHON"] = sys.executable
     subprocess.run(
         [_BASH, str(_SCRIPT)],
         check=True,
@@ -159,8 +159,7 @@ def test_setup_then_uninstall_roundtrip_at_custom_port(tmp_path):
         k: v for k, v in os.environ.items() if k != "AWS_BUILD_ADAPTER_PORT"
     }
     uninstall_env["HERMES_HOME"] = str(home)
-    if python_path:
-        uninstall_env["PYTHON"] = python_path
+    uninstall_env["PYTHON"] = sys.executable
     uninstall = Path(__file__).resolve().parents[1] / "scripts" / "uninstall.sh"
     subprocess.run(
         [_BASH, str(uninstall)],

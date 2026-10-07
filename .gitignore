@@ -15,3 +15,5 @@ __pycache__/
 .pytest_cache/
 node_modules/
 .venv/
+# CI checks out hermes-agent here (pinned); never commit it
+hermes-agent/
