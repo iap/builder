@@ -10,6 +10,7 @@ requires-python = ">=3.11"
 dependencies = [
     "requests>=2.33",
     "PyYAML>=6.0",
+    "botocore>=1.42",
 ]
 
 [project.optional-dependencies]
@@ -20,9 +21,12 @@ dev = [
     "uvicorn>=0.52",
     "httpx>=0.28",
     "openai>=1.0",
-    "botocore>=1.42",
     "cryptography>=50.0.0",
     "ruff>=0.15",
+    # Needed only to import hermes-agent on PYTHONPATH in the CI
+    # integration-test job: hermes_cli.config -> hermes_yaml -> ruamel.yaml.
+    # Without it both integration modules skip at import and pytest exits 5.
+    "ruamel.yaml>=0.18",
 ]
 
 [tool.hatch.build.targets.wheel]
