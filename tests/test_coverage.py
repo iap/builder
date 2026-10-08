@@ -206,9 +206,11 @@ def test_unregister_joins_provider_worker_before_removing_entry():
         plugin._provider_worker = None
         plugin._registered = False
 
-    # The write must land BEFORE the removal, so the entry cannot survive.
-    assert order == ["stop", "write", "remove"], (
-        f"expected stop -> write -> remove, got {order}"
+    # The contract is write-before-remove. Whether "stop" or "write" lands
+    # first is a scheduling artifact of two independent threads, so assert the
+    # invariant rather than an exact sequence.
+    assert order.index("write") < order.index("remove"), (
+        f"provider entry would survive teardown: {order}"
     )
 
 
