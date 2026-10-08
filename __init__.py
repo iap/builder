@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Any
 
 try:
@@ -111,13 +112,35 @@ def _plugin_pre_tool_call(
             # Compare path components to avoid blocking sibling paths like
             # ~/.hermes/config.yaml.bak or ~/.hermes/hermes-agent-notes/file.
             if real_target.startswith(core_path + _os.sep) or real_target == core_path:
+                # Check if approval mechanism is enabled (default: true)
+                try:
+                    from hermes_cli.config import load_config
+
+                    cfg = load_config()
+                    guard_cfg = cfg.get("builder", {})
+                    approval_enabled = guard_cfg.get("guard_approval_enabled", True)
+                except Exception:  # noqa: BLE001
+                    approval_enabled = True  # fail open to approval path
+
+                if not approval_enabled:
+                    # Approval disabled — fall back to silent blocking
+                    return {
+                        "action": "block",
+                        "message": (
+                            "⚠ Write to Hermes protected path blocked by builder "
+                            f"guard: `{target}`. Modifying Hermes core files may "
+                            "break the installation."
+                        ),
+                    }
+
+                # Return approve action — dispatch layer calls request_tool_approval
                 return {
-                    "action": "block",
+                    "action": "approve",
                     "message": (
-                        "⚠ Write to Hermes protected path blocked by builder "
-                        f"guard: `{target}`. Modifying Hermes core files may "
-                        "break the installation."
+                        f"Builder guard: {tool_name} wants to write to protected path "
+                        f"`{target}` (matches `{core_path}`). Approve or deny this write."
                     ),
+                    "rule_key": "builder-guard",
                 }
     return None
 
@@ -152,6 +175,8 @@ def _tool_result_helpers():
 
 _TOOL_RESULT, _TOOL_ERROR = _tool_result_helpers()
 _registered = False
+_provider_worker: threading.Thread | None = None
+_provider_worker_lock = threading.Lock()
 
 
 def _success(data: dict[str, Any]) -> str:
@@ -471,16 +496,71 @@ def register(ctx) -> None:
         logger.warning("builder adapter failed to start (tool-only mode OK): %s", exc)
         _srv = None
     if actual is not None:
+        # Register the provider OFF the plugin-load deadline. register_provider()
+        # lazily imports hermes_cli.config, a cold import that measures 4.7s-12.6s
+        # on this host — the whole 10s plugin-load budget. Hermes caps import +
+        # register() (plugins_loader.py, default 10s), so paying that here makes
+        # the load non-deterministic: under CPU pressure the plugin times out and
+        # its tools vanish for the session. Deferring keeps the adapter bind (the
+        # part -m aws-builder needs) synchronous and moves only the best-effort
+        # config reconciliation to a daemon thread. Failure still degrades to
+        # tool-only mode, exactly as the inline call did. See issue #115.
+        _spawn_provider_registration(actual)
+
+
+def _spawn_provider_registration(port: int) -> None:
+    """Run _provider.register_provider(port) on a daemon thread.
+
+    The worker is tracked in ``_provider_worker`` so ``unregister()`` can join it
+    BEFORE removing the provider entry. Without that ordering a teardown can
+    delete the entry and have this in-flight write recreate it for an adapter
+    that is already stopped — an atomic write does not order the two.
+
+    Daemon, so a hung config write cannot keep the process alive; teardown does
+    not wait on a thread that never started.
+    """
+    global _provider_worker
+
+    def _run() -> None:
         try:
             from . import _provider  # package import
         except ImportError:  # __main__ / direct
             import _provider  # type: ignore
         try:
-            _provider.register_provider(actual)
+            _provider.register_provider(port)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "builder provider registration failed (tool-only mode OK): %s", exc
             )
+
+    worker = threading.Thread(
+        target=_run, name="builder-provider-register", daemon=True
+    )
+    with _provider_worker_lock:
+        _provider_worker = worker
+    worker.start()
+
+
+def _join_provider_worker(timeout: float = 5.0) -> None:
+    """Wait for an in-flight provider registration so teardown can order against it.
+
+    Idempotent: joining an already-finished or never-started worker is a no-op.
+    Best-effort — a timeout is logged and teardown continues, because losing the
+    provider entry is recoverable while wedging ``unregister()`` forever is not.
+    """
+    global _provider_worker
+    with _provider_worker_lock:
+        worker = _provider_worker
+        _provider_worker = None
+    if worker is None or not worker.is_alive():
+        return
+    worker.join(timeout)
+    if worker.is_alive():
+        logger.warning(
+            "builder provider registration still running after %.1fs; "
+            "teardown continues without it",
+            timeout,
+        )
 
 
 def unregister(ctx) -> None:
@@ -502,6 +582,10 @@ def unregister(ctx) -> None:
         logger.info("OpenAI adapter stopped (model-provider mode off)")
     except Exception as exc:  # noqa: BLE001
         logger.warning("builder adapter stop failed (ignore): %s", exc)
+    # Join the in-flight provider registration BEFORE removing the entry, so a
+    # late write cannot recreate providers.aws-builder for the adapter we just
+    # stopped. Ordering, not atomicity, is what closes this race.
+    _join_provider_worker()
     # Drop the model-provider entry we registered (no-op if user-managed).
     try:
         from . import _provider  # package import
