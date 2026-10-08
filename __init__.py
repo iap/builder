@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Any
 
 try:
@@ -174,6 +175,8 @@ def _tool_result_helpers():
 
 _TOOL_RESULT, _TOOL_ERROR = _tool_result_helpers()
 _registered = False
+_provider_worker: threading.Thread | None = None
+_provider_worker_lock = threading.Lock()
 
 
 def _success(data: dict[str, Any]) -> str:
@@ -508,11 +511,15 @@ def register(ctx) -> None:
 def _spawn_provider_registration(port: int) -> None:
     """Run _provider.register_provider(port) on a daemon thread.
 
-    Daemon, so a hung config write cannot keep the process alive; unregister()
-    does not wait on it, because the write is already idempotent
-    (_entries_equivalent) and atomic (atomic_config_write).
+    The worker is tracked in ``_provider_worker`` so ``unregister()`` can join it
+    BEFORE removing the provider entry. Without that ordering a teardown can
+    delete the entry and have this in-flight write recreate it for an adapter
+    that is already stopped — an atomic write does not order the two.
+
+    Daemon, so a hung config write cannot keep the process alive; teardown does
+    not wait on a thread that never started.
     """
-    import threading
+    global _provider_worker
 
     def _run() -> None:
         try:
@@ -526,7 +533,34 @@ def _spawn_provider_registration(port: int) -> None:
                 "builder provider registration failed (tool-only mode OK): %s", exc
             )
 
-    threading.Thread(target=_run, name="builder-provider-register", daemon=True).start()
+    worker = threading.Thread(
+        target=_run, name="builder-provider-register", daemon=True
+    )
+    with _provider_worker_lock:
+        _provider_worker = worker
+    worker.start()
+
+
+def _join_provider_worker(timeout: float = 5.0) -> None:
+    """Wait for an in-flight provider registration so teardown can order against it.
+
+    Idempotent: joining an already-finished or never-started worker is a no-op.
+    Best-effort — a timeout is logged and teardown continues, because losing the
+    provider entry is recoverable while wedging ``unregister()`` forever is not.
+    """
+    global _provider_worker
+    with _provider_worker_lock:
+        worker = _provider_worker
+        _provider_worker = None
+    if worker is None or not worker.is_alive():
+        return
+    worker.join(timeout)
+    if worker.is_alive():
+        logger.warning(
+            "builder provider registration still running after %.1fs; "
+            "teardown continues without it",
+            timeout,
+        )
 
 
 def unregister(ctx) -> None:
@@ -548,6 +582,10 @@ def unregister(ctx) -> None:
         logger.info("OpenAI adapter stopped (model-provider mode off)")
     except Exception as exc:  # noqa: BLE001
         logger.warning("builder adapter stop failed (ignore): %s", exc)
+    # Join the in-flight provider registration BEFORE removing the entry, so a
+    # late write cannot recreate providers.aws-builder for the adapter we just
+    # stopped. Ordering, not atomicity, is what closes this race.
+    _join_provider_worker()
     # Drop the model-provider entry we registered (no-op if user-managed).
     try:
         from . import _provider  # package import

@@ -138,6 +138,92 @@ def test_register_does_not_call_register_provider_inline(monkeypatch):
     monkeypatch.setattr(plugin, "_registered", False, raising=False)
 
 
+def test_unregister_joins_provider_worker_before_removing_entry():
+    """Teardown must wait for the in-flight provider write before removing the entry.
+
+    Otherwise unregister() deletes providers.aws-builder and the still-running
+    worker recreates it for the adapter teardown just stopped — a stale entry
+    pointing at a dead port. Atomicity does not order the two writes.
+    """
+    import sys
+    import threading
+    import types
+
+    import __init__ as plugin
+
+    order = []
+    release = threading.Event()
+    worker_started = threading.Event()
+
+    def _slow_register(port):
+        worker_started.set()
+        release.wait(timeout=5)
+        order.append("write")
+
+    stub = types.SimpleNamespace(
+        register_provider=_slow_register,
+        unregister_provider=lambda: order.append("remove"),
+    )
+    adapter_stub = types.SimpleNamespace(
+        HOST="localhost",
+        start=lambda port=8088: (object(), 18093),
+        is_running=lambda host="localhost", port=8088: False,
+        stop=lambda: order.append("stop"),
+    )
+    ctx = types.SimpleNamespace(
+        unregister_hook=lambda *a, **k: None,
+    )
+
+    real_mod = sys.modules.get("adapter")
+    try:
+        sys.modules["adapter"] = adapter_stub
+        sys.modules["_provider"] = stub
+        plugin._registered = True
+
+        plugin._spawn_provider_registration(18093)
+        assert worker_started.wait(timeout=5), "worker never started"
+
+        # Tear down while the worker is still blocked inside register_provider.
+        teardown = threading.Thread(target=plugin.unregister, args=(ctx,), daemon=True)
+        teardown.start()
+
+        # While the worker is held, teardown may stop the adapter but must NOT
+        # have removed the entry yet — removal must come after the write.
+        assert "remove" not in order, (
+            f"teardown removed before the write landed: {order}"
+        )
+
+        release.set()
+        teardown.join(timeout=10)
+        assert not teardown.is_alive(), "unregister() never returned"
+    finally:
+        release.set()
+        if real_mod is not None:
+            sys.modules["adapter"] = real_mod
+        else:
+            sys.modules.pop("adapter", None)
+        sys.modules.pop("_provider", None)
+        plugin._provider_worker = None
+        plugin._registered = False
+
+    # The write must land BEFORE the removal, so the entry cannot survive.
+    assert order == ["stop", "write", "remove"], (
+        f"expected stop -> write -> remove, got {order}"
+    )
+
+
+def test_join_provider_worker_is_a_noop_when_nothing_is_running():
+    """Teardown must not block when no registration is in flight."""
+    import time
+
+    import __init__ as plugin
+
+    plugin._provider_worker = None
+    t0 = time.perf_counter()
+    plugin._join_provider_worker()
+    assert (time.perf_counter() - t0) < 0.05
+
+
 def test_pre_tool_call_allows_safe():
     import __init__ as plugin
 
