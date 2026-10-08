@@ -111,13 +111,34 @@ def _plugin_pre_tool_call(
             # Compare path components to avoid blocking sibling paths like
             # ~/.hermes/config.yaml.bak or ~/.hermes/hermes-agent-notes/file.
             if real_target.startswith(core_path + _os.sep) or real_target == core_path:
+                # Check if approval mechanism is enabled (default: true)
+                try:
+                    from hermes_cli.config import load_config
+                    cfg = load_config()
+                    guard_cfg = cfg.get("builder", {})
+                    approval_enabled = guard_cfg.get("guard_approval_enabled", True)
+                except Exception:  # noqa: BLE001
+                    approval_enabled = True  # fail open to approval path
+
+                if not approval_enabled:
+                    # Approval disabled — fall back to silent blocking
+                    return {
+                        "action": "block",
+                        "message": (
+                            "⚠ Write to Hermes protected path blocked by builder "
+                            f"guard: `{target}`. Modifying Hermes core files may "
+                            "break the installation."
+                        ),
+                    }
+
+                # Return approve action — dispatch layer calls request_tool_approval
                 return {
-                    "action": "block",
+                    "action": "approve",
                     "message": (
-                        "⚠ Write to Hermes protected path blocked by builder "
-                        f"guard: `{target}`. Modifying Hermes core files may "
-                        "break the installation."
+                        f"Builder guard: {tool_name} wants to write to protected path "
+                        f"`{target}` (matches `{core_path}`). Approve or deny this write."
                     ),
+                    "rule_key": "builder-guard",
                 }
     return None
 
@@ -471,16 +492,42 @@ def register(ctx) -> None:
         logger.warning("builder adapter failed to start (tool-only mode OK): %s", exc)
         _srv = None
     if actual is not None:
+        # Register the provider OFF the plugin-load deadline. register_provider()
+        # lazily imports hermes_cli.config, a cold import that measures 4.7s-12.6s
+        # on this host — the whole 10s plugin-load budget. Hermes caps import +
+        # register() (plugins_loader.py, default 10s), so paying that here makes
+        # the load non-deterministic: under CPU pressure the plugin times out and
+        # its tools vanish for the session. Deferring keeps the adapter bind (the
+        # part -m aws-builder needs) synchronous and moves only the best-effort
+        # config reconciliation to a daemon thread. Failure still degrades to
+        # tool-only mode, exactly as the inline call did. See issue #115.
+        _spawn_provider_registration(actual)
+
+
+def _spawn_provider_registration(port: int) -> None:
+    """Run _provider.register_provider(port) on a daemon thread.
+
+    Daemon, so a hung config write cannot keep the process alive; unregister()
+    does not wait on it, because the write is already idempotent
+    (_entries_equivalent) and atomic (atomic_config_write).
+    """
+    import threading
+
+    def _run() -> None:
         try:
             from . import _provider  # package import
         except ImportError:  # __main__ / direct
             import _provider  # type: ignore
         try:
-            _provider.register_provider(actual)
+            _provider.register_provider(port)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "builder provider registration failed (tool-only mode OK): %s", exc
             )
+
+    threading.Thread(
+        target=_run, name="builder-provider-register", daemon=True
+    ).start()
 
 
 def unregister(ctx) -> None:
