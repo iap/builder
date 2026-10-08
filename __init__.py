@@ -114,6 +114,7 @@ def _plugin_pre_tool_call(
                 # Check if approval mechanism is enabled (default: true)
                 try:
                     from hermes_cli.config import load_config
+
                     cfg = load_config()
                     guard_cfg = cfg.get("builder", {})
                     approval_enabled = guard_cfg.get("guard_approval_enabled", True)
@@ -525,9 +526,7 @@ def _spawn_provider_registration(port: int) -> None:
                 "builder provider registration failed (tool-only mode OK): %s", exc
             )
 
-    threading.Thread(
-        target=_run, name="builder-provider-register", daemon=True
-    ).start()
+    threading.Thread(target=_run, name="builder-provider-register", daemon=True).start()
 
 
 def unregister(ctx) -> None:
