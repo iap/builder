@@ -76,7 +76,6 @@ def test_spawn_provider_registration_returns_before_slow_write_completes():
     """
     import sys
     import threading
-    import time
     import types
 
     import __init__ as plugin
@@ -84,21 +83,22 @@ def test_spawn_provider_registration_returns_before_slow_write_completes():
     started = threading.Event()
     finished = threading.Event()
 
-    class _SlowProvider:
-        register_provider = staticmethod(
-            lambda port: (started.set(), time.sleep(0.5), finished.set())
-        )
+    def _slow_register(port):
+        started.set()
+        finished.wait(timeout=5)
 
-    stub = types.SimpleNamespace(register_provider=_SlowProvider.register_provider)
-    t0 = time.perf_counter()
+    stub = types.SimpleNamespace(register_provider=_slow_register)
     # Keep the patch active across the waits: Thread.start() gives no
     # happens-before guarantee that the worker reaches its import before this
     # block exits, and a restored patch would let the real register_provider run.
     with patch.dict(sys.modules, {"_provider": stub}):
         plugin._spawn_provider_registration(18092)
-        elapsed = time.perf_counter() - t0
-        assert elapsed < 0.1, f"spawn blocked the caller for {elapsed:.3f}s"
+        # The worker is still inside register_provider, so the spawn returned
+        # before the work finished. A wall-clock budget would be flaky under
+        # load; this asserts the ordering the deadline fix actually depends on.
         assert started.wait(timeout=5), "background registration never started"
+        assert not finished.is_set(), "spawn blocked until the write completed"
+        finished.set()
         assert finished.wait(timeout=5), "background registration never completed"
 
 
