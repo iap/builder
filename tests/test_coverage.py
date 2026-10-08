@@ -91,13 +91,15 @@ def test_spawn_provider_registration_returns_before_slow_write_completes():
 
     stub = types.SimpleNamespace(register_provider=_SlowProvider.register_provider)
     t0 = time.perf_counter()
+    # Keep the patch active across the waits: Thread.start() gives no
+    # happens-before guarantee that the worker reaches its import before this
+    # block exits, and a restored patch would let the real register_provider run.
     with patch.dict(sys.modules, {"_provider": stub}):
         plugin._spawn_provider_registration(18092)
-    elapsed = time.perf_counter() - t0
-
-    assert elapsed < 0.1, f"spawn blocked the caller for {elapsed:.3f}s"
-    assert started.wait(timeout=5), "background registration never started"
-    assert finished.wait(timeout=5), "background registration never completed"
+        elapsed = time.perf_counter() - t0
+        assert elapsed < 0.1, f"spawn blocked the caller for {elapsed:.3f}s"
+        assert started.wait(timeout=5), "background registration never started"
+        assert finished.wait(timeout=5), "background registration never completed"
 
 
 def test_register_does_not_call_register_provider_inline(monkeypatch):
