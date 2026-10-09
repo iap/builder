@@ -31,7 +31,16 @@ def test_pre_tool_call_blocks_windows_format_drive():
     """`format <drive>:` is destructive and must stay blocked (#117)."""
     import __init__ as plugin
 
-    for command in ("format C:", "FORMAT C:", "format  D:", "format C: /q"):
+    for command in (
+        "format C:",
+        "FORMAT C:",
+        "format  D:",
+        "format C: /q",
+        # switches may precede the drive (Greptile P1 on #119)
+        "format /Q D:",
+        "format /FS:NTFS E:",
+        "format /q D: /v:MyVol",
+    ):
         result = plugin._plugin_pre_tool_call("terminal", {"command": command})
         assert result is not None, command
         assert result["action"] == "block", command

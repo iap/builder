@@ -62,7 +62,11 @@ def _plugin_pre_tool_call(
     )
     # `format <drive>:` only. A bare "format " substring also matched ordinary
     # commands such as `ruff format --check .` -- the repo's own lint gate (#117).
-    _WIN_FORMAT_DRIVE = _re.compile(r"\bformat\s+[a-z]:", _re.IGNORECASE)
+    # Switches may precede the drive (`format /Q D:`), so allow a run of them;
+    # the switch group is `[/:-]`, which `--check` cannot match.
+    _WIN_FORMAT_DRIVE = _re.compile(
+        r"\bformat\b(?:\s+[/:-][^\s]+)*\s+[a-z]:", _re.IGNORECASE
+    )
     _PRIVILEGE = ("sudo ", "su -", "su ", "pkexec ", "doas ")
 
     def _is_dangerous(cmd: str) -> str | None:
