@@ -27,6 +27,112 @@ def test_pre_tool_call_blocks_sudo():
     assert result["action"] == "block"
 
 
+def test_pre_tool_call_blocks_windows_format_drive():
+    """`format <drive>:` is destructive and must stay blocked (#117)."""
+    import __init__ as plugin
+
+    for command in (
+        "format C:",
+        "FORMAT C:",
+        "format  D:",
+        "format C: /q",
+        # switches may precede the drive (Greptile P1 on #119)
+        "format /Q D:",
+        "format /FS:NTFS E:",
+        "format /q D: /v:MyVol",
+        # the legacy executable name; the old bare substring missed these too
+        "format.com C:",
+        "format.com /Q D:",
+    ):
+        result = plugin._plugin_pre_tool_call("terminal", {"command": command})
+        assert result is not None, command
+        assert result["action"] == "block", command
+
+
+def test_pre_tool_call_blocks_wrapped_windows_format_drive():
+    """A wrapped `format <drive>:` must still block after the #117 narrowing.
+
+    Anchoring the match to the start of the segment would miss these, because the
+    caller splits on shell separators and hands each segment over separately.
+    """
+    import __init__ as plugin
+
+    for command in (
+        "env format C:",
+        "xargs format C:",
+        "cmd /c format C:",
+        "echo hi; format C:",
+    ):
+        result = plugin._plugin_pre_tool_call("terminal", {"command": command})
+        assert result is not None, command
+        assert result["action"] == "block", command
+
+
+def test_pre_tool_call_blocks_other_windows_destructive():
+    """The remaining Windows patterns must not regress with the #117 change."""
+    import __init__ as plugin
+
+    for command in (
+        "del /f a.txt",
+        "del /s /q d",
+        "rd /s /q d",
+        "rd /q d",
+        "fsutil volume list",
+    ):
+        result = plugin._plugin_pre_tool_call("terminal", {"command": command})
+        assert result is not None, command
+        assert result["action"] == "block", command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ruff format --check .",
+        "ruff format .",
+        ".venv/bin/python -m ruff format --check .",
+        "npm run format",
+        "clang-format -i main.c",
+        "black --check .",
+        # a drive-path target must not be mistaken for a Windows format drive
+        # once a flag like `--check` sits between them (Greptile P1 on #119)
+        "ruff format --check D:\\project",
+        "ruff format . D:\\project",
+        "clang-format -i D:\\project",
+        "black --check D:\\project",
+        "prettier --write D:\\project",
+        "cd D:\\project && ruff format --check .",
+    ],
+)
+def test_pre_tool_call_allows_format_substring_commands(command):
+    """`format ` must not match as a bare substring (#117).
+
+    The old ``"format "`` entry blocked the repo's own CI lint gate. Only the
+    ``format <drive>:`` shape is destructive, so ordinary formatter invocations
+    have to pass.
+    """
+    import __init__ as plugin
+
+    assert plugin._plugin_pre_tool_call("terminal", {"command": command}) is None
+
+
+def test_pre_tool_call_blocks_format_followed_immediately_by_drive():
+    """`format D:` is indistinguishable from a formatter run on a drive path.
+
+    ``npm run format D:\\project`` and ``format D:\\project`` reduce to the same
+    ``format D:`` text once the tool name is out of view, and both are blocked.
+    A flag between the two (``ruff format --check D:\\project``) is what
+    separates a formatter invocation from the destructive command, so only the
+    flagless form stays blocked. Closing this would mean modelling tool names,
+    which turns a pattern list into a parser.
+    """
+    import __init__ as plugin
+
+    for command in ("format D:\\project", "npm run format D:\\project"):
+        result = plugin._plugin_pre_tool_call("terminal", {"command": command})
+        assert result is not None, command
+        assert result["action"] == "block", command
+
+
 def test_pre_tool_call_escalates_hermes_core_path_to_approval():
     """Protected-path writes escalate to the human-approval gate.
 

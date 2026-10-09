@@ -32,6 +32,7 @@ def _plugin_pre_tool_call(
 ) -> dict[str, str] | None:
     """Builder plugin guard: blocks dangerous tool calls."""
     import os as _os
+    import re as _re
 
     _HERMES_CORE = tuple(
         _os.path.realpath(_os.path.expanduser(p))
@@ -57,8 +58,16 @@ def _plugin_pre_tool_call(
         "del /s ",
         "rd /s ",
         "rd /q ",
-        "format ",
         "fsutil ",
+    )
+    # `format <drive>:` only. A bare "format " substring also matched ordinary
+    # commands such as `ruff format --check .` -- the repo's own lint gate (#117).
+    # Real switches are all `/switch`, and the group must stay `/`-only: allowing
+    # `-` here let `--check` be consumed as a switch and then match the drive path
+    # of `ruff format --check D:\project` (Greptile P1 on #119). `.com` covers the
+    # legacy executable name, which the bare substring missed as well.
+    _WIN_FORMAT_DRIVE = _re.compile(
+        r"\bformat(?:\.com)?\b(?:\s+/[^\s]+)*\s+[a-z]:", _re.IGNORECASE
     )
     _PRIVILEGE = ("sudo ", "su -", "su ", "pkexec ", "doas ")
 
@@ -71,13 +80,13 @@ def _plugin_pre_tool_call(
         for pattern in _DESTRUCTIVE_WIN:
             if pattern in lowered:
                 return pattern
+        if _WIN_FORMAT_DRIVE.search(lowered):
+            return "format "
         return None
 
     if tool_name == "terminal":
         cmd = (args.get("command") or "").strip()
         # Check the full command and each token split on shell separators.
-        import re as _re
-
         tokens = _re.split(r"[;&|\n\r]+", cmd)
         for segment in tokens:
             segment = segment.strip()
