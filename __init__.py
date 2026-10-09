@@ -26,16 +26,17 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Guard constants are module-level so a tool call does not rebuild them. The
-# hook runs on every tool invocation, so realpath over the core paths and the
-# regex compile were being redone per call for a fixed answer. Values are
-# resolved once at import, which is what the previous per-call code did anyway.
-_HERMES_CORE = tuple(
-    os.path.realpath(os.path.expanduser(p))
-    for p in (
-        "~/.hermes/hermes-agent",
-        "~/.hermes/config.yaml",
-        "~/.hermes/plugins/builder",
-    )
+# hook runs on every tool invocation, so the regex compile and tuple construction
+# were being redone per call for a fixed answer.
+#
+# Path strings are cached here, but resolved through os.path.realpath() in the
+# write/patch branch on each call. Freezing the realpath at import time let an
+# attacker swap a protected path with a symlink after import and bypass the guard
+# (Greptile P1 on #120).
+_HERMES_CORE_PATHS = (
+    "~/.hermes/hermes-agent",
+    "~/.hermes/config.yaml",
+    "~/.hermes/plugins/builder",
 )
 _DESTRUCTIVE = (
     "rm -rf ",
@@ -124,7 +125,12 @@ def _plugin_pre_tool_call(
             real_target = os.path.realpath(os.path.expanduser(target))
         except OSError:
             real_target = target
-        for core_path in _HERMES_CORE:
+        for core_path_str in _HERMES_CORE_PATHS:
+            # Resolve on each call so a symlink swapped after import is followed.
+            try:
+                core_path = os.path.realpath(os.path.expanduser(core_path_str))
+            except OSError:
+                core_path = os.path.expanduser(core_path_str)
             # Compare path components to avoid blocking sibling paths like
             # ~/.hermes/config.yaml.bak or ~/.hermes/hermes-agent-notes/file.
             if real_target.startswith(core_path + os.sep) or real_target == core_path:
