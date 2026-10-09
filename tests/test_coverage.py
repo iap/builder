@@ -133,6 +133,35 @@ def test_pre_tool_call_blocks_format_followed_immediately_by_drive():
         assert result["action"] == "block", command
 
 
+def test_guard_does_not_read_an_unknown_config_root():
+    """The guard must not consult config for its approval behavior (#118).
+
+    It used to read ``cfg["builder"]``, but ``builder`` is not a known Hermes
+    config root, so the lookup always returned ``{}`` and the silent-block
+    fallback was unreachable. Reading config on this path also pulled
+    ``hermes_cli.config`` into every ``write_file``/``patch`` call.
+    """
+    import pathlib
+
+    import __init__ as plugin
+
+    source = pathlib.Path(plugin.__file__).read_text()
+    code = "\n".join(
+        line for line in source.splitlines() if not line.strip().startswith("#")
+    )
+
+    assert "load_config" not in code
+    assert "guard_approval_enabled" not in code
+    assert "approval_enabled" not in code
+
+    # the guard must still escalate protected writes rather than silently allow
+    result = plugin._plugin_pre_tool_call(
+        "write_file", {"path": str(pathlib.Path.home() / ".hermes/config.yaml")}
+    )
+    assert result is not None
+    assert result["action"] == "approve"
+
+
 def test_pre_tool_call_escalates_hermes_core_path_to_approval():
     """Protected-path writes escalate to the human-approval gate.
 
