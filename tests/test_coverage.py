@@ -40,6 +40,9 @@ def test_pre_tool_call_blocks_windows_format_drive():
         "format /Q D:",
         "format /FS:NTFS E:",
         "format /q D: /v:MyVol",
+        # the legacy executable name; the old bare substring missed these too
+        "format.com C:",
+        "format.com /Q D:",
     ):
         result = plugin._plugin_pre_tool_call("terminal", {"command": command})
         assert result is not None, command
@@ -90,6 +93,14 @@ def test_pre_tool_call_blocks_other_windows_destructive():
         "npm run format",
         "clang-format -i main.c",
         "black --check .",
+        # a drive-path target must not be mistaken for a Windows format drive
+        # once a flag like `--check` sits between them (Greptile P1 on #119)
+        "ruff format --check D:\\project",
+        "ruff format . D:\\project",
+        "clang-format -i D:\\project",
+        "black --check D:\\project",
+        "prettier --write D:\\project",
+        "cd D:\\project && ruff format --check .",
     ],
 )
 def test_pre_tool_call_allows_format_substring_commands(command):
@@ -102,6 +113,24 @@ def test_pre_tool_call_allows_format_substring_commands(command):
     import __init__ as plugin
 
     assert plugin._plugin_pre_tool_call("terminal", {"command": command}) is None
+
+
+def test_pre_tool_call_blocks_format_followed_immediately_by_drive():
+    """`format D:` is indistinguishable from a formatter run on a drive path.
+
+    ``npm run format D:\\project`` and ``format D:\\project`` reduce to the same
+    ``format D:`` text once the tool name is out of view, and both are blocked.
+    A flag between the two (``ruff format --check D:\\project``) is what
+    separates a formatter invocation from the destructive command, so only the
+    flagless form stays blocked. Closing this would mean modelling tool names,
+    which turns a pattern list into a parser.
+    """
+    import __init__ as plugin
+
+    for command in ("format D:\\project", "npm run format D:\\project"):
+        result = plugin._plugin_pre_tool_call("terminal", {"command": command})
+        assert result is not None, command
+        assert result["action"] == "block", command
 
 
 def test_pre_tool_call_escalates_hermes_core_path_to_approval():

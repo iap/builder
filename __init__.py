@@ -62,10 +62,12 @@ def _plugin_pre_tool_call(
     )
     # `format <drive>:` only. A bare "format " substring also matched ordinary
     # commands such as `ruff format --check .` -- the repo's own lint gate (#117).
-    # Switches may precede the drive (`format /Q D:`), so allow a run of them;
-    # the switch group is `[/:-]`, which `--check` cannot match.
+    # Real switches are all `/switch`, and the group must stay `/`-only: allowing
+    # `-` here let `--check` be consumed as a switch and then match the drive path
+    # of `ruff format --check D:\project` (Greptile P1 on #119). `.com` covers the
+    # legacy executable name, which the bare substring missed as well.
     _WIN_FORMAT_DRIVE = _re.compile(
-        r"\bformat\b(?:\s+[/:-][^\s]+)*\s+[a-z]:", _re.IGNORECASE
+        r"\bformat(?:\.com)?\b(?:\s+/[^\s]+)*\s+[a-z]:", _re.IGNORECASE
     )
     _PRIVILEGE = ("sudo ", "su -", "su ", "pkexec ", "doas ")
 
