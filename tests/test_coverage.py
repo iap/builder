@@ -133,7 +133,7 @@ def test_pre_tool_call_blocks_format_followed_immediately_by_drive():
         assert result["action"] == "block", command
 
 
-def test_guard_follows_symlink_swapped_after_import():
+def test_guard_follows_symlink_swapped_after_import(tmp_path):
     """Protected paths must resolve per call, not freeze at import (#120 P1).
 
     Hoisting ``realpath`` into a module constant made the roots disagree with
@@ -142,34 +142,28 @@ def test_guard_follows_symlink_swapped_after_import():
     only the resolution is per call.
     """
     import os
-    import tempfile
-    from pathlib import Path
 
     import __init__ as plugin
 
-    root = Path(tempfile.mkdtemp(prefix="builder-symlink-"))
-    protected = root / "config.yaml"
-    outside = root / "evil.yaml"
+    original_paths = plugin._HERMES_CORE_PATHS
+    protected = tmp_path / "config.yaml"
+    outside = tmp_path / "evil.yaml"
     protected.write_text("original\n")
     outside.write_text("evil\n")
-
-    original_paths = plugin._HERMES_CORE_PATHS
-    original_realpath = os.path.realpath
+    frozen = os.path.realpath(str(protected))
+    protected.unlink()
     try:
+        os.symlink(outside, protected)
+    except OSError as exc:  # Windows without admin or Developer Mode
+        pytest.skip(f"symlinks unavailable: {exc}")
+    try:
+        assert os.path.realpath(str(protected)) != frozen  # the swap took effect
         plugin._HERMES_CORE_PATHS = (str(protected),)
-        # simulate the swap: the protected path becomes a symlink elsewhere
-        resolved_frozen = os.path.realpath(str(protected))
-        protected.unlink()
-        os.symlink(str(outside), str(protected))
-
         result = plugin._plugin_pre_tool_call("write_file", {"path": str(protected)})
         assert result is not None
         assert result["action"] == "approve"
-        # the frozen root and the live target genuinely diverge here
-        assert os.path.realpath(str(protected)) != resolved_frozen
     finally:
         plugin._HERMES_CORE_PATHS = original_paths
-        os.path.realpath = original_realpath
 
 
 def test_guard_does_not_read_an_unknown_config_root():
