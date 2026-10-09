@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 from typing import Any
 
@@ -24,6 +25,66 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Guard constants are module-level so a tool call does not rebuild them. The
+# hook runs on every tool invocation, so the regex compile and tuple construction
+# were being redone per call for a fixed answer.
+#
+# Path strings are cached here, but resolved through os.path.realpath() in the
+# write/patch branch on each call. Freezing the realpath at import time let an
+# attacker swap a protected path with a symlink after import and bypass the guard
+# (Greptile P1 on #120).
+_HERMES_CORE_PATHS = (
+    "~/.hermes/hermes-agent",
+    "~/.hermes/config.yaml",
+    "~/.hermes/plugins/builder",
+)
+_DESTRUCTIVE = (
+    "rm -rf ",
+    "rm -fr ",
+    "shutil.rmtree",
+    "chmod -R",
+    ">/dev/sda",
+    "mkfs ",
+    "mkfs.",
+    "dd if=",
+    "dd of=",
+)
+_DESTRUCTIVE_WIN = (
+    "del /f ",
+    "del /s ",
+    "rd /s ",
+    "rd /q ",
+    "fsutil ",
+)
+# `format <drive>:` only. A bare "format " substring also matched ordinary
+# commands such as `ruff format --check .` -- the repo's own lint gate (#117).
+# Real switches are all `/switch`, and the group must stay `/`-only: allowing
+# `-` here let `--check` be consumed as a switch and then match the drive path
+# of `ruff format --check D:\project` (Greptile P1 on #119). `.com` covers the
+# legacy executable name, which the bare substring missed as well.
+_WIN_FORMAT_DRIVE = re.compile(
+    r"\bformat(?:\.com)?\b(?:\s+/[^\s]+)*\s+[a-z]:", re.IGNORECASE
+)
+_PRIVILEGE = ("sudo ", "su -", "su ", "pkexec ", "doas ")
+
+
+def _is_dangerous(cmd: str) -> str | None:
+    """Return the matching destructive pattern, or None.
+
+    Checks the raw command and each shell-separated segment so a wrapped
+    invocation (`env format C:`) is caught the same as a bare one.
+    """
+    lowered = cmd.lower()
+    for pattern in _DESTRUCTIVE:
+        if pattern in cmd:
+            return pattern
+    for pattern in _DESTRUCTIVE_WIN:
+        if pattern in lowered:
+            return pattern
+    if _WIN_FORMAT_DRIVE.search(lowered):
+        return "format "
+    return None
+
 
 def _plugin_pre_tool_call(
     tool_name: str,
@@ -31,63 +92,10 @@ def _plugin_pre_tool_call(
     **kwargs: Any,
 ) -> dict[str, str] | None:
     """Builder plugin guard: blocks dangerous tool calls."""
-    import os as _os
-    import re as _re
-
-    _HERMES_CORE = tuple(
-        _os.path.realpath(_os.path.expanduser(p))
-        for p in (
-            "~/.hermes/hermes-agent",
-            "~/.hermes/config.yaml",
-            "~/.hermes/plugins/builder",
-        )
-    )
-    _DESTRUCTIVE = (
-        "rm -rf ",
-        "rm -fr ",
-        "shutil.rmtree",
-        "chmod -R",
-        ">/dev/sda",
-        "mkfs ",
-        "mkfs.",
-        "dd if=",
-        "dd of=",
-    )
-    _DESTRUCTIVE_WIN = (
-        "del /f ",
-        "del /s ",
-        "rd /s ",
-        "rd /q ",
-        "fsutil ",
-    )
-    # `format <drive>:` only. A bare "format " substring also matched ordinary
-    # commands such as `ruff format --check .` -- the repo's own lint gate (#117).
-    # Real switches are all `/switch`, and the group must stay `/`-only: allowing
-    # `-` here let `--check` be consumed as a switch and then match the drive path
-    # of `ruff format --check D:\project` (Greptile P1 on #119). `.com` covers the
-    # legacy executable name, which the bare substring missed as well.
-    _WIN_FORMAT_DRIVE = _re.compile(
-        r"\bformat(?:\.com)?\b(?:\s+/[^\s]+)*\s+[a-z]:", _re.IGNORECASE
-    )
-    _PRIVILEGE = ("sudo ", "su -", "su ", "pkexec ", "doas ")
-
-    def _is_dangerous(cmd: str) -> str | None:
-        """Return the matched pattern if the command is dangerous, else None."""
-        lowered = cmd.lower()
-        for pattern in _DESTRUCTIVE:
-            if pattern in cmd:
-                return pattern
-        for pattern in _DESTRUCTIVE_WIN:
-            if pattern in lowered:
-                return pattern
-        if _WIN_FORMAT_DRIVE.search(lowered):
-            return "format "
-        return None
-
     if tool_name == "terminal":
         cmd = (args.get("command") or "").strip()
         # Check the full command and each token split on shell separators.
-        tokens = _re.split(r"[;&|\n\r]+", cmd)
+        tokens = re.split(r"[;&|\n\r]+", cmd)
         for segment in tokens:
             segment = segment.strip()
             if not segment:
@@ -114,35 +122,24 @@ def _plugin_pre_tool_call(
     elif tool_name in ("write_file", "patch"):
         target = str(args.get("path") or args.get("file") or "")
         try:
-            real_target = _os.path.realpath(_os.path.expanduser(target))
+            real_target = os.path.realpath(os.path.expanduser(target))
         except OSError:
             real_target = target
-        for core_path in _HERMES_CORE:
+        for core_path_str in _HERMES_CORE_PATHS:
+            # Resolve on each call so a symlink swapped after import is followed.
+            try:
+                core_path = os.path.realpath(os.path.expanduser(core_path_str))
+            except OSError:
+                core_path = os.path.expanduser(core_path_str)
             # Compare path components to avoid blocking sibling paths like
             # ~/.hermes/config.yaml.bak or ~/.hermes/hermes-agent-notes/file.
-            if real_target.startswith(core_path + _os.sep) or real_target == core_path:
-                # Check if approval mechanism is enabled (default: true)
-                try:
-                    from hermes_cli.config import load_config
-
-                    cfg = load_config()
-                    guard_cfg = cfg.get("builder", {})
-                    approval_enabled = guard_cfg.get("guard_approval_enabled", True)
-                except Exception:  # noqa: BLE001
-                    approval_enabled = True  # fail open to approval path
-
-                if not approval_enabled:
-                    # Approval disabled — fall back to silent blocking
-                    return {
-                        "action": "block",
-                        "message": (
-                            "⚠ Write to Hermes protected path blocked by builder "
-                            f"guard: `{target}`. Modifying Hermes core files may "
-                            "break the installation."
-                        ),
-                    }
-
-                # Return approve action — dispatch layer calls request_tool_approval
+            if real_target.startswith(core_path + os.sep) or real_target == core_path:
+                # Return approve action — dispatch layer calls request_tool_approval.
+                # The former `builder.guard_approval_enabled` opt-out is gone: it
+                # read cfg["builder"], which is not a known Hermes config root, so
+                # it always resolved to True and its silent-block branch was
+                # unreachable (#118). The guard now escalates to approval, which
+                # fails closed when there is no approving human.
                 return {
                     "action": "approve",
                     "message": (

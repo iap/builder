@@ -133,6 +133,68 @@ def test_pre_tool_call_blocks_format_followed_immediately_by_drive():
         assert result["action"] == "block", command
 
 
+def test_guard_follows_symlink_swapped_after_import(tmp_path):
+    """Protected paths must resolve per call, not freeze at import (#120 P1).
+
+    Hoisting ``realpath`` into a module constant made the roots disagree with
+    the freshly resolved write target once a protected path was replaced by a
+    symlink, so the guard stopped escalating. Roots stay cached as strings;
+    only the resolution is per call.
+    """
+    import os
+
+    import __init__ as plugin
+
+    original_paths = plugin._HERMES_CORE_PATHS
+    protected = tmp_path / "config.yaml"
+    outside = tmp_path / "evil.yaml"
+    protected.write_text("original\n")
+    outside.write_text("evil\n")
+    frozen = os.path.realpath(str(protected))
+    protected.unlink()
+    try:
+        os.symlink(outside, protected)
+    except OSError as exc:  # Windows without admin or Developer Mode
+        pytest.skip(f"symlinks unavailable: {exc}")
+    try:
+        assert os.path.realpath(str(protected)) != frozen  # the swap took effect
+        plugin._HERMES_CORE_PATHS = (str(protected),)
+        result = plugin._plugin_pre_tool_call("write_file", {"path": str(protected)})
+        assert result is not None
+        assert result["action"] == "approve"
+    finally:
+        plugin._HERMES_CORE_PATHS = original_paths
+
+
+def test_guard_does_not_read_an_unknown_config_root():
+    """The guard must not consult config for its approval behavior (#118).
+
+    It used to read ``cfg["builder"]``, but ``builder`` is not a known Hermes
+    config root, so the lookup always returned ``{}`` and the silent-block
+    fallback was unreachable. Reading config on this path also pulled
+    ``hermes_cli.config`` into every ``write_file``/``patch`` call.
+    """
+    import pathlib
+
+    import __init__ as plugin
+
+    source = pathlib.Path(plugin.__file__).read_text()
+    code = "\n".join(
+        line for line in source.splitlines() if not line.strip().startswith("#")
+    )
+
+    assert "load_config" not in code
+    assert "guard_approval_enabled" not in code
+    assert "approval_enabled" not in code
+
+    # the guard must still escalate protected writes rather than silently allow
+    result = plugin._plugin_pre_tool_call(
+        "write_file", {"path": str(pathlib.Path.home() / ".hermes/config.yaml")}
+    )
+    assert result is not None
+    assert result["action"] == "approve"
+
+
 def test_pre_tool_call_escalates_hermes_core_path_to_approval():
     """Protected-path writes escalate to the human-approval gate.
 
