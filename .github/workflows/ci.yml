@@ -75,9 +75,7 @@ jobs:
           HERMES_HOME: ${{ env.HERMES_HOME }}
         run: |
           set -euo pipefail
-          # Adapter tests bind a local port and can hang in CI; the same subset
-          # is excluded when running locally.
-          python -m pytest -q -k "not adapter"
+          python -m pytest -q
 
       - name: Run plugin self-checks (verify.py)
         working-directory: ${{ env.HERMES_HOME }}/plugins/builder

@@ -21,7 +21,7 @@ This PR was opened from a branch using one of:
 
 ## Checklist
 
-- [ ] Tests pass: `python -m pytest -q -k "not adapter"`
+- [ ] Tests pass: `python -m pytest -q`
 - [ ] `verify.py` is green
 - [ ] No raw tokens/secrets in code, logs, or tool output
 - [ ] Adapter stays loopback-only unless an explicit guard is added
