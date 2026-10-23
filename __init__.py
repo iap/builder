@@ -179,18 +179,24 @@ def _tool_result_helpers():
     return _result, _error
 
 
-_TOOL_RESULT, _TOOL_ERROR = _tool_result_helpers()
 _registered = False
 _provider_worker: threading.Thread | None = None
 _provider_worker_lock = threading.Lock()
 
 
 def _success(data: dict[str, Any]) -> str:
-    return _TOOL_RESULT(success=True, **data)
+    # Resolved per call, not at import: importing this module must not bind
+    # `tools.registry` before the host has had a chance to put its Hermes core
+    # on sys.path (conftest does this). Binding at import time pinned `tools` to
+    # whichever hermes-agent happened to be installed, so a pinned core checkout
+    # was ignored and the integration tests resolved a mismatched registry.
+    tool_result, _ = _tool_result_helpers()
+    return tool_result(success=True, **data)
 
 
 def _error(message: str, code: str = "error") -> str:
-    return _TOOL_ERROR(message, code=code, success=False)
+    _, tool_error = _tool_result_helpers()
+    return tool_error(message, code=code, success=False)
 
 
 def _check_available() -> bool:
